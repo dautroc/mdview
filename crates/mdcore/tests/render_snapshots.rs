@@ -17,3 +17,8 @@ fn basic_commonmark() {
 fn gfm_tables_tasks_strikethrough_footnotes() {
     insta::assert_snapshot!(mdcore::render::render_body(&fixture("gfm.md")));
 }
+
+#[test]
+fn code_blocks_and_mermaid() {
+    insta::assert_snapshot!(mdcore::render::render_body(&fixture("code.md")));
+}
