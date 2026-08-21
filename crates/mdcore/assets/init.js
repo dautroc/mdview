@@ -41,14 +41,4 @@
   };
 
   document.addEventListener("DOMContentLoaded", window.mdviewRenderAll);
-
-  // Mermaid picks its theme from matchMedia once, at render time, so a
-  // system appearance change (light/dark) leaves existing diagrams on the
-  // stale theme even though the rest of the page (driven by CSS) switches
-  // instantly. Re-render on change so diagrams follow along too.
-  window
-    .matchMedia("(prefers-color-scheme: dark)")
-    .addEventListener("change", function () {
-      window.mdviewRenderAll();
-    });
 })();
