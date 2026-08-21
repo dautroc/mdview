@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 pub mod document;
+pub mod escape;
+pub mod render;
 
 pub use document::{Document, DocumentError};
 

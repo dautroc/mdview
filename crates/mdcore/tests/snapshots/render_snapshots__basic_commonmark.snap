@@ -1,0 +1,23 @@
+---
+source: crates/mdcore/tests/render_snapshots.rs
+expression: "mdcore::render::render_body(&fixture(\"basic.md\"))"
+---
+<h1>Heading One</h1>
+<p>A paragraph with <strong>bold</strong>, <em>italic</em>, <code>inline code</code>, and a <a href="https://example.com">link</a>.</p>
+<h2>Heading Two</h2>
+<ul>
+<li>first</li>
+<li>second
+<ul>
+<li>nested</li>
+</ul>
+</li>
+</ul>
+<blockquote>
+<p>A blockquote.</p>
+</blockquote>
+<hr />
+<ol>
+<li>one</li>
+<li>two</li>
+</ol>
