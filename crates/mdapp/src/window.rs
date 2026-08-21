@@ -1,17 +1,48 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use mdcore::Highlighter;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::MainThreadOnly;
-use objc2_app_kit::{NSBackingStoreType, NSColor, NSWindow, NSWindowStyleMask};
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{define_class, DefinedClass, MainThreadOnly};
+use objc2_app_kit::{
+    NSBackingStoreType, NSColor, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+};
+use objc2_foundation::{MainThreadMarker, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL};
 use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
 
-/// One window showing one document. Owns its web view and, from Task 10, its
-/// own file watcher; closing a window tears down only that window's resources.
+/// Ivars for `WindowCloseDelegate`: just the shared flag it flips.
+pub struct WindowCloseState {
+    closed: Rc<Cell<bool>>,
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "MDViewWindowCloseDelegate"]
+    #[ivars = WindowCloseState]
+    pub struct WindowCloseDelegate;
+
+    unsafe impl NSObjectProtocol for WindowCloseDelegate {}
+
+    unsafe impl NSWindowDelegate for WindowCloseDelegate {
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, _notification: &NSNotification) {
+            self.ivars().closed.set(true);
+        }
+    }
+);
+
+impl WindowCloseDelegate {
+    fn new(mtm: MainThreadMarker, closed: Rc<Cell<bool>>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(WindowCloseState { closed });
+        unsafe { objc2::msg_send![super(this), init] }
+    }
+}
+
+/// One window showing one document. Owns its web view and its own file
+/// watcher; closing a window tears down only that window's resources.
 pub struct DocumentWindow {
     pub window: Retained<NSWindow>,
     pub webview: Retained<WKWebView>,
@@ -19,9 +50,20 @@ pub struct DocumentWindow {
     /// Held so the delegate outlives the web view; WKWebView keeps only a
     /// weak reference to its navigation delegate.
     _navigation: Retained<crate::navigation::NavigationDelegate>,
+    /// Held so the delegate outlives the window; `NSWindow.delegate` is also
+    /// a weak property, so an unheld delegate would be silently dropped.
+    _window_delegate: Retained<WindowCloseDelegate>,
     pub watcher: RefCell<Option<crate::watcher::FileWatcher>>,
     /// Banners raised by a load, drained once the page is ready to receive them.
     pub pending_banners: RefCell<Vec<(String, String)>>,
+    /// Flipped to `true` by `WindowCloseDelegate::windowWillClose` — the only
+    /// reliable signal that this window is gone for good. `NSWindow::isVisible`
+    /// is also false while merely hidden (⌘H, ⌘M), which is not the same thing.
+    closed: Rc<Cell<bool>>,
+    /// False while showing the error page (no `#mdview-content` in the DOM),
+    /// so `live_update` knows to fall back to a full `reload` instead of
+    /// silently discarding a JS swap into a page that has nowhere to put it.
+    content_ready: Cell<bool>,
 }
 
 impl DocumentWindow {
@@ -57,12 +99,21 @@ impl DocumentWindow {
             webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*navigation)));
         }
 
+        let closed = Rc::new(Cell::new(false));
+        let window_delegate = WindowCloseDelegate::new(mtm, closed.clone());
         unsafe {
+            window.setDelegate(Some(ProtocolObject::from_ref(&*window_delegate)));
+
             window.setContentView(Some(&webview));
             window.setReleasedWhenClosed(false);
             // Paint the window in the current appearance before the page's own
             // CSS applies. Without this, every load flashes white in dark mode.
             window.setBackgroundColor(Some(&NSColor::textBackgroundColor()));
+            // The WKWebView is the opaque content view painted on top of the
+            // window, so it is the web view's own background — not the
+            // window's — that is visible during the load. Set both: this one
+            // is what actually prevents the white flash in dark mode.
+            webview.setUnderPageBackgroundColor(Some(&NSColor::textBackgroundColor()));
         }
         window.center();
 
@@ -71,8 +122,11 @@ impl DocumentWindow {
             webview,
             path: RefCell::new(path.to_path_buf()),
             _navigation: navigation,
+            _window_delegate: window_delegate,
             watcher: RefCell::new(crate::watcher::FileWatcher::start(path).ok()),
             pending_banners: RefCell::new(Vec::new()),
+            closed,
+            content_ready: Cell::new(false),
         });
 
         doc_window.reload(highlighter);
@@ -80,11 +134,26 @@ impl DocumentWindow {
         doc_window
     }
 
-    /// Re-render from disk and replace the whole page. Task 10 adds an
-    /// incremental path that preserves scroll position; this full load is what
-    /// runs on first open and on explicit File > Reload.
+    /// True once `windowWillClose:` has fired for this window — the only
+    /// reliable "this window is gone" signal. Used to prune `AppState.windows`
+    /// without also dropping windows that are merely hidden or miniaturized.
+    pub fn is_closed(&self) -> bool {
+        self.closed.get()
+    }
+
+    /// Re-render from disk and replace the whole page. There is also an
+    /// incremental path (`live_update`) that preserves scroll position; this
+    /// full load is what runs on first open, on explicit File > Reload, and
+    /// as the recovery path when live reload lands on a window that is
+    /// currently showing the error page.
     pub fn reload(&self, highlighter: &Highlighter) {
         let path = self.path.borrow().clone();
+
+        // Clear unconditionally, before we know whether this load succeeds:
+        // a stale queue from a previous load must never survive onto either
+        // a fresh success page or the error page, where `show_banner`'s
+        // `if (!host) return;` would silently drop it for good.
+        *self.pending_banners.borrow_mut() = Vec::new();
 
         let title = path
             .file_name()
@@ -101,9 +170,9 @@ impl DocumentWindow {
                         Some(&base),
                     );
                 }
+                self.content_ready.set(true);
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
-                *self.pending_banners.borrow_mut() = Vec::new();
                 if doc.lossy {
                     self.pending_banners.borrow_mut().push((
                         "lossy".to_string(),
@@ -137,11 +206,23 @@ impl DocumentWindow {
             self.webview
                 .loadHTMLString_baseURL(&NSString::from_str(&html), None);
         }
+        // The error page has no `#mdview-content` or `#mdview-banners`: a
+        // later `live_update`'s JS swap would silently no-op forever, and a
+        // queued banner would have nowhere to land. Mark content not-ready so
+        // the next successful poll does a full `reload` instead.
+        self.content_ready.set(false);
     }
 
     /// Re-render and swap the body in place, preserving scroll position.
-    /// Falls back to a full reload if the document cannot be read.
+    /// Falls back to a full reload if the document cannot be read, or if the
+    /// window is currently showing the error page (no `#mdview-content` to
+    /// swap into).
     pub fn live_update(&self, highlighter: &Highlighter) {
+        if !self.content_ready.get() {
+            self.reload(highlighter);
+            return;
+        }
+
         let path = self.path.borrow().clone();
 
         let (body, lossy) = match mdcore::render_body_of(&path, highlighter) {

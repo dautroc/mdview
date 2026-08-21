@@ -7,7 +7,10 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
-use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSTimer, NSURL};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString,
+    NSTimer, NSURL,
+};
 
 use crate::window::DocumentWindow;
 
@@ -38,13 +41,19 @@ define_class!(
             }
 
             unsafe {
-                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                let timer = NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
                     0.05,
                     self,
                     objc2::sel!(watchTick:),
                     None,
                     true,
                 );
+                // `scheduledTimer...` only adds the timer to
+                // NSDefaultRunLoopMode, so live reload and banner drains stall
+                // during menu tracking, live window resize, and the ⌘O panel's
+                // modal loop. Also add it to the common modes so it keeps
+                // firing there.
+                NSRunLoop::currentRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
             }
         }
 
@@ -57,7 +66,12 @@ define_class!(
         fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
             for url in urls.iter() {
                 // Ignore anything that is not a local file; the app has no
-                // business fetching remote documents.
+                // business fetching remote documents. `url.path()` alone is
+                // not enough to establish that — `https://example.com/foo`
+                // has a path too — so check the scheme explicitly.
+                if !url.isFileURL() {
+                    continue;
+                }
                 let Some(path) = url.path() else {
                     continue;
                 };
@@ -88,10 +102,17 @@ define_class!(
             let now = std::time::Instant::now();
             let state = self.ivars();
 
-            // Prune closed windows before polling them
+            // Prune closed windows before polling them. `isVisible` is NOT
+            // the right predicate: it is also false for a window that is
+            // merely hidden (⌘H, which -[NSApplication hide:] applies to
+            // every window in the app) or miniaturized (⌘M), and dropping
+            // the sole `Rc<DocumentWindow>` in those cases would tear down a
+            // window that is still alive. `is_closed()` is only set by
+            // `windowWillClose:`, which fires exclusively when the window is
+            // actually closed.
             {
                 let mut windows = state.windows.borrow_mut();
-                windows.retain(|w| w.window.isVisible());
+                windows.retain(|w| !w.is_closed());
             }
 
             // Drain any banners that were queued by a recent load and are now
