@@ -47,6 +47,17 @@ pub fn render_document_with(
     })
 }
 
+/// Render only the body HTML, for live-reload swaps into an already-loaded
+/// page. Returns `(body_html, lossy)`.
+pub fn render_body_of(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+) -> Result<(String, bool), DocumentError> {
+    let doc = Document::load(path)?;
+    let body = render::render_body_with(&doc.source, highlighter);
+    Ok((body, doc.lossy))
+}
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

@@ -7,7 +7,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
-use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSURL};
+use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSTimer, NSURL};
 
 use crate::window::DocumentWindow;
 
@@ -35,6 +35,16 @@ define_class!(
             let paths = self.ivars().startup_paths.take();
             for path in paths {
                 self.open_document(&path);
+            }
+
+            unsafe {
+                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                    0.05,
+                    self,
+                    objc2::sel!(watchTick:),
+                    None,
+                    true,
+                );
             }
         }
 
@@ -73,6 +83,39 @@ define_class!(
     }
 
     impl AppDelegate {
+        #[unsafe(method(watchTick:))]
+        fn watch_tick(&self, _timer: Option<&NSObject>) {
+            let now = std::time::Instant::now();
+            let state = self.ivars();
+
+            // Prune closed windows before polling them
+            {
+                let mut windows = state.windows.borrow_mut();
+                windows.retain(|w| w.window.isVisible());
+            }
+
+            // Collect first, then update: live_update can trigger reentrancy
+            // into `windows`, and holding the borrow across it would panic.
+            let due: Vec<_> = state
+                .windows
+                .borrow()
+                .iter()
+                .filter(|window| {
+                    window
+                        .watcher
+                        .borrow_mut()
+                        .as_mut()
+                        .map(|w| w.poll(now))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+
+            for window in due {
+                window.live_update(&state.highlighter);
+            }
+        }
+
         #[unsafe(method(openDocument:))]
         fn open_document_action(&self, _sender: Option<&NSObject>) {
             self.present_open_panel();

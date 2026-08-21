@@ -19,6 +19,7 @@ pub struct DocumentWindow {
     /// Held so the delegate outlives the web view; WKWebView keeps only a
     /// weak reference to its navigation delegate.
     _navigation: Retained<crate::navigation::NavigationDelegate>,
+    pub watcher: RefCell<Option<crate::watcher::FileWatcher>>,
 }
 
 impl DocumentWindow {
@@ -68,6 +69,7 @@ impl DocumentWindow {
             webview,
             path: RefCell::new(path.to_path_buf()),
             _navigation: navigation,
+            watcher: RefCell::new(crate::watcher::FileWatcher::start(path).ok()),
         });
 
         doc_window.reload(highlighter);
@@ -114,6 +116,36 @@ impl DocumentWindow {
         unsafe {
             self.webview
                 .loadHTMLString_baseURL(&NSString::from_str(&html), None);
+        }
+    }
+
+    /// Re-render and swap the body in place, preserving scroll position.
+    /// Falls back to a full reload if the document cannot be read.
+    pub fn live_update(&self, highlighter: &Highlighter) {
+        let path = self.path.borrow().clone();
+
+        let (body, _lossy) = match mdcore::render_body_of(&path, highlighter) {
+            Ok(result) => result,
+            // The file vanished mid-edit (common during atomic saves). Keep
+            // showing the last good render rather than blanking the window.
+            Err(_) => return,
+        };
+
+        let script = format!(
+            "(function() {{ \
+               var y = window.scrollY; \
+               var target = document.getElementById('mdview-content'); \
+               if (!target) return; \
+               target.innerHTML = {body}; \
+               window.scrollTo(0, y); \
+               if (window.mdviewRenderAll) window.mdviewRenderAll(); \
+             }})();",
+            body = mdcore::escape::js_string_literal(&body)
+        );
+
+        unsafe {
+            self.webview
+                .evaluateJavaScript_completionHandler(&NSString::from_str(&script), None);
         }
     }
 }

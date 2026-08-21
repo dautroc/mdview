@@ -1,6 +1,7 @@
 mod app;
 mod menu;
 mod navigation;
+mod watcher;
 mod window;
 
 use std::path::PathBuf;
