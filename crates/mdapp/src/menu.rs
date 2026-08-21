@@ -68,7 +68,10 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
 
     let (view_holder, view_menu) = submenu(mtm, "View");
     view_menu.addItem(&item(mtm, "Actual Size", sel!(zoomActual:), "0"));
-    view_menu.addItem(&item(mtm, "Zoom In", sel!(zoomIn:), "+"));
+    // "+" as a key equivalent requires ⇧⌘= to fire (AppKit reads it as the
+    // shifted character); plain ⌘=, what users actually press for zoom in,
+    // needs the unshifted "=" here instead.
+    view_menu.addItem(&item(mtm, "Zoom In", sel!(zoomIn:), "="));
     view_menu.addItem(&item(mtm, "Zoom Out", sel!(zoomOut:), "-"));
     menubar.addItem(&view_holder);
 
@@ -76,6 +79,13 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     window_menu.addItem(&item(mtm, "Minimize", sel!(performMiniaturize:), "m"));
     menubar.addItem(&window_holder);
 
+    // Empty is enough: registering it as the help menu via `setHelpMenu` is
+    // what makes AppKit populate the standard Help-menu search field, and
+    // MDView has no help book of its own to add items for.
+    let (help_holder, help_menu) = submenu(mtm, "Help");
+    menubar.addItem(&help_holder);
+
     app.setMainMenu(Some(&menubar));
     app.setWindowsMenu(Some(&window_menu));
+    app.setHelpMenu(Some(&help_menu));
 }

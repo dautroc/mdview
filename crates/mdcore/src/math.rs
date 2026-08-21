@@ -5,9 +5,17 @@ use crate::escape::escape_html;
 /// The body is HTML-escaped (so `<` and `&` cannot break out) but otherwise
 /// preserved exactly — in particular backslashes are untouched, which is what
 /// keeps `\frac{a}{b}` renderable.
+///
+/// Both cases use `<span>`, never `<div>`: `DisplayMath` is an inline-level
+/// pulldown-cmark event, so its markup lands inside whatever `<p>` the
+/// surrounding text is in. A `<div>` there would produce invalid
+/// `<p><div/></p>` markup, which HTML parsers respond to by splitting the
+/// paragraph into spurious empty ones around it. `.math-display` gets
+/// `display: block` in CSS instead, which gets the visual result without the
+/// invalid nesting.
 pub fn math_event_html(tex: &str, display: bool) -> String {
     if display {
-        format!("<div class=\"math-display\">{}</div>", escape_html(tex))
+        format!("<span class=\"math-display\">{}</span>", escape_html(tex))
     } else {
         format!("<span class=\"math-inline\">{}</span>", escape_html(tex))
     }
@@ -24,9 +32,12 @@ mod tests {
     }
 
     #[test]
-    fn display_math_becomes_a_div() {
+    fn display_math_becomes_a_span() {
+        // Must be a <span>, not a <div>: DisplayMath is an inline-level
+        // pulldown-cmark event, so this markup lands inside a <p>, and a
+        // <div> there produces invalid, parser-splitting markup.
         let html = math_event_html("\\int_0^1 x", true);
-        assert_eq!(html, "<div class=\"math-display\">\\int_0^1 x</div>");
+        assert_eq!(html, "<span class=\"math-display\">\\int_0^1 x</span>");
     }
 
     #[test]

@@ -58,7 +58,12 @@ impl FileWatcher {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
-        let target = path.to_path_buf();
+        // `notify` reports absolute paths in its events, but a path given
+        // directly on argv (`mdview notes.md`) is relative. Canonicalize so
+        // the comparison in the event handler below actually matches;
+        // otherwise live reload is silently dead with no error and no
+        // banner, since the watcher itself started fine.
+        let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
         let (sender, events) = channel();
         let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {

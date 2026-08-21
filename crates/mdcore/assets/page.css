@@ -64,7 +64,10 @@ img { max-width: 100%; }
 .task-list-item { list-style: none; }
 .task-list-item input { margin: 0 .4em 0 -1.4em; }
 
-.math-display { overflow-x: auto; padding: .5rem 0; }
+/* math-display is a <span> (DisplayMath is inline-level in pulldown-cmark,
+   so a <div> here would land inside a <p> and produce invalid markup);
+   `display: block` gets the same visual result without that. */
+.math-display { display: block; overflow-x: auto; padding: .5rem 0; }
 .mermaid { background: none; text-align: center; }
 
 #mdview-banners { position: sticky; top: 0; z-index: 10; }

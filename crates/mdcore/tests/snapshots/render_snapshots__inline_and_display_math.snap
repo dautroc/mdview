@@ -5,8 +5,8 @@ expression: "mdcore::render::render_body(&fixture(\"math.md\"))"
 <p>Inline math <span class="math-inline">E = mc^2</span> inside a sentence.</p>
 <p>A fraction: <span class="math-inline">\frac{a}{b}</span> and a comparison <span class="math-inline">a &lt; b</span>.</p>
 <p>Display math:</p>
-<p><div class="math-display">
+<p><span class="math-display">
 \int_0^1 x^2 \, dx = \frac{1}{3}
-</div></p>
+</span></p>
 <p>A dollar amount that is not math: costs $5 and $10.</p>
 <p>Math inside code should stay literal: <code>$not math$</code>.</p>

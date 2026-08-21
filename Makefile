@@ -2,15 +2,21 @@ APP     := MDView.app
 BINARY  := target/release/mdview
 PREFIX  ?= /usr/local
 
-.PHONY: all bundle install install-cli uninstall clean test
+.PHONY: all bundle install install-cli uninstall clean test FORCE
 
 all: bundle
 
 test:
 	cargo test
 
-$(BINARY):
+# FORCE gives $(BINARY) an always-out-of-date prerequisite, so `make bundle`
+# always re-runs `cargo build --release` (cargo's own incremental build then
+# decides what actually needs recompiling) instead of skipping straight to
+# packaging whatever stale binary happens to already exist at $(BINARY).
+$(BINARY): FORCE
 	cargo build --release
+
+FORCE:
 
 bundle: $(BINARY) bundle/Info.plist
 	rm -rf $(APP)

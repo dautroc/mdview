@@ -6,7 +6,8 @@ use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_foundation::MainThreadMarker;
 use objc2_web_kit::{
-    WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView,
+    WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKNavigationType,
+    WKWebView,
 };
 
 const MARKDOWN_EXTENSIONS: [&str; 3] = ["md", "markdown", "mdown"];
@@ -78,9 +79,13 @@ define_class!(
 
             if let (Some(absolute), Some(scheme)) = (absolute, scheme) {
                 // `loadHTMLString` itself arrives here as an about:blank
-                // navigation. Letting it through is what actually displays the
-                // document; everything else is cancelled.
-                if scheme == "about" {
+                // navigation of type `Other`. Letting it through is what
+                // actually displays the document. Gating on the navigation
+                // type (not just the scheme) matters: without it, a user
+                // clicking `[x](about:blank)` in the document — a
+                // `LinkActivated` navigation — would also match and blank the
+                // window.
+                if scheme == "about" && unsafe { action.navigationType() } == WKNavigationType::Other {
                     (*handler).call((WKNavigationActionPolicy::Allow,));
                     return;
                 }
