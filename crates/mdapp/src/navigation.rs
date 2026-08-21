@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -44,8 +45,49 @@ pub fn classify(url: &str, scheme: &str, file_path: Option<&str>) -> Option<Navi
     }
 }
 
+/// What the navigation delegate should do with one navigation attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    /// Let the web view proceed. Only ever our own programmatic load.
+    Allow,
+    /// Block the navigation and do nothing else.
+    Cancel,
+    /// Block the navigation and hand this request to the app.
+    CancelAndHandle(NavigationRequest),
+}
+
+/// Decide what to do with a navigation attempt. Pure logic, no AppKit.
+///
+/// `expecting_own_load` is a one-shot token set immediately before the app
+/// calls `loadHTMLString`; `is_other` is true when the navigation type is
+/// `WKNavigationType::Other`, which is what programmatic loads report and
+/// what user link clicks (`LinkActivated`) never do.
+pub fn decide(
+    absolute: Option<&str>,
+    scheme: Option<&str>,
+    file_path: Option<&str>,
+    is_other: bool,
+    expecting_own_load: bool,
+) -> Decision {
+    // Our own loadHTMLString. Its URL is whatever baseURL we passed — a
+    // file:// directory for a document, about:blank for the error page — so
+    // the URL itself is not a reliable signal. The one-shot token plus the
+    // navigation type is.
+    if expecting_own_load && is_other {
+        return Decision::Allow;
+    }
+    match (absolute, scheme) {
+        (Some(absolute), Some(scheme)) => match classify(absolute, scheme, file_path) {
+            Some(request) => Decision::CancelAndHandle(request),
+            None => Decision::Cancel,
+        },
+        _ => Decision::Cancel,
+    }
+}
+
 pub struct NavigationState {
     pub handler: Rc<dyn Fn(NavigationRequest)>,
+    pub expecting_own_load: Rc<Cell<bool>>,
 }
 
 define_class!(
@@ -77,24 +119,27 @@ define_class!(
                 None => (None, None, None),
             };
 
-            if let (Some(absolute), Some(scheme)) = (absolute, scheme) {
-                // `loadHTMLString` itself arrives here as an about:blank
-                // navigation of type `Other`. Letting it through is what
-                // actually displays the document. Gating on the navigation
-                // type (not just the scheme) matters: without it, a user
-                // clicking `[x](about:blank)` in the document — a
-                // `LinkActivated` navigation — would also match and blank the
-                // window.
-                if scheme == "about" && unsafe { action.navigationType() } == WKNavigationType::Other {
-                    (*handler).call((WKNavigationActionPolicy::Allow,));
-                    return;
-                }
-                if let Some(request) = classify(&absolute, &scheme, decoded_path.as_deref()) {
-                    (self.ivars().handler)(request);
+            let is_other = unsafe { action.navigationType() } == WKNavigationType::Other;
+            // One-shot: read-and-clear so only the load the app just
+            // initiated is ever treated as our own.
+            let expecting_own_load = self.ivars().expecting_own_load.replace(false);
+
+            let decision = decide(
+                absolute.as_deref(),
+                scheme.as_deref(),
+                decoded_path.as_deref(),
+                is_other,
+                expecting_own_load,
+            );
+
+            match decision {
+                Decision::Allow => (*handler).call((WKNavigationActionPolicy::Allow,)),
+                Decision::Cancel => (*handler).call((WKNavigationActionPolicy::Cancel,)),
+                Decision::CancelAndHandle(req) => {
+                    (self.ivars().handler)(req);
+                    (*handler).call((WKNavigationActionPolicy::Cancel,));
                 }
             }
-
-            (*handler).call((WKNavigationActionPolicy::Cancel,));
         }
     }
 );
@@ -103,8 +148,12 @@ impl NavigationDelegate {
     pub fn new(
         mtm: MainThreadMarker,
         handler: Rc<dyn Fn(NavigationRequest)>,
+        expecting_own_load: Rc<Cell<bool>>,
     ) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(NavigationState { handler });
+        let this = Self::alloc(mtm).set_ivars(NavigationState {
+            handler,
+            expecting_own_load,
+        });
         unsafe { objc2::msg_send![super(this), init] }
     }
 }
@@ -113,6 +162,85 @@ impl NavigationDelegate {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn our_own_document_load_is_allowed() {
+        // The exact navigation captured from the real app when it blanked:
+        // loadHTMLString's baseURL is a file:// directory, not about:blank.
+        assert_eq!(
+            decide(
+                Some("file:///Users/x/notes/"),
+                Some("file"),
+                Some("/Users/x/notes"),
+                true,  // WKNavigationType::Other
+                true,  // token set by reload()
+            ),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn our_own_error_page_load_is_allowed() {
+        assert_eq!(
+            decide(Some("about:blank"), Some("about"), None, true, true),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn a_link_click_to_the_base_directory_is_cancelled() {
+        // Same URL as the allowed load, but not our load and not `Other`.
+        assert_eq!(
+            decide(
+                Some("file:///Users/x/notes/"),
+                Some("file"),
+                Some("/Users/x/notes"),
+                false,
+                false,
+            ),
+            Decision::Cancel
+        );
+    }
+
+    #[test]
+    fn a_meta_refresh_after_our_load_is_cancelled() {
+        // Type `Other`, but the one-shot token was already consumed.
+        assert_eq!(
+            decide(Some("https://evil.example/"), Some("https"), None, true, false),
+            Decision::CancelAndHandle(NavigationRequest::OpenExternal(
+                "https://evil.example/".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn an_external_link_is_handed_off_not_followed() {
+        assert_eq!(
+            decide(Some("https://example.com/x"), Some("https"), None, false, false),
+            Decision::CancelAndHandle(NavigationRequest::OpenExternal(
+                "https://example.com/x".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_local_markdown_link_opens_a_document() {
+        assert_eq!(
+            decide(
+                Some("file:///Users/x/a.md"),
+                Some("file"),
+                Some("/Users/x/a.md"),
+                false,
+                false,
+            ),
+            Decision::CancelAndHandle(NavigationRequest::OpenDocument("/Users/x/a.md".into()))
+        );
+    }
+
+    #[test]
+    fn a_missing_url_is_cancelled() {
+        assert_eq!(decide(None, None, None, false, false), Decision::Cancel);
+    }
 
     #[test]
     fn http_links_open_externally() {

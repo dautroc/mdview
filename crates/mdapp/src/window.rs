@@ -64,6 +64,12 @@ pub struct DocumentWindow {
     /// so `live_update` knows to fall back to a full `reload` instead of
     /// silently discarding a JS swap into a page that has nowhere to put it.
     content_ready: Cell<bool>,
+    /// One-shot token: set immediately before this window's own
+    /// `loadHTMLString_baseURL` calls, read-and-cleared by the navigation
+    /// delegate so only the load the app just initiated is ever allowed
+    /// through. Shared with `NavigationDelegate`, mirroring how `closed` is
+    /// shared with `WindowCloseDelegate`.
+    expecting_own_load: Rc<Cell<bool>>,
 }
 
 impl DocumentWindow {
@@ -94,7 +100,12 @@ impl DocumentWindow {
             WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config)
         };
 
-        let navigation = crate::navigation::NavigationDelegate::new(mtm, on_navigate);
+        let expecting_own_load = Rc::new(Cell::new(false));
+        let navigation = crate::navigation::NavigationDelegate::new(
+            mtm,
+            on_navigate,
+            expecting_own_load.clone(),
+        );
         unsafe {
             webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*navigation)));
         }
@@ -134,6 +145,7 @@ impl DocumentWindow {
             pending_banners: RefCell::new(Vec::new()),
             closed,
             content_ready: Cell::new(false),
+            expecting_own_load,
         });
 
         doc_window.reload(highlighter);
@@ -171,6 +183,7 @@ impl DocumentWindow {
         match mdcore::render_document_with(&path, highlighter) {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
+                self.expecting_own_load.set(true);
                 unsafe {
                     self.webview.loadHTMLString_baseURL(
                         &NSString::from_str(&doc.html),
@@ -209,6 +222,7 @@ impl DocumentWindow {
 </head><body><h2>Cannot display this file</h2><p>{}</p></body></html>",
             mdcore::escape::escape_html(message)
         );
+        self.expecting_own_load.set(true);
         unsafe {
             self.webview
                 .loadHTMLString_baseURL(&NSString::from_str(&html), None);
