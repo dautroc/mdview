@@ -7,7 +7,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
-use objc2_foundation::{MainThreadMarker, NSNotification};
+use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSURL};
 
 use crate::window::DocumentWindow;
 
@@ -40,6 +40,32 @@ define_class!(
 
         #[unsafe(method(applicationShouldTerminateAfterLastWindowClosed:))]
         fn terminate_after_last_window(&self, _app: &NSApplication) -> bool {
+            true
+        }
+
+        #[unsafe(method(application:openURLs:))]
+        fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
+            for url in urls.iter() {
+                // Ignore anything that is not a local file; the app has no
+                // business fetching remote documents.
+                let Some(path) = url.path() else {
+                    continue;
+                };
+                self.open_document(std::path::Path::new(&path.to_string()));
+            }
+        }
+
+        #[unsafe(method(applicationShouldOpenUntitledFile:))]
+        fn should_open_untitled(&self, _app: &NSApplication) -> bool {
+            // A viewer has no untitled state. Clicking the Dock icon with no
+            // windows open should present the Open panel instead of a blank
+            // window, which is what `applicationOpenUntitledFile:` does below.
+            true
+        }
+
+        #[unsafe(method(applicationOpenUntitledFile:))]
+        fn open_untitled(&self, _app: &NSApplication) -> bool {
+            self.present_open_panel();
             true
         }
     }
