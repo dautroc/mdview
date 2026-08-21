@@ -94,6 +94,12 @@ define_class!(
                 windows.retain(|w| w.window.isVisible());
             }
 
+            // Drain any banners that were queued by a recent load and are now
+            // ready to be injected (the page has finished loading).
+            for window in state.windows.borrow().iter() {
+                window.drain_pending_banners();
+            }
+
             // Collect first, then update: live_update can trigger reentrancy
             // into `windows`, and holding the borrow across it would panic.
             let due: Vec<_> = state
