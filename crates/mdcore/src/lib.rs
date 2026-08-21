@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+pub mod document;
+
+pub use document::{Document, DocumentError};
+
 /// The crate version, used by `mdapp` in the About panel.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
