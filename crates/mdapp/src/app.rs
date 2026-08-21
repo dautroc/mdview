@@ -7,7 +7,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
-use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSURL};
+use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSURL};
 
 use crate::window::DocumentWindow;
 
@@ -117,9 +117,28 @@ impl AppDelegate {
     /// The single entry point every way of opening a file funnels into:
     /// startup arguments, Finder, the Open panel, and dropped files.
     pub fn open_document(&self, path: &std::path::Path) {
+        use crate::navigation::NavigationRequest;
+        use objc2_app_kit::NSWorkspace;
+
         let mtm = MainThreadMarker::from(self);
         let state = self.ivars();
-        let window = DocumentWindow::open(path, mtm, &state.highlighter);
+
+        // The web view calls back on the main thread, so a plain Rc closure
+        // holding a pointer to the delegate is sound here.
+        let delegate: Retained<AppDelegate> = unsafe { Retained::retain(self as *const _ as *mut _) }
+            .expect("delegate is alive while its windows are");
+
+        let handler: Rc<dyn Fn(NavigationRequest)> = Rc::new(move |request| match request {
+            NavigationRequest::OpenExternal(url) => {
+                let workspace = NSWorkspace::sharedWorkspace();
+                if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url)) {
+                    workspace.openURL(&url);
+                }
+            }
+            NavigationRequest::OpenDocument(path) => delegate.open_document(&path),
+        });
+
+        let window = DocumentWindow::open(path, mtm, &state.highlighter, handler);
         state.windows.borrow_mut().push(window);
     }
 

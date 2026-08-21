@@ -8,6 +8,7 @@ name = "mdview"
 path = "src/main.rs"
 
 [dependencies]
+block2 = "0.6"
 mdcore = { path = "../mdcore" }
 notify = { workspace = true }
 objc2 = { workspace = true }

@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use mdcore::Highlighter;
 use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
 use objc2::MainThreadOnly;
 use objc2_app_kit::{NSBackingStoreType, NSColor, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString, NSURL};
@@ -15,10 +16,18 @@ pub struct DocumentWindow {
     pub window: Retained<NSWindow>,
     pub webview: Retained<WKWebView>,
     pub path: RefCell<PathBuf>,
+    /// Held so the delegate outlives the web view; WKWebView keeps only a
+    /// weak reference to its navigation delegate.
+    _navigation: Retained<crate::navigation::NavigationDelegate>,
 }
 
 impl DocumentWindow {
-    pub fn open(path: &Path, mtm: MainThreadMarker, highlighter: &Highlighter) -> Rc<Self> {
+    pub fn open(
+        path: &Path,
+        mtm: MainThreadMarker,
+        highlighter: &Highlighter,
+        on_navigate: Rc<dyn Fn(crate::navigation::NavigationRequest)>,
+    ) -> Rc<Self> {
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(960.0, 720.0));
         let style = NSWindowStyleMask::Titled
             | NSWindowStyleMask::Closable
@@ -40,6 +49,11 @@ impl DocumentWindow {
             WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config)
         };
 
+        let navigation = crate::navigation::NavigationDelegate::new(mtm, on_navigate);
+        unsafe {
+            webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*navigation)));
+        }
+
         unsafe {
             window.setContentView(Some(&webview));
             window.setReleasedWhenClosed(false);
@@ -53,6 +67,7 @@ impl DocumentWindow {
             window,
             webview,
             path: RefCell::new(path.to_path_buf()),
+            _navigation: navigation,
         });
 
         doc_window.reload(highlighter);
