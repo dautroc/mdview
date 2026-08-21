@@ -43,6 +43,37 @@ define_class!(
             true
         }
     }
+
+    impl AppDelegate {
+        #[unsafe(method(openDocument:))]
+        fn open_document_action(&self, _sender: Option<&NSObject>) {
+            self.present_open_panel();
+        }
+
+        #[unsafe(method(reloadDocument:))]
+        fn reload_document_action(&self, _sender: Option<&NSObject>) {
+            if let Some(window) = self.frontmost_window() {
+                window.reload(&self.ivars().highlighter);
+            }
+        }
+
+        #[unsafe(method(zoomIn:))]
+        fn zoom_in_action(&self, _sender: Option<&NSObject>) {
+            self.adjust_zoom(1.1);
+        }
+
+        #[unsafe(method(zoomOut:))]
+        fn zoom_out_action(&self, _sender: Option<&NSObject>) {
+            self.adjust_zoom(1.0 / 1.1);
+        }
+
+        #[unsafe(method(zoomActual:))]
+        fn zoom_actual_action(&self, _sender: Option<&NSObject>) {
+            if let Some(window) = self.frontmost_window() {
+                unsafe { window.webview.setPageZoom(1.0) };
+            }
+        }
+    }
 );
 
 impl AppDelegate {
@@ -63,12 +94,56 @@ impl AppDelegate {
         let window = DocumentWindow::open(path, mtm, &state.highlighter);
         state.windows.borrow_mut().push(window);
     }
+
+    /// The window the user is looking at, or None when every window is closed.
+    fn frontmost_window(&self) -> Option<Rc<DocumentWindow>> {
+        let windows = self.ivars().windows.borrow();
+        windows
+            .iter()
+            .find(|w| w.window.isKeyWindow())
+            .or_else(|| windows.last())
+            .cloned()
+    }
+
+    fn adjust_zoom(&self, factor: f64) {
+        if let Some(window) = self.frontmost_window() {
+            let current = unsafe { window.webview.pageZoom() };
+            // Clamp so repeated presses cannot make the document unreadable.
+            let next = (current * factor).clamp(0.5, 3.0);
+            unsafe { window.webview.setPageZoom(next) };
+        }
+    }
+
+    pub(crate) fn present_open_panel(&self) {
+        use objc2_app_kit::{NSModalResponse, NSOpenPanel};
+
+        let mtm = MainThreadMarker::from(self);
+        let panel = NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseFiles(true);
+        panel.setCanChooseDirectories(false);
+        panel.setAllowsMultipleSelection(true);
+
+        let response: NSModalResponse = panel.runModal();
+        // NSModalResponseOK is 1.
+        if response != 1 {
+            return;
+        }
+
+        let urls = panel.URLs();
+        for url in urls.iter() {
+            if let Some(path) = url.path() {
+                self.open_document(std::path::Path::new(&path.to_string()));
+            }
+        }
+    }
 }
 
 pub fn run(paths: Vec<PathBuf>) -> ! {
     let mtm = MainThreadMarker::new().expect("main() runs on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+
+    crate::menu::install(&app, mtm);
 
     let delegate = AppDelegate::new(mtm, paths);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
