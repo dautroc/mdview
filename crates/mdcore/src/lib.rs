@@ -3,6 +3,7 @@
 pub mod document;
 pub mod escape;
 pub mod highlight;
+pub mod math;
 pub mod render;
 
 pub use document::{Document, DocumentError};

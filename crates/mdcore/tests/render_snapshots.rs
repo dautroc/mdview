@@ -22,3 +22,8 @@ fn gfm_tables_tasks_strikethrough_footnotes() {
 fn code_blocks_and_mermaid() {
     insta::assert_snapshot!(mdcore::render::render_body(&fixture("code.md")));
 }
+
+#[test]
+fn inline_and_display_math() {
+    insta::assert_snapshot!(mdcore::render::render_body(&fixture("math.md")));
+}
