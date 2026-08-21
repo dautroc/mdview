@@ -113,7 +113,14 @@ impl DocumentWindow {
             // window, so it is the web view's own background — not the
             // window's — that is visible during the load. Set both: this one
             // is what actually prevents the white flash in dark mode.
-            webview.setUnderPageBackgroundColor(Some(&NSColor::textBackgroundColor()));
+            //
+            // `setUnderPageBackgroundColor:` is macOS 12+, but the bundle
+            // supports macOS 11. objc2 encodes no availability information,
+            // so ask the receiver directly — on Big Sur this selector does
+            // not exist and calling it unguarded aborts the process.
+            if webview.respondsToSelector(objc2::sel!(setUnderPageBackgroundColor:)) {
+                webview.setUnderPageBackgroundColor(Some(&NSColor::textBackgroundColor()));
+            }
         }
         window.center();
 
