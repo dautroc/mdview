@@ -1,0 +1,8 @@
+---
+source: crates/mdcore/tests/render_snapshots.rs
+expression: html
+---
+<p>A relative image: <img src="./img/diagram.png" alt="local diagram" /></p>
+<p>A parent-relative image: <img src="../shared/logo.png" alt="up one" /></p>
+<p>A remote image: <img src="https://example.com/x.png" alt="remote" /></p>
+<p>An image with a title: <img src="./a.png" alt="alt text" title="The title" /></p>
