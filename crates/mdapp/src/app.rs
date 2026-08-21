@@ -57,10 +57,12 @@ define_class!(
 
         #[unsafe(method(applicationShouldOpenUntitledFile:))]
         fn should_open_untitled(&self, _app: &NSApplication) -> bool {
-            // A viewer has no untitled state. Clicking the Dock icon with no
-            // windows open should present the Open panel instead of a blank
-            // window, which is what `applicationOpenUntitledFile:` does below.
-            true
+            // AppKit cannot see documents we opened from argv or from an Apple
+            // event, so answer "yes" only when there is genuinely nothing on
+            // screen and nothing pending. Otherwise a CLI launch would get an
+            // Open panel on top of the document it asked for.
+            let state = self.ivars();
+            state.windows.borrow().is_empty() && state.startup_paths.borrow().is_empty()
         }
 
         #[unsafe(method(applicationOpenUntitledFile:))]
