@@ -1,0 +1,21 @@
+#!/bin/sh
+# Open files in MDView.app.
+#
+# Routing through `open` means the terminal produces the same Apple
+# open-document event as Finder, rather than a second launch path that could
+# drift. Flags are the exception: they need the binary's stdout, so they go
+# straight to the executable inside the bundle.
+
+APP="${MDVIEW_APP:-/Applications/MDView.app}"
+BIN="$APP/Contents/MacOS/mdview"
+
+if [ ! -x "$BIN" ]; then
+  echo "mdview: $APP not found. Run 'make install' in the mdview repo." >&2
+  exit 127
+fi
+
+case "$1" in
+  --*) exec "$BIN" "$@" ;;
+  "")  exec open -a "$APP" ;;
+  *)   exec open -a "$APP" "$@" ;;
+esac
