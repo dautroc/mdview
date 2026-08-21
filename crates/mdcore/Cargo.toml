@@ -1,0 +1,12 @@
+[package]
+name = "mdcore"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+pulldown-cmark = { workspace = true }
+syntect = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

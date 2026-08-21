@@ -1,0 +1,16 @@
+[package]
+name = "mdapp"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "mdview"
+path = "src/main.rs"
+
+[dependencies]
+mdcore = { path = "../mdcore" }
+notify = { workspace = true }
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-web-kit = { workspace = true }
