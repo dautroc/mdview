@@ -3,6 +3,25 @@
 
 use mdcore::Theme;
 
+#[allow(dead_code)]
+pub fn resolve_full_width(stored: Option<bool>) -> bool {
+    stored.unwrap_or(false)
+}
+
+#[allow(dead_code)]
+pub fn next_full_width(stored: Option<bool>) -> bool {
+    !resolve_full_width(stored)
+}
+
+#[allow(dead_code)]
+pub fn full_width_script(enabled: bool) -> &'static str {
+    if enabled {
+        "document.documentElement.setAttribute('data-fullwidth','1');"
+    } else {
+        "document.documentElement.removeAttribute('data-fullwidth');"
+    }
+}
+
 /// Put `path` at the front of `list`, promoting an existing entry rather than
 /// duplicating it, and truncate to `cap`.
 #[allow(dead_code)]
@@ -194,5 +213,31 @@ mod tests {
         // the only case that reaches the tab.is_empty() guard. Without it an
         // empty string would reach callers as a real tab name.
         assert_eq!(parse_message("setSidebar:1:"), None);
+    }
+
+    #[test]
+    fn fullwidth_defaults_to_centered_until_a_value_is_stored() {
+        assert!(!resolve_full_width(None));
+        assert!(resolve_full_width(Some(true)));
+        assert!(!resolve_full_width(Some(false)));
+    }
+
+    #[test]
+    fn fullwidth_toggle_inverts_the_resolved_value() {
+        assert!(next_full_width(None));
+        assert!(!next_full_width(Some(true)));
+        assert!(next_full_width(Some(false)));
+    }
+
+    #[test]
+    fn fullwidth_script_sets_or_removes_the_root_attribute() {
+        assert_eq!(
+            full_width_script(true),
+            "document.documentElement.setAttribute('data-fullwidth','1');"
+        );
+        assert_eq!(
+            full_width_script(false),
+            "document.documentElement.removeAttribute('data-fullwidth');"
+        );
     }
 }
