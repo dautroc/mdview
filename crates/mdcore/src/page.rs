@@ -607,6 +607,36 @@ mod tests {
     }
 
     #[test]
+    fn the_theme_menu_bridges_the_gap_below_its_trigger() {
+        // The menu is offset below the trigger. Whatever that offset is, the
+        // band it opens up must belong to the menu, or the pointer leaves
+        // #mdview-theme crossing it and mouseleave closes the menu before it
+        // can be reached. Both sides are pinned to one variable so a change to
+        // the offset cannot silently reopen the dead band.
+        let css = assets::PAGE_CSS;
+        assert!(
+            css.contains("--menu-gap:"),
+            "the trigger-to-menu distance must be a single named value"
+        );
+        assert!(
+            css.contains("top: calc(100% + var(--menu-gap))"),
+            "the menu must take its offset from --menu-gap"
+        );
+        let bridge = css
+            .find(".mdview-theme-list::before")
+            .expect("the menu must bridge the gap below its trigger");
+        let block = &css[bridge..bridge + css[bridge..].find('}').expect("unterminated rule")];
+        assert!(
+            block.contains("height: var(--menu-gap)"),
+            "the bridge must be exactly as tall as the gap it covers"
+        );
+        assert!(
+            block.contains("top: calc(-1 * var(--menu-gap))"),
+            "the bridge must sit in the gap, not below it"
+        );
+    }
+
+    #[test]
     fn the_theme_picker_hides_its_disclosure_triangle_when_closed() {
         // Scoping the marker rule to [open] left a stray triangle on the closed
         // picker, which is the state it is in almost all of the time.

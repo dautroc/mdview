@@ -304,6 +304,9 @@ img { max-width: 100%; }
 
 #mdview-theme {
   background: none; color: var(--muted); cursor: pointer; position: relative;
+  /* Distance between the trigger and the menu. Used twice below: once to
+     offset the menu, once to size the strip that bridges the gap. */
+  --menu-gap: .25rem;
 }
 #mdview-theme summary { list-style: none; }
 /* Unconditionally: the marker was only hidden while open, so the closed
@@ -323,8 +326,20 @@ img { max-width: 100%; }
   padding: .3rem;
   position: absolute;
   right: 0;
-  top: calc(100% + .25rem);
+  top: calc(100% + var(--menu-gap));
   z-index: 20;
+}
+/* Bridge the gap. Without this the band between the trigger and the menu
+   hit-tests to whatever is behind it, so the pointer leaves #mdview-theme on
+   its way to the menu and the mouseleave handler closes it before it arrives.
+   The strip belongs to the list, so hovering it still counts as inside. */
+.mdview-theme-list::before {
+  content: "";
+  height: var(--menu-gap);
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: calc(-1 * var(--menu-gap));
 }
 .mdview-sidebar-head .mdview-theme-item {
   background: none; border: 0; color: var(--fg); cursor: pointer;
