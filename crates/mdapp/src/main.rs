@@ -1,4 +1,5 @@
 mod app;
+mod bridge;
 mod defaults;
 mod menu;
 mod navigation;

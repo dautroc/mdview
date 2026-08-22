@@ -73,6 +73,8 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     // needs the unshifted "=" here instead.
     view_menu.addItem(&item(mtm, "Zoom In", sel!(zoomIn:), "="));
     view_menu.addItem(&item(mtm, "Zoom Out", sel!(zoomOut:), "-"));
+    view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    view_menu.addItem(&item(mtm, "Toggle Theme", sel!(cycleTheme:), "t"));
     menubar.addItem(&view_holder);
 
     let (window_holder, window_menu) = submenu(mtm, "Window");

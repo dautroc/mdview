@@ -50,6 +50,9 @@ pub struct DocumentWindow {
     /// Held so the delegate outlives the web view; WKWebView keeps only a
     /// weak reference to its navigation delegate.
     _navigation: Retained<crate::navigation::NavigationDelegate>,
+    /// Held so the bridge outlives the web view; WKUserContentController keeps
+    /// only a weak reference to its script message handler.
+    _bridge: Retained<crate::bridge::Bridge>,
     /// Held so the delegate outlives the window; `NSWindow.delegate` is also
     /// a weak property, so an unheld delegate would be silently dropped.
     _window_delegate: Retained<WindowCloseDelegate>,
@@ -78,6 +81,7 @@ impl DocumentWindow {
         mtm: MainThreadMarker,
         highlighter: &Highlighter,
         on_navigate: Rc<dyn Fn(crate::navigation::NavigationRequest)>,
+        on_message: Rc<dyn Fn(crate::state::Message)>,
     ) -> Rc<Self> {
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(960.0, 720.0));
         let style = NSWindowStyleMask::Titled
@@ -96,6 +100,14 @@ impl DocumentWindow {
         };
 
         let config = unsafe { WKWebViewConfiguration::new(mtm) };
+        let bridge = crate::bridge::Bridge::new(mtm, on_message);
+        unsafe {
+            let controller = config.userContentController();
+            controller.addScriptMessageHandler_name(
+                objc2::runtime::ProtocolObject::from_ref(&*bridge),
+                &NSString::from_str("mdview"),
+            );
+        }
         let webview = unsafe {
             WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config)
         };
@@ -140,6 +152,7 @@ impl DocumentWindow {
             webview,
             path: RefCell::new(path.to_path_buf()),
             _navigation: navigation,
+            _bridge: bridge,
             _window_delegate: window_delegate,
             watcher: RefCell::new(crate::watcher::FileWatcher::start(path).ok()),
             pending_banners: RefCell::new(Vec::new()),
@@ -297,7 +310,7 @@ impl DocumentWindow {
              }})();",
             body = mdcore::escape::js_string_literal(&body)
         );
-        self.eval(&script);
+        self.eval_script(&script);
     }
 
     /// Show (or replace) a banner. `id` identifies the condition, so the code
@@ -321,7 +334,7 @@ impl DocumentWindow {
             id = mdcore::escape::js_string_literal(&format!("mdview-banner-{id}")),
             message = mdcore::escape::js_string_literal(message),
         );
-        self.eval(&script);
+        self.eval_script(&script);
     }
 
     pub fn clear_banner(&self, id: &str) {
@@ -329,7 +342,7 @@ impl DocumentWindow {
             "(function() {{ var el = document.getElementById({id}); if (el) el.remove(); }})();",
             id = mdcore::escape::js_string_literal(&format!("mdview-banner-{id}")),
         );
-        self.eval(&script);
+        self.eval_script(&script);
     }
 
     /// Inject any banners queued by the last load. Safe to call repeatedly.
@@ -346,7 +359,7 @@ impl DocumentWindow {
         }
     }
 
-    fn eval(&self, script: &str) {
+    pub(crate) fn eval_script(&self, script: &str) {
         unsafe {
             self.webview
                 .evaluateJavaScript_completionHandler(&NSString::from_str(script), None);

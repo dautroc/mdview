@@ -18,11 +18,25 @@
     }
   }
 
+  // Stash each diagram's ORIGINAL source before mermaid replaces it with an
+  // SVG. A previous attempt re-read the rendered output as if it were source,
+  // which fed mermaid its own SVG and corrupted the diagram. Source is only
+  // recoverable before the first render, so capture it here.
+  function stashMermaidSources() {
+    var nodes = document.querySelectorAll("pre.mermaid");
+    for (var i = 0; i < nodes.length; i++) {
+      if (!nodes[i].hasAttribute("data-mermaid-src")) {
+        nodes[i].setAttribute("data-mermaid-src", nodes[i].textContent);
+      }
+    }
+  }
+
   // Always resolves (never rejects), and resolves synchronously-ish via a
   // microtask even when mermaid is absent or throws, so callers can chain
   // off it unconditionally without a try/catch of their own.
   function renderDiagrams() {
     if (typeof mermaid === "undefined") return Promise.resolve();
+    stashMermaidSources();
     try {
       mermaid.initialize({
         startOnLoad: false,
@@ -122,6 +136,52 @@
       wrapZoomable(images[j], true);
     }
   }
+
+  // Chrome colours come from CSS custom properties keyed off data-theme, but
+  // the syntect highlight palettes are whole stylesheets selected by a media
+  // attribute (they cannot be nested under a selector — that needs CSS
+  // Nesting, unsupported before macOS 13.4). Both must move together or the
+  // page recolours while code blocks stay behind.
+  function applyHighlightSheets(theme) {
+    var light = document.getElementById("mdview-hl-light");
+    var dark = document.getElementById("mdview-hl-dark");
+    if (!light || !dark) return;
+    if (theme === "light") {
+      light.media = "all";
+      dark.media = "not all";
+    } else if (theme === "dark") {
+      light.media = "not all";
+      dark.media = "all";
+    } else {
+      light.media = "all";
+      dark.media = "(prefers-color-scheme: dark)";
+    }
+  }
+
+  // Restore every diagram to its stashed source and let mermaid render it
+  // again under the new theme. mermaid skips nodes carrying data-processed,
+  // so that attribute must go too.
+  function rerenderDiagrams() {
+    var nodes = document.querySelectorAll("pre.mermaid[data-mermaid-src]");
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      node.removeAttribute("data-processed");
+      node.textContent = node.getAttribute("data-mermaid-src");
+    }
+    return renderDiagrams();
+  }
+
+  // Called from Rust when the theme changes. KaTeX needs no re-render: its
+  // output inherits colour from CSS. Only mermaid bakes the theme in.
+  window.mdviewApplyTheme = function (theme) {
+    if (theme === "system") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+    applyHighlightSheets(theme);
+    rerenderDiagrams();
+  };
 
   function getLightbox() {
     var existing = document.getElementById("mdview-lightbox");

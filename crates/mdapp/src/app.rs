@@ -178,6 +178,16 @@ define_class!(
                 unsafe { window.webview.setPageZoom(1.0) };
             }
         }
+
+        #[unsafe(method(cycleTheme:))]
+        fn cycle_theme_action(&self, _sender: Option<&NSObject>) {
+            let current = mdcore::Theme::from_wire(
+                &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
+            );
+            let next = current.next();
+            crate::defaults::set_string(crate::defaults::THEME_KEY, next.as_wire());
+            self.apply_theme(next);
+        }
     }
 );
 
@@ -236,7 +246,14 @@ impl AppDelegate {
             NavigationRequest::OpenDocument(path) => delegate.open_document(&path),
         });
 
-        let window = DocumentWindow::open(path, mtm, &state.highlighter, handler);
+        let msg_delegate: Retained<AppDelegate> =
+            unsafe { Retained::retain(self as *const _ as *mut _) }
+                .expect("delegate is alive while its windows are");
+        let on_message: Rc<dyn Fn(crate::state::Message)> = Rc::new(move |message| {
+            msg_delegate.handle_message(message);
+        });
+
+        let window = DocumentWindow::open(path, mtm, &state.highlighter, handler, on_message);
         state.windows.borrow_mut().push(window);
     }
 
@@ -256,6 +273,31 @@ impl AppDelegate {
             // Clamp so repeated presses cannot make the document unreadable.
             let next = (current * factor).clamp(0.5, 3.0);
             unsafe { window.webview.setPageZoom(next) };
+        }
+    }
+
+    pub(crate) fn handle_message(&self, message: crate::state::Message) {
+        use crate::state::Message;
+        match message {
+            Message::SetTheme(theme) => {
+                crate::defaults::set_string(crate::defaults::THEME_KEY, theme.as_wire());
+                self.apply_theme(theme);
+            }
+            // Tasks 6 and 8 fill these in; ignoring them now is correct, not a stub.
+            Message::ToggleBookmark => {}
+            Message::OpenPath(_) => {}
+            Message::SetSidebar { .. } => {}
+        }
+    }
+
+    /// Push a theme onto every open window's page without a reload.
+    pub(crate) fn apply_theme(&self, theme: mdcore::Theme) {
+        let script = format!(
+            "window.mdviewApplyTheme && window.mdviewApplyTheme({});",
+            mdcore::escape::js_string_literal(theme.as_wire())
+        );
+        for window in self.ivars().windows.borrow().iter() {
+            window.eval_script(&script);
         }
     }
 
