@@ -148,4 +148,21 @@ mod tests {
         assert!(!light.is_empty() && !dark.is_empty());
         assert_ne!(light, dark);
     }
+
+    #[test]
+    fn every_named_theme_yields_a_usable_palette() {
+        // The resolves-to-a-real-theme test only checks the name exists. This
+        // checks the theme actually carries the background and foreground the
+        // chrome derivation needs — a bundled theme missing either would make
+        // palette_for return None indistinguishably from "no such name".
+        for theme in crate::theme::Theme::all() {
+            if let Some(name) = theme.syntect_name() {
+                let got = palette_for(name);
+                assert!(got.is_some(), "{name} has no usable palette");
+                let (css, bg, fg) = got.unwrap();
+                assert!(!css.is_empty(), "{name} produced empty CSS");
+                assert_ne!(bg, fg, "{name} background and foreground are identical");
+            }
+        }
+    }
 }

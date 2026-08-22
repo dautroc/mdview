@@ -303,23 +303,22 @@ mod tests {
     }
 
     #[test]
-    fn highlight_sheets_are_selected_by_media_not_nesting() {
-        // Syntect sheets are whole rulesets; nesting them under
-        // `:root[data-theme=…]` needs CSS Nesting, which WebKit lacks before
-        // macOS 13.4 while this app supports 11.0. Media queries select the
-        // appropriate sheet; the chrome block in page.css applies to the selection.
-        let dark = build_page(&doc(), "", crate::theme::Theme::SolarizedDark);
-        assert!(dark.contains("data-theme=\"solarized-dark\""));
-        assert!(dark.contains("id=\"mdview-hl-dark\" media=\"all\""));
-        assert!(dark.contains("id=\"mdview-hl-light\" media=\"not all\""));
+    fn no_css_nesting_is_emitted() {
+        // WebKit before macOS 13.4 cannot parse nested rules and the bundle
+        // declares 11.0, so a nested block fails silently at parse time.
+        let dark = build_page(&doc(), "", Theme::SolarizedDark);
+        assert!(!dark.contains("] { /*"), "syntect CSS must not be nested under a selector");
+    }
 
-        let light = build_page(&doc(), "", crate::theme::Theme::GitHub);
-        assert!(light.contains("data-theme=\"github\""));
-        assert!(light.contains("id=\"mdview-hl-light\" media=\"all\""));
-        assert!(light.contains("id=\"mdview-hl-dark\" media=\"not all\""));
-
-        let system = build_page(&doc(), "", crate::theme::Theme::System);
-        assert!(system.contains("id=\"mdview-hl-dark\" media=\"(prefers-color-scheme: dark)\""));
+    #[test]
+    fn chrome_is_not_yet_derived_from_the_named_theme() {
+        // TRANSITIONAL, remove in Task 2. page.css still keys chrome off
+        // [data-theme="light"|"dark"], which as_wire() no longer emits, so a
+        // named theme currently gets syntect colours with fallback chrome.
+        // Task 2 replaces this with a positive assertion that --bg matches the
+        // theme's own palette background.
+        let dark = build_page(&doc(), "", Theme::Mocha);
+        assert!(!dark.contains("--bg:#3b3228"), "Task 2 should have replaced this test");
     }
 
     #[test]

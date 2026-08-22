@@ -60,7 +60,7 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         code_bg,
         link: accent,
         banner_bg: mix(bg, warn, if dark { 0.18 } else { 0.22 }),
-        banner_fg: if dark { warn } else { warn },
+        banner_fg: warn,
         banner_border: mix(bg, warn, 0.45),
     }
 }
