@@ -171,6 +171,9 @@
   // so that attribute must go too.
   function rerenderDiagrams() {
     var nodes = document.querySelectorAll("pre.mermaid[data-mermaid-src]");
+    // Nothing to re-theme. Skip rather than paying mermaid.initialize() and
+    // run() on every theme toggle for a document that has no diagrams.
+    if (!nodes.length) return Promise.resolve();
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       node.removeAttribute("data-processed");
@@ -188,11 +191,18 @@
       document.documentElement.setAttribute("data-theme", theme);
     }
     applyHighlightSheets(theme);
+    // Everything above is an attribute flip and repaints instantly — but the
+    // browser cannot paint until this task yields, and re-rendering diagrams
+    // does substantial synchronous work in mermaid. Defer it a frame so the
+    // theme change is visible immediately and the diagrams catch up.
+    //
     // rerenderDiagrams() destroys and rebuilds every pre.mermaid node, taking
     // the zoom wrapper and button with it (wrapZoomable inserts them inside
     // that node). Chain the enhancer exactly as mdviewRenderAll does, or
     // diagrams lose click-to-zoom until the next save.
-    rerenderDiagrams().then(enhanceZoomables);
+    requestAnimationFrame(function () {
+      rerenderDiagrams().then(enhanceZoomables);
+    });
   };
 
   function getLightbox() {
