@@ -3,6 +3,24 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.4.0](https://github.com/dautroc/mdview/releases/tag/v0.4.0) — 2026-08-22
+
+### What’s new
+
+- **Git diff view:** inspect the current open Markdown file against `HEAD` in
+  unified or split layout, with syntax highlighting, source line numbers, and
+  theme-aware additions, deletions, and hunks.
+- **Contextual view toolbar:** switch between Markdown and diff views with
+  compact controls that stay inside the document area, while Full Width remains
+  available from the overflow menu.
+- **Diff layout preference:** Unified/Split selection is remembered globally;
+  diff mode remains local to each document window.
+
+### Fixes
+
+- Diff availability now stays synchronized during live reloads, including when
+  a tracked file becomes unavailable or a stale diff view needs to be closed.
+
 ## [v0.3.0](https://github.com/dautroc/mdview/releases/tag/v0.3.0) — 2026-08-22
 
 ### What’s new
@@ -78,4 +96,3 @@ and Mermaid diagrams locally with all rendering assets embedded in the app.
 
 - Universal Apple silicon and Intel DMG, ad-hoc signed with first-launch
   Gatekeeper instructions. ([e600558](https://github.com/dautroc/mdview/commit/e600558))
-

@@ -496,6 +496,87 @@
 
   window.mdviewSetSidebar = setSidebar;
 
+  // ---- Document options ---------------------------------------------------
+  function syncOptions() {
+    var root = document.documentElement;
+    var diff = root.getAttribute("data-view") === "diff";
+    var menu = document.getElementById("mdview-options-menu");
+    var viewToggle = document.getElementById("mdview-view-toggle");
+    var layoutControls = document.getElementById("mdview-diff-layout-controls");
+    var fullWidthToggle = document.getElementById("mdview-fullwidth-toggle");
+    if (viewToggle) {
+      viewToggle.textContent = diff ? "Show Markdown" : "Show Diff";
+      viewToggle.setAttribute("aria-pressed", diff ? "true" : "false");
+      viewToggle.disabled = !diff && !window.mdviewDiffAvailable;
+    }
+    if (layoutControls) layoutControls.hidden = !diff;
+    var layout = root.getAttribute("data-diff-layout") || "unified";
+    var choices = document.querySelectorAll(".mdview-layout-choice");
+    for (var i = 0; i < choices.length; i++) {
+      var selected = choices[i].getAttribute("data-layout") === layout;
+      choices[i].setAttribute("data-selected", selected ? "true" : "false");
+      choices[i].setAttribute("aria-pressed", selected ? "true" : "false");
+    }
+    if (fullWidthToggle) {
+      var full = root.getAttribute("data-fullwidth") === "1";
+      fullWidthToggle.textContent = full ? "Exit Full Width" : "Full Width";
+      fullWidthToggle.setAttribute("aria-pressed", full ? "true" : "false");
+    }
+    if (menu && !diff) {
+      // Keep the menu open when switching back to Markdown; the user can see
+      // the available controls without an extra click.
+    }
+  }
+
+  window.mdviewDiffAvailable = false;
+  window.mdviewSetDiffAvailability = function (available) {
+    window.mdviewDiffAvailable = !!available;
+    syncOptions();
+  };
+  window.mdviewSetViewState = function (view, layout, fullWidth, available) {
+    var root = document.documentElement;
+    if (view === "diff") root.setAttribute("data-view", "diff");
+    else root.removeAttribute("data-view");
+    if (layout) root.setAttribute("data-diff-layout", layout);
+    if (fullWidth) root.setAttribute("data-fullwidth", "1");
+    else root.removeAttribute("data-fullwidth");
+    if (typeof available === "boolean") window.mdviewDiffAvailable = available;
+    syncOptions();
+  };
+
+  function attachOptionsListeners() {
+    var toggle = document.getElementById("mdview-options-toggle");
+    var menu = document.getElementById("mdview-options-menu");
+    if (!toggle || !menu) return;
+    toggle.addEventListener("click", function (event) {
+      event.stopPropagation();
+      menu.hidden = !menu.hidden;
+      toggle.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+    });
+    var viewToggle = document.getElementById("mdview-view-toggle");
+    if (viewToggle) viewToggle.addEventListener("click", function () { postToHost("toggleDiff"); });
+    var choices = document.querySelectorAll(".mdview-layout-choice");
+    for (var i = 0; i < choices.length; i++) {
+      (function (choice) {
+        choice.addEventListener("click", function () {
+          postToHost("setDiffLayout:" + choice.getAttribute("data-layout"));
+        });
+      })(choices[i]);
+    }
+    var fullWidthToggle = document.getElementById("mdview-fullwidth-toggle");
+    if (fullWidthToggle) fullWidthToggle.addEventListener("click", function () { postToHost("toggleFullWidth"); });
+    document.addEventListener("click", function (event) {
+      if (!menu.hidden && !menu.contains(event.target) && event.target !== toggle) {
+        menu.hidden = true;
+        toggle.setAttribute("aria-expanded", "false");
+      }
+    });
+    syncOptions();
+    if (typeof MutationObserver !== "undefined") {
+      new MutationObserver(syncOptions).observe(document.documentElement, { attributes: true, attributeFilter: ["data-view", "data-diff-layout", "data-fullwidth"] });
+    }
+  }
+
   // ---- Sidebar event listeners (attach once at DOMContentLoaded) ----------
   //
   // The sidebar markup is OUTSIDE #mdview-content and is therefore not
@@ -599,6 +680,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     attachSidebarListeners();
+    attachOptionsListeners();
     window.mdviewRenderAll();
   });
 })();

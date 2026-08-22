@@ -8,6 +8,12 @@
   --banner-bg: #fff8c5;
   --banner-fg: #4d3800;
   --banner-border: #d4a72c;
+  --diff-add-bg: #dff4e5;
+  --diff-add-fg: #1f2328;
+  --diff-del-bg: #ffebe9;
+  --diff-del-fg: #1f2328;
+  --diff-hunk-bg: #e7f0ff;
+  --diff-hunk-fg: #1f2328;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,6 +27,12 @@
     --banner-bg: #3b2300;
     --banner-fg: #f8e3a1;
     --banner-border: #9e6a03;
+    --diff-add-bg: #1b3a27;
+    --diff-add-fg: #e6edf3;
+    --diff-del-bg: #4b2223;
+    --diff-del-fg: #e6edf3;
+    --diff-hunk-bg: #1f334b;
+    --diff-hunk-fg: #e6edf3;
   }
 }
 
@@ -222,7 +234,7 @@ img { max-width: 100%; }
 .mdview-lightbox-close:hover { background: var(--code-bg); }
 
 #mdview-layout { display: flex; align-items: flex-start; }
-#mdview-main { flex: 1 1 auto; min-width: 0; }
+#mdview-main { flex: 1 1 auto; min-width: 0; position: relative; }
 
 #mdview-content {
   margin: 0 auto;
@@ -230,7 +242,122 @@ img { max-width: 100%; }
   padding: 3rem 1.5rem 6rem;
 }
 
+/* Git diff view --------------------------------------------------------- */
+
+.mdview-diff {
+  color: var(--fg);
+  font: 13px/1.55 "SF Mono", Menlo, monospace;
+  margin: 0;
+  max-width: none;
+  padding: 3rem 1rem 5rem;
+}
+
+.mdview-diff-hunk {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0 0 1rem;
+  overflow: hidden;
+}
+
+.mdview-diff-hunk-head {
+  background: var(--diff-hunk-bg);
+  color: var(--diff-hunk-fg);
+  font-weight: 600;
+  padding: .35rem .65rem;
+  white-space: pre-wrap;
+}
+
+.mdview-diff-row,
+.mdview-diff-split-row,
+.mdview-diff-side {
+  min-width: 0;
+}
+
+.mdview-diff-row {
+  display: grid;
+  grid-template-columns: 4.5rem 4.5rem 1.5rem minmax(0, 1fr);
+}
+
+.mdview-diff-row > *,
+.mdview-diff-side > * {
+  border-top: 1px solid var(--border);
+  padding: .15rem .5rem;
+}
+
+.mdview-diff-num {
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.mdview-diff-marker {
+  color: var(--muted);
+  text-align: center;
+  user-select: none;
+}
+
+.mdview-diff-code {
+  background: transparent;
+  border-radius: 0;
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-left: .25rem;
+  white-space: pre-wrap;
+}
+
+.mdview-diff-no-newline {
+  color: var(--muted);
+  font-style: italic;
+  margin-left: .5rem;
+}
+
+.mdview-diff-row-added > *,
+.mdview-diff-side-new.mdview-diff-row-added {
+  background: var(--diff-add-bg);
+  color: var(--diff-add-fg);
+}
+
+.mdview-diff-row-removed > *,
+.mdview-diff-side-old.mdview-diff-row-removed {
+  background: var(--diff-del-bg);
+  color: var(--diff-del-fg);
+}
+
+.mdview-diff-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.mdview-diff-side {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+}
+
+.mdview-diff-side-old {
+  border-right: 1px solid var(--border);
+}
+
+.mdview-diff-placeholder { background: var(--code-bg); }
+
+.mdview-diff-empty {
+  color: var(--muted);
+  font: 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  margin: 0 auto;
+  max-width: 46rem;
+  padding: 5rem 1.5rem;
+  text-align: center;
+}
+
+@media (max-width: 700px) {
+  .mdview-diff-row { grid-template-columns: 3rem 3rem 1.25rem minmax(0, 1fr); }
+  .mdview-diff-side { grid-template-columns: 3rem minmax(0, 1fr); }
+  .mdview-diff-split-row { grid-template-columns: minmax(0, 1fr); }
+  .mdview-diff-side-old { border-right: 0; }
+}
+
 :root[data-fullwidth="1"] #mdview-content { max-width: none; }
+:root[data-view="diff"] #mdview-content { max-width: none; padding: 0; }
 
 #mdview-sidebar {
   border-left: 1px solid var(--border);
@@ -268,6 +395,76 @@ img { max-width: 100%; }
 }
 #mdview-sidebar-toggle:hover { background: var(--border); }
 #mdview-sidebar-toggle svg { display: block; }
+
+#mdview-toolbar {
+  align-items: center;
+  display: flex;
+  gap: .25rem;
+  position: absolute;
+  right: .75rem;
+  top: .55rem;
+  z-index: 2;
+}
+#mdview-contextual-controls,
+#mdview-diff-layout-controls,
+#mdview-options { align-items: center; display: flex; gap: .2rem; }
+#mdview-contextual-controls > button,
+#mdview-layout-choice,
+.mdview-layout-choice,
+#mdview-options-toggle {
+  align-items: center;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  line-height: 1;
+  padding: .35rem;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  white-space: nowrap;
+}
+#mdview-contextual-controls > button:hover,
+.mdview-layout-choice:hover,
+#mdview-options-toggle:hover { background: var(--border); }
+#mdview-contextual-controls > button:disabled,
+.mdview-layout-choice:disabled { cursor: default; opacity: .45; }
+.mdview-layout-choice[aria-pressed="true"] {
+  background: var(--border);
+  font-weight: 600;
+}
+#mdview-options { position: relative; }
+#mdview-options-toggle { padding-left: .5rem; padding-right: .5rem; }
+#mdview-options-menu {
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.18); display: flex; flex-direction: column;
+  gap: .25rem; min-width: 150px; padding: .4rem;
+  position: absolute; right: 0; top: calc(100% + .35rem);
+}
+#mdview-options-menu[hidden] { display: none; }
+#mdview-options-menu button {
+  background: none; border: 1px solid transparent; border-radius: 4px; color: var(--muted);
+  cursor: pointer; font: inherit; padding: .35rem .45rem; text-align: left;
+}
+#mdview-options-menu button:hover,
+#mdview-options-menu button[aria-pressed="true"],
+#mdview-options-menu button[data-selected="true"] {
+  background: var(--bg); border-color: var(--border); color: var(--fg);
+}
+#mdview-diff-layout-controls {
+  display: flex;
+}
+#mdview-diff-layout-controls[hidden] { display: none; }
+
+@media (max-width: 700px) {
+  #mdview-toolbar { right: .5rem; }
+  #mdview-contextual-controls > button,
+  .mdview-layout-choice,
+  #mdview-options-toggle { padding-left: .3rem; padding-right: .3rem; min-width: 1.8rem; }
+}
 
 .mdview-sidebar-head {
   align-items: center;

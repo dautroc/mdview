@@ -63,6 +63,77 @@ impl Highlighter {
             ),
         }
     }
+
+    /// Highlight a complete Markdown source and return independently
+    /// renderable fragments for each source line. The syntax parser runs over
+    /// the complete document first, then span tags are balanced at line
+    /// boundaries so a diff row can safely move one line without corrupting
+    /// the surrounding HTML.
+    pub fn render_markdown_lines(&self, source: &str) -> Vec<String> {
+        if source.is_empty() {
+            return Vec::new();
+        }
+        let Some(syntax) = self.syntaxes.find_syntax_by_name("Markdown") else {
+            return source.lines().map(crate::escape::escape_html).collect();
+        };
+        let mut generator =
+            ClassedHTMLGenerator::new_with_class_style(syntax, &self.syntaxes, CLASS_STYLE);
+        for line in LinesWithEndings::from(source) {
+            let _ = generator.parse_html_for_line_which_includes_newline(line);
+        }
+        let mut lines = split_balanced_lines(&generator.finalize());
+        lines.truncate(source.lines().count());
+        lines
+    }
+}
+
+fn split_balanced_lines(html: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut open_tags: Vec<String> = Vec::new();
+    let mut cursor = 0;
+    while cursor < html.len() {
+        let rest = &html[cursor..];
+        if rest.starts_with('\n') {
+            append_closures(&mut current, &open_tags);
+            lines.push(current);
+            current = String::new();
+            for tag in &open_tags {
+                current.push_str(tag);
+            }
+            cursor += 1;
+            continue;
+        }
+        if rest.starts_with("<span ") {
+            if let Some(end) = rest.find('>') {
+                let tag = &rest[..=end];
+                open_tags.push(tag.to_string());
+                current.push_str(tag);
+                cursor += end + 1;
+                continue;
+            }
+        }
+        if rest.starts_with("</span>") {
+            current.push_str("</span>");
+            open_tags.pop();
+            cursor += "</span>".len();
+            continue;
+        }
+        let ch = rest.chars().next().expect("cursor is within html");
+        current.push(ch);
+        cursor += ch.len_utf8();
+    }
+    if !current.is_empty() || (lines.is_empty() && !html.is_empty()) {
+        append_closures(&mut current, &open_tags);
+        lines.push(current);
+    }
+    lines
+}
+
+fn append_closures(target: &mut String, open_tags: &[String]) {
+    for _ in open_tags.iter().rev() {
+        target.push_str("</span>");
+    }
 }
 
 /// CSS for the highlight classes, as `(light, dark)`. Both are emitted into
@@ -147,6 +218,23 @@ mod tests {
         let (light, dark) = theme_css();
         assert!(!light.is_empty() && !dark.is_empty());
         assert_ne!(light, dark);
+    }
+
+    #[test]
+    fn markdown_lines_keep_multiline_spans_balanced() {
+        let hl = Highlighter::new();
+        let lines = hl.render_markdown_lines("# Title\n\n**bold**\n");
+        assert_eq!(lines.len(), 3);
+        for line in &lines {
+            assert_eq!(line.matches("<span ").count(), line.matches("</span>").count());
+        }
+        assert!(lines[0].contains("Title"));
+        assert!(lines[2].contains("bold"));
+    }
+
+    #[test]
+    fn empty_markdown_has_no_diff_lines() {
+        assert!(Highlighter::new().render_markdown_lines("").is_empty());
     }
 
     #[test]

@@ -1,7 +1,21 @@
 //! Pure application-state logic: history, bookmarks, and the page bridge's
 //! wire format. No AppKit, no I/O — everything here is unit-tested.
 
-use mdcore::Theme;
+use mdcore::{DiffLayout, Theme};
+
+pub fn resolve_diff_layout(stored: Option<&str>) -> DiffLayout {
+    match stored {
+        Some("split") => DiffLayout::Split,
+        _ => DiffLayout::Unified,
+    }
+}
+
+pub fn diff_layout_wire(layout: DiffLayout) -> &'static str {
+    match layout {
+        DiffLayout::Unified => "unified",
+        DiffLayout::Split => "split",
+    }
+}
 
 #[allow(dead_code)]
 pub fn resolve_full_width(stored: Option<bool>) -> bool {
@@ -65,6 +79,9 @@ pub fn is_bookmarked(list: &[String], path: &str) -> bool {
 pub enum Message {
     SetTheme(Theme, Option<u32>),
     ToggleBookmark,
+    ToggleDiff,
+    SetDiffLayout(DiffLayout),
+    ToggleFullWidth,
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
 }
@@ -76,8 +93,19 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     if raw == "toggleBookmark" {
         return Some(Message::ToggleBookmark);
     }
+    if raw == "toggleDiff" {
+        return Some(Message::ToggleDiff);
+    }
+    if raw == "toggleFullWidth" {
+        return Some(Message::ToggleFullWidth);
+    }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
+        "setDiffLayout" => match rest {
+            "unified" => Some(Message::SetDiffLayout(DiffLayout::Unified)),
+            "split" => Some(Message::SetDiffLayout(DiffLayout::Split)),
+            _ => None,
+        },
         "setTheme" => {
             // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
             let (wire, scroll_str) = match rest.split_once(':') {
@@ -165,6 +193,12 @@ mod tests {
             parse_message("openPath:/Users/x/a.md"),
             Some(Message::OpenPath("/Users/x/a.md".into()))
         );
+        assert_eq!(parse_message("toggleDiff"), Some(Message::ToggleDiff));
+        assert_eq!(
+            parse_message("setDiffLayout:split"),
+            Some(Message::SetDiffLayout(DiffLayout::Split))
+        );
+        assert_eq!(parse_message("toggleFullWidth"), Some(Message::ToggleFullWidth));
         assert_eq!(
             parse_message("setSidebar:1:bookmarks"),
             Some(Message::SetSidebar { open: true, tab: "bookmarks".into() })
@@ -264,5 +298,14 @@ mod tests {
             scripts,
             vec!["sidebar", "bookmarks", full_width_script(true)]
         );
+    }
+
+    #[test]
+    fn diff_layout_defaults_to_unified_and_round_trips_split() {
+        assert_eq!(resolve_diff_layout(None), DiffLayout::Unified);
+        assert_eq!(resolve_diff_layout(Some("unified")), DiffLayout::Unified);
+        assert_eq!(resolve_diff_layout(Some("split")), DiffLayout::Split);
+        assert_eq!(diff_layout_wire(DiffLayout::Unified), "unified");
+        assert_eq!(diff_layout_wire(DiffLayout::Split), "split");
     }
 }

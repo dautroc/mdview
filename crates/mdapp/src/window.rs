@@ -18,6 +18,12 @@ use objc2_foundation::{
 };
 use objc2_web_kit::{WKNavigation, WKWebView, WKWebViewConfiguration};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Rendered,
+    Diff,
+}
+
 /// Ivars for `WindowCloseDelegate`: just the shared flag it flips.
 pub struct WindowCloseState {
     closed: Rc<Cell<bool>>,
@@ -92,6 +98,8 @@ pub struct DocumentWindow {
     /// The retained navigation expected to finish. Replacing this before each
     /// load makes a late completion from an older page harmless.
     expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
+    view_mode: Cell<ViewMode>,
+    diff_available: Cell<bool>,
 }
 
 impl DocumentWindow {
@@ -194,6 +202,11 @@ impl DocumentWindow {
             expecting_own_load,
             page_ready,
             expected_navigation,
+            view_mode: Cell::new(ViewMode::Rendered),
+            diff_available: Cell::new(matches!(
+                mdcore::diff::availability(path),
+                mdcore::DiffAvailability::Available
+            )),
         });
 
         doc_window.reload(highlighter);
@@ -236,7 +249,22 @@ impl DocumentWindow {
             &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
         );
         self.apply_window_chrome(theme);
-        match mdcore::render_document_with(&path, highlighter, theme) {
+        self.diff_available.set(matches!(
+            mdcore::diff::availability(&path),
+            mdcore::DiffAvailability::Available
+        ));
+        let rendered = match self.view_mode.get() {
+            ViewMode::Rendered => mdcore::render_document_with(&path, highlighter, theme)
+                .map_err(|err| err.to_string()),
+            ViewMode::Diff => mdcore::render_diff_document_with(
+                &path,
+                highlighter,
+                theme,
+                self.diff_layout(),
+            )
+            .map_err(|err| err.to_string()),
+        };
+        match rendered {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
                 self.page_ready.set(false);
@@ -269,6 +297,13 @@ impl DocumentWindow {
                     &mut self.pending_scripts.borrow_mut(),
                     full_width,
                 );
+                let view = if self.view_mode.get() == ViewMode::Diff { "diff" } else { "rendered" };
+                let layout = crate::state::diff_layout_wire(self.diff_layout());
+                let available = self.diff_available.get();
+                self.pending_scripts.borrow_mut().push(format!(
+                    "window.mdviewSetViewState && window.mdviewSetViewState('{}', '{}', {}, {});",
+                    view, layout, full_width, available
+                ));
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
                 if doc.lossy {
@@ -286,7 +321,7 @@ impl DocumentWindow {
                     ));
                 }
             }
-            Err(err) => self.show_error(&err.to_string()),
+            Err(err) => self.show_error(&err),
         }
     }
 
@@ -362,6 +397,7 @@ impl DocumentWindow {
 
     pub fn load(&self, path: &Path, highlighter: &Highlighter) {
         *self.path.borrow_mut() = path.to_path_buf();
+        self.view_mode.set(ViewMode::Rendered);
         *self.watcher.borrow_mut() = None;
         *self.watcher.borrow_mut() = crate::watcher::FileWatcher::start(path).ok();
         self.pending_banners.borrow_mut().clear();
@@ -370,6 +406,38 @@ impl DocumentWindow {
         // its own terms rather than depending on a detail of `reload`.
         self.clear_banner("missing");
         self.clear_banner("lossy");
+    }
+
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode.get()
+    }
+
+    pub fn can_show_diff(&self) -> bool {
+        self.diff_available.get() || self.view_mode.get() == ViewMode::Diff
+    }
+
+    pub fn diff_layout(&self) -> mdcore::DiffLayout {
+        crate::state::resolve_diff_layout(
+            crate::defaults::get_string(crate::defaults::DIFF_LAYOUT_KEY).as_deref(),
+        )
+    }
+
+    pub fn toggle_diff(&self, highlighter: &Highlighter) {
+        self.view_mode.set(match self.view_mode.get() {
+            ViewMode::Rendered => ViewMode::Diff,
+            ViewMode::Diff => ViewMode::Rendered,
+        });
+        self.reload(highlighter);
+    }
+
+    pub fn set_diff_layout(&self, layout: mdcore::DiffLayout, highlighter: &Highlighter) {
+        crate::defaults::set_string(
+            crate::defaults::DIFF_LAYOUT_KEY,
+            crate::state::diff_layout_wire(layout),
+        );
+        if self.view_mode.get() == ViewMode::Diff {
+            self.reload(highlighter);
+        }
     }
 
     /// Replace the window contents with a readable error page. Used when the
@@ -408,8 +476,26 @@ impl DocumentWindow {
         }
 
         let path = self.path.borrow().clone();
+        self.diff_available.set(matches!(
+            mdcore::diff::availability(&path),
+            mdcore::DiffAvailability::Available
+        ));
+        self.eval_script(&format!(
+            "window.mdviewSetDiffAvailability && window.mdviewSetDiffAvailability({});",
+            self.diff_available.get()
+        ));
 
-        let (body, lossy) = match mdcore::render_body_of(&path, highlighter) {
+        let rendered = match self.view_mode.get() {
+            ViewMode::Rendered => mdcore::render_body_of(&path, highlighter)
+                .map_err(|err| err.to_string()),
+            ViewMode::Diff => mdcore::render_diff_body_of(
+                &path,
+                highlighter,
+                self.diff_layout(),
+            )
+            .map_err(|err| err.to_string()),
+        };
+        let (body, lossy) = match rendered {
             Ok(result) => result,
             Err(err) => {
                 // Keep the last good render on screen and say why it is stale.

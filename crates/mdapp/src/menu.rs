@@ -9,12 +9,39 @@ use objc2_foundation::{MainThreadMarker, NSString};
 
 const FULL_WIDTH_TITLE: &str = "Full Width";
 const FULL_WIDTH_KEY_EQUIVALENT: &str = "f";
+const DIFF_TITLE: &str = "Show Diff";
+const DIFF_KEY_EQUIVALENT: &str = "d";
 
 pub(crate) fn full_width_menu_state(enabled: bool) -> NSControlStateValue {
     if enabled {
         NSControlStateValueOn
     } else {
         NSControlStateValueOff
+    }
+}
+
+pub(crate) fn diff_menu_state(enabled: bool) -> NSControlStateValue {
+    full_width_menu_state(enabled)
+}
+
+pub(crate) fn diff_layout_menu_state(selected: bool) -> NSControlStateValue {
+    full_width_menu_state(selected)
+}
+
+pub(crate) fn set_diff_layout_states(sender: &NSMenuItem, layout: mdcore::DiffLayout) {
+    let Some(menu) = (unsafe { sender.menu() }) else {
+        return;
+    };
+    for index in 0..menu.numberOfItems() {
+        let Some(item) = menu.itemAtIndex(index) else { continue };
+        let selected = match item.action() {
+            Some(action) if action == sel!(setUnifiedDiff:) => {
+                layout == mdcore::DiffLayout::Unified
+            }
+            Some(action) if action == sel!(setSplitDiff:) => layout == mdcore::DiffLayout::Split,
+            _ => continue,
+        };
+        item.setState(diff_layout_menu_state(selected));
     }
 }
 
@@ -113,6 +140,22 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     ));
     full_width_item.setState(full_width_menu_state(full_width));
     view_menu.addItem(&full_width_item);
+    let diff_item = item(mtm, DIFF_TITLE, sel!(toggleDiff:), DIFF_KEY_EQUIVALENT);
+    diff_item.setKeyEquivalentModifierMask(
+        NSEventModifierFlags::Command | NSEventModifierFlags::Option,
+    );
+    view_menu.addItem(&diff_item);
+    let (layout_holder, layout_menu) = submenu(mtm, "Diff Layout");
+    let unified = item(mtm, "Unified", sel!(setUnifiedDiff:), "");
+    let split = item(mtm, "Split", sel!(setSplitDiff:), "");
+    let layout = crate::state::resolve_diff_layout(
+        crate::defaults::get_string(crate::defaults::DIFF_LAYOUT_KEY).as_deref(),
+    );
+    unified.setState(diff_layout_menu_state(layout == mdcore::DiffLayout::Unified));
+    split.setState(diff_layout_menu_state(layout == mdcore::DiffLayout::Split));
+    layout_menu.addItem(&unified);
+    layout_menu.addItem(&split);
+    view_menu.addItem(&layout_holder);
     menubar.addItem(&view_holder);
 
     let (bm_holder, bm_menu) = submenu(mtm, "Bookmarks");
@@ -154,5 +197,17 @@ mod tests {
     fn fullwidth_menu_checkmark_matches_the_preference() {
         assert_eq!(full_width_menu_state(true), NSControlStateValueOn);
         assert_eq!(full_width_menu_state(false), NSControlStateValueOff);
+    }
+
+    #[test]
+    fn diff_menu_contract_uses_option_command_d() {
+        assert_eq!(DIFF_TITLE, "Show Diff");
+        assert_eq!(DIFF_KEY_EQUIVALENT, "d");
+    }
+
+    #[test]
+    fn diff_layout_checkmarks_are_exclusive() {
+        assert_eq!(diff_layout_menu_state(true), NSControlStateValueOn);
+        assert_eq!(diff_layout_menu_state(false), NSControlStateValueOff);
     }
 }

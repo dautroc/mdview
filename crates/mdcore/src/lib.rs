@@ -5,6 +5,7 @@
 pub mod assets;
 pub mod chrome;
 pub mod document;
+pub mod diff;
 pub mod escape;
 pub mod highlight;
 pub mod images;
@@ -17,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 pub use chrome::Rgb;
 pub use document::{Document, DocumentError};
+pub use diff::{DiffAvailability, DiffError, DiffHunk, DiffLayout, DiffLine, DiffLineKind, GitDiff, SplitRow};
 pub use highlight::Highlighter;
 pub use theme::Theme;
 
@@ -62,6 +64,37 @@ pub fn render_body_of(
     let doc = Document::load(path)?;
     let body = render::render_body_in(&doc.source, highlighter, Some(&doc.base_dir));
     Ok((body, doc.lossy))
+}
+
+/// Load and render a Markdown file as a Git diff against HEAD.
+pub fn render_diff_document_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+) -> Result<RenderedDoc, DiffError> {
+    let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
+    let diff = diff::load_diff(&doc.path)?;
+    let body = diff::render_body(&diff, &doc.source, highlighter, layout);
+    Ok(RenderedDoc {
+        html: page::build_page(&doc, &body, theme),
+        base_dir: doc.base_dir.clone(),
+        lossy: doc.lossy,
+    })
+}
+
+/// Render only the Git diff body for live reload.
+pub fn render_diff_body_of(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    layout: DiffLayout,
+) -> Result<(String, bool), DiffError> {
+    let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
+    let diff = diff::load_diff(&doc.path)?;
+    Ok((
+        diff::render_body(&diff, &doc.source, highlighter, layout),
+        doc.lossy,
+    ))
 }
 
 pub fn version() -> &'static str {

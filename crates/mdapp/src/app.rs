@@ -6,7 +6,10 @@ use mdcore::Highlighter;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuItem};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu,
+    NSMenuItem, NSMenuItemValidation,
+};
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString,
     NSTimer, NSURL,
@@ -32,6 +35,28 @@ define_class!(
     pub struct AppDelegate;
 
     unsafe impl NSObjectProtocol for AppDelegate {}
+
+    unsafe impl NSMenuItemValidation for AppDelegate {
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            let Some(window) = self.frontmost_window() else {
+                return false.into();
+            };
+            let valid = match item.action() {
+                Some(action) if action == objc2::sel!(toggleDiff:) => {
+                    window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff
+                },
+                Some(action)
+                    if action == objc2::sel!(setUnifiedDiff:)
+                        || action == objc2::sel!(setSplitDiff:) =>
+                {
+                    window.view_mode() == crate::window::ViewMode::Diff
+                }
+                _ => true,
+            };
+            valid.into()
+        }
+    }
 
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
@@ -205,14 +230,34 @@ define_class!(
 
         #[unsafe(method(toggleFullWidth:))]
         fn toggle_full_width_action(&self, sender: Option<&NSMenuItem>) {
-            let enabled = crate::state::next_full_width(crate::defaults::get_bool_opt(crate::defaults::FULL_WIDTH_KEY));
-            crate::defaults::set_bool(crate::defaults::FULL_WIDTH_KEY, enabled);
+            let enabled = self.toggle_full_width_native();
             if let Some(item) = sender {
                 item.setState(crate::menu::full_width_menu_state(enabled));
             }
-            for window in self.ivars().windows.borrow().iter() {
-                window.set_full_width(enabled);
+        }
+
+        #[unsafe(method(toggleDiff:))]
+        fn toggle_diff_action(&self, sender: Option<&NSMenuItem>) {
+            let Some(window) = self.frontmost_window() else { return };
+            if !window.can_show_diff() && window.view_mode() != crate::window::ViewMode::Diff {
+                return;
             }
+            window.toggle_diff(&self.ivars().highlighter);
+            if let Some(item) = sender {
+                item.setState(crate::menu::diff_menu_state(
+                    window.view_mode() == crate::window::ViewMode::Diff,
+                ));
+            }
+        }
+
+        #[unsafe(method(setUnifiedDiff:))]
+        fn set_unified_diff_action(&self, sender: Option<&NSMenuItem>) {
+            self.set_diff_layout(mdcore::DiffLayout::Unified, sender);
+        }
+
+        #[unsafe(method(setSplitDiff:))]
+        fn set_split_diff_action(&self, sender: Option<&NSMenuItem>) {
+            self.set_diff_layout(mdcore::DiffLayout::Split, sender);
         }
 
         #[unsafe(method(toggleBookmark:))]
@@ -242,6 +287,22 @@ define_class!(
 );
 
 impl AppDelegate {
+    fn toggle_full_width_native(&self) -> bool {
+        let enabled = crate::state::next_full_width(crate::defaults::get_bool_opt(crate::defaults::FULL_WIDTH_KEY));
+        crate::defaults::set_bool(crate::defaults::FULL_WIDTH_KEY, enabled);
+        for window in self.ivars().windows.borrow().iter() {
+            window.set_full_width(enabled);
+        }
+        enabled
+    }
+
+    fn set_diff_layout(&self, layout: mdcore::DiffLayout, sender: Option<&NSMenuItem>) {
+        let Some(window) = self.frontmost_window() else { return };
+        window.set_diff_layout(layout, &self.ivars().highlighter);
+        if let Some(sender) = sender {
+            crate::menu::set_diff_layout_states(sender, layout);
+        }
+    }
     pub fn new(
         mtm: MainThreadMarker,
         startup_paths: Vec<PathBuf>,
@@ -476,6 +537,21 @@ impl AppDelegate {
                 );
                 crate::defaults::set_strings(crate::defaults::BOOKMARKS_KEY, &updated);
                 self.push_bookmarks_to_pages();
+            }
+            Message::ToggleDiff => {
+                if let Some(window) = self.frontmost_window() {
+                    if window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff {
+                        window.toggle_diff(&self.ivars().highlighter);
+                    }
+                }
+            }
+            Message::SetDiffLayout(layout) => {
+                if let Some(window) = self.frontmost_window() {
+                    window.set_diff_layout(layout, &self.ivars().highlighter);
+                }
+            }
+            Message::ToggleFullWidth => {
+                self.toggle_full_width_native();
             }
             Message::OpenPath(path) => {
                 self.open_document(std::path::Path::new(&path));

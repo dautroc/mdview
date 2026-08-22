@@ -117,6 +117,18 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         Some(false) => " data-dark=\"0\"".to_string(),
         None => String::new(),
     };
+    let view_attr = if body_html.contains("class=\"mdview-diff ") {
+        " data-view=\"diff\""
+    } else {
+        ""
+    };
+    let diff_layout_attr = if body_html.contains("mdview-diff-split") {
+        " data-diff-layout=\"split\""
+    } else if body_html.contains("mdview-diff-unified") {
+        " data-diff-layout=\"unified\""
+    } else {
+        ""
+    };
 
     // Emit chrome and syntax CSS for *every* named theme, not just the active
     // one. Applying a theme is then a matter of flipping `data-theme` and the
@@ -161,7 +173,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 
     format!(
         r#"<!DOCTYPE html>
-<html{theme_attr}{dark_attr}>
+<html{theme_attr}{dark_attr}{view_attr}{diff_layout_attr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -175,7 +187,24 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <body>
 <div id="mdview-banners"></div>
 <div id="mdview-layout">
-<main id="mdview-main"><div id="mdview-content">{body}</div></main>
+<main id="mdview-main">
+<div id="mdview-toolbar" role="toolbar" aria-label="Document view controls">
+<div id="mdview-contextual-controls">
+<button type="button" id="mdview-view-toggle" aria-label="Toggle Git diff view" title="Toggle Git diff view" aria-pressed="false"><span aria-hidden="true">⇄</span></button>
+<div id="mdview-diff-layout-controls" role="group" aria-label="Diff layout" hidden>
+<button type="button" class="mdview-layout-choice" data-layout="unified" aria-label="Use unified diff layout" title="Unified diff layout" aria-pressed="false"><span aria-hidden="true">≡</span></button>
+<button type="button" class="mdview-layout-choice" data-layout="split" aria-label="Use split diff layout" title="Split diff layout" aria-pressed="false"><span aria-hidden="true">◫</span></button>
+</div>
+</div>
+<div id="mdview-options">
+<button type="button" id="mdview-options-toggle" aria-label="More document options" title="More document options" aria-expanded="false"><span aria-hidden="true">⋯</span></button>
+<div id="mdview-options-menu" hidden role="menu">
+<button type="button" id="mdview-fullwidth-toggle" role="menuitem">Full Width</button>
+</div>
+</div>
+</div>
+<div id="mdview-content">{body}</div>
+</main>
 <aside id="mdview-sidebar" hidden>
 <header class="mdview-sidebar-head">
 <nav class="mdview-tabs" role="tablist">
@@ -199,6 +228,8 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 "#,
         theme_attr = theme_attr,
         dark_attr = dark_attr,
+        view_attr = view_attr,
+        diff_layout_attr = diff_layout_attr,
         csp = csp,
         nonce = nonce,
         title = crate::escape::escape_html(&title),
@@ -238,6 +269,26 @@ mod tests {
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<p>hi</p>"));
         assert!(html.trim_end().ends_with("</html>"));
+    }
+
+    #[test]
+    fn page_emits_contextual_document_toolbar_controls() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        assert!(html.contains("id=\"mdview-toolbar\""));
+        assert!(html.contains("id=\"mdview-view-toggle\""));
+        assert!(html.contains("aria-label=\"Toggle Git diff view\""));
+        assert!(html.contains("id=\"mdview-diff-layout-controls\""));
+        assert!(html.contains("data-layout=\"unified\""));
+        assert!(html.contains("data-layout=\"split\""));
+        assert!(html.contains("id=\"mdview-options-toggle\""));
+        assert!(html.contains("id=\"mdview-fullwidth-toggle\""));
+        assert!(!html.contains("onclick="));
+    }
+
+    #[test]
+    fn diff_body_marks_page_for_full_width_diff_layout() {
+        let html = build_page(&doc(), "<div class=\"mdview-diff mdview-diff-unified\"></div>", Theme::System);
+        assert!(html.contains("<html data-view=\"diff\">") || html.contains(" data-view=\"diff\""));
     }
 
     /// Pull the `script-src` directive's value out of the CSP meta tag, e.g.

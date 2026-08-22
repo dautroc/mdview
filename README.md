@@ -72,5 +72,6 @@ icon, or press ⌘O.
 | ⌘R | Reload |
 | ⌥⌘S | Toggle the sidebar |
 | ⌥⌘F | Toggle fullwidth view |
+| ⌥⌘D | Toggle Git diff view |
 | ⌘D | Bookmark this document |
 | ⌘W | Close the window |

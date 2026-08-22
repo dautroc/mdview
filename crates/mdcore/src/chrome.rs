@@ -72,6 +72,12 @@ pub struct ChromeTokens {
     pub banner_bg: Rgb,
     pub banner_fg: Rgb,
     pub banner_border: Rgb,
+    pub diff_add_bg: Rgb,
+    pub diff_add_fg: Rgb,
+    pub diff_del_bg: Rgb,
+    pub diff_del_fg: Rgb,
+    pub diff_hunk_bg: Rgb,
+    pub diff_hunk_fg: Rgb,
 }
 
 /// Derive every chrome token from a theme's background and foreground.
@@ -89,6 +95,24 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
     } else {
         Rgb { r: 0x9a, g: 0x6d, b: 0x03 }
     };
+    let add = if dark {
+        Rgb { r: 0x3f, g: 0xb9, b: 0x50 }
+    } else {
+        Rgb { r: 0x1a, g: 0x7f, b: 0x37 }
+    };
+    let delete = if dark {
+        Rgb { r: 0xf8, g: 0x51, b: 0x49 }
+    } else {
+        Rgb { r: 0xcf, g: 0x22, b: 0x2e }
+    };
+    let hunk = if dark {
+        Rgb { r: 0x6c, g: 0xb6, b: 0xff }
+    } else {
+        Rgb { r: 0x09, g: 0x69, b: 0xda }
+    };
+    let diff_add_bg = mix(bg, add, 0.18);
+    let diff_del_bg = mix(bg, delete, 0.18);
+    let diff_hunk_bg = mix(bg, hunk, 0.12);
     ChromeTokens {
         bg,
         fg,
@@ -103,6 +127,12 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         banner_bg: mix(bg, warn, if dark { 0.18 } else { 0.22 }),
         banner_fg: warn,
         banner_border: mix(bg, warn, 0.45),
+        diff_add_bg,
+        diff_add_fg: mix_to_contrast(diff_add_bg, fg, diff_add_bg, 4.5),
+        diff_del_bg,
+        diff_del_fg: mix_to_contrast(diff_del_bg, fg, diff_del_bg, 4.5),
+        diff_hunk_bg,
+        diff_hunk_fg: mix_to_contrast(diff_hunk_bg, fg, diff_hunk_bg, 4.5),
     }
 }
 
@@ -110,7 +140,9 @@ impl ChromeTokens {
     pub fn to_css_vars(&self) -> String {
         format!(
             "--bg:{};--fg:{};--muted:{};--border:{};--code-bg:{};--link:{};\
---banner-bg:{};--banner-fg:{};--banner-border:{};",
+--banner-bg:{};--banner-fg:{};--banner-border:{};\
+--diff-add-bg:{};--diff-add-fg:{};--diff-del-bg:{};--diff-del-fg:{};\
+--diff-hunk-bg:{};--diff-hunk-fg:{};",
             self.bg.hex(),
             self.fg.hex(),
             self.muted.hex(),
@@ -120,6 +152,12 @@ impl ChromeTokens {
             self.banner_bg.hex(),
             self.banner_fg.hex(),
             self.banner_border.hex(),
+            self.diff_add_bg.hex(),
+            self.diff_add_fg.hex(),
+            self.diff_del_bg.hex(),
+            self.diff_del_fg.hex(),
+            self.diff_hunk_bg.hex(),
+            self.diff_hunk_fg.hex(),
         )
     }
 }
@@ -175,6 +213,8 @@ mod tests {
         for name in [
             "--bg", "--fg", "--muted", "--border", "--code-bg", "--link",
             "--banner-bg", "--banner-fg", "--banner-border",
+            "--diff-add-bg", "--diff-add-fg", "--diff-del-bg", "--diff-del-fg",
+            "--diff-hunk-bg", "--diff-hunk-fg",
         ] {
             assert!(css.contains(name), "missing {name}");
         }
@@ -186,6 +226,16 @@ mod tests {
             tokens(LIGHT_BG, LIGHT_FG, false).to_css_vars(),
             tokens(DARK_BG, DARK_FG, true).to_css_vars()
         );
+    }
+
+    #[test]
+    fn diff_foregrounds_are_readable_on_their_backgrounds() {
+        for (bg, fg, dark) in [(LIGHT_BG, LIGHT_FG, false), (DARK_BG, DARK_FG, true)] {
+            let t = tokens(bg, fg, dark);
+            assert!(contrast(t.diff_add_fg, t.diff_add_bg) >= 4.5);
+            assert!(contrast(t.diff_del_fg, t.diff_del_bg) >= 4.5);
+            assert!(contrast(t.diff_hunk_fg, t.diff_hunk_bg) >= 4.5);
+        }
     }
 }
 

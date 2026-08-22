@@ -14,6 +14,8 @@ pub const SIDEBAR_OPEN_KEY: &str = "MDViewSidebarOpen";
 pub const SIDEBAR_TAB_KEY: &str = "MDViewSidebarTab";
 #[allow(dead_code)]
 pub const FULL_WIDTH_KEY: &str = "MDViewFullWidth";
+#[allow(dead_code)]
+pub const DIFF_LAYOUT_KEY: &str = "MDViewDiffLayout";
 
 fn defaults() -> objc2::rc::Retained<NSUserDefaults> {
     NSUserDefaults::standardUserDefaults()
