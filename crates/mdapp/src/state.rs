@@ -37,7 +37,7 @@ pub fn is_bookmarked(list: &[String], path: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum Message {
-    SetTheme(Theme),
+    SetTheme(Theme, Option<u32>),
     ToggleBookmark,
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
@@ -52,7 +52,15 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
-        "setTheme" => Some(Message::SetTheme(Theme::from_wire(rest))),
+        "setTheme" => {
+            // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
+            let (wire, scroll_str) = match rest.split_once(':') {
+                Some((w, s)) => (w, Some(s)),
+                None => (rest, None),
+            };
+            let scroll = scroll_str.and_then(|s| s.parse::<u32>().ok());
+            Some(Message::SetTheme(Theme::from_wire(wire), scroll))
+        }
         "openPath" => {
             if rest.is_empty() {
                 None
@@ -125,7 +133,7 @@ mod tests {
         assert_eq!(parse_message("toggleBookmark"), Some(Message::ToggleBookmark));
         assert_eq!(
             parse_message("setTheme:mocha"),
-            Some(Message::SetTheme(Theme::Mocha))
+            Some(Message::SetTheme(Theme::Mocha, None))
         );
         assert_eq!(
             parse_message("openPath:/Users/x/a.md"),
@@ -152,7 +160,22 @@ mod tests {
         assert_eq!(parse_message("nonsense"), None);
         assert_eq!(parse_message("openPath:"), None);
         assert_eq!(parse_message("setSidebar:1"), None);
-        assert_eq!(parse_message("setTheme:tokyo-night"), Some(Message::SetTheme(Theme::System)));
+        assert_eq!(parse_message("setTheme:tokyo-night"), Some(Message::SetTheme(Theme::System, None)));
+    }
+
+    #[test]
+    fn set_theme_carries_an_optional_scroll_offset() {
+        assert_eq!(parse_message("setTheme:mocha:1234"),
+            Some(Message::SetTheme(Theme::Mocha, Some(1234))));
+        assert_eq!(parse_message("setTheme:mocha"),
+            Some(Message::SetTheme(Theme::Mocha, None)));
+    }
+
+    #[test]
+    fn a_malformed_scroll_offset_is_ignored_not_fatal() {
+        // The theme still applies; only the scroll hint is dropped.
+        assert_eq!(parse_message("setTheme:mocha:abc"),
+            Some(Message::SetTheme(Theme::Mocha, None)));
     }
 
     #[test]

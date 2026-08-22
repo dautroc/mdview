@@ -609,7 +609,7 @@
         item.addEventListener("click", function () {
           var themeId = item.getAttribute("data-theme-id");
           if (themeId) {
-            postToHost("setTheme:" + themeId);
+            postToHost("setTheme:" + themeId + ":" + Math.round(window.scrollY));
           }
         });
       })(themeItems[j]);

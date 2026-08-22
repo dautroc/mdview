@@ -191,7 +191,7 @@ define_class!(
             let all = mdcore::Theme::all();
             let i = all.iter().position(|t| *t == current).unwrap_or(0);
             let next = all[(i + 1) % all.len()];
-            self.handle_message(crate::state::Message::SetTheme(next));
+            self.handle_message(crate::state::Message::SetTheme(next, None));
         }
 
         #[unsafe(method(toggleSidebar:))]
@@ -429,12 +429,19 @@ impl AppDelegate {
     pub(crate) fn handle_message(&self, message: crate::state::Message) {
         use crate::state::Message;
         match message {
-            Message::SetTheme(theme) => {
+            Message::SetTheme(theme, scroll_opt) => {
                 crate::defaults::set_string(crate::defaults::THEME_KEY, theme.as_wire());
+                let Some(window) = self.frontmost_window() else { return };
+                // If a scroll offset came through (from picker), queue it to run
+                // after the reload completes. The drain runs it once isLoading()
+                // is false, under the same guard as other post-load scripts.
+                if let Some(y) = scroll_opt {
+                    let script = format!("window.scrollTo(0, {});", y);
+                    window.pending_scripts.borrow_mut().push(script);
+                }
                 // A runtime theme change cannot swap the pinned sheet's contents —
                 // that CSS is baked in by Rust for the theme the page was built with.
                 // Reload the page so the new theme's pinned sheet is emitted.
-                let Some(window) = self.frontmost_window() else { return };
                 window.reload(&self.ivars().highlighter);
             }
             Message::ToggleBookmark => {
