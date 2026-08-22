@@ -204,6 +204,11 @@ define_class!(
                 window.eval_script(&script);
             }
         }
+
+        #[unsafe(method(toggleBookmark:))]
+        fn toggle_bookmark_action(&self, _sender: Option<&NSObject>) {
+            self.handle_message(crate::state::Message::ToggleBookmark);
+        }
     }
 );
 
@@ -271,6 +276,7 @@ impl AppDelegate {
 
         let window = DocumentWindow::open(path, mtm, &state.highlighter, handler, on_message);
         state.windows.borrow_mut().push(window);
+        self.push_bookmarks_to_pages();
     }
 
     /// The window the user is looking at, or None when every window is closed.
@@ -299,9 +305,19 @@ impl AppDelegate {
                 crate::defaults::set_string(crate::defaults::THEME_KEY, theme.as_wire());
                 self.apply_theme(theme);
             }
-            // Tasks 6 and 8 fill these in; ignoring them now is correct, not a stub.
-            Message::ToggleBookmark => {}
-            Message::OpenPath(_) => {}
+            Message::ToggleBookmark => {
+                let Some(window) = self.frontmost_window() else { return };
+                let path = window.path.borrow().to_string_lossy().into_owned();
+                let updated = crate::state::toggle_bookmark(
+                    &crate::defaults::get_strings(crate::defaults::BOOKMARKS_KEY),
+                    &path,
+                );
+                crate::defaults::set_strings(crate::defaults::BOOKMARKS_KEY, &updated);
+                self.push_bookmarks_to_pages();
+            }
+            Message::OpenPath(path) => {
+                self.open_document(std::path::Path::new(&path));
+            }
             Message::SetSidebar { open, tab } => {
                 crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);
                 crate::defaults::set_string(crate::defaults::SIDEBAR_TAB_KEY, &tab);
@@ -317,6 +333,48 @@ impl AppDelegate {
         );
         for window in self.ivars().windows.borrow().iter() {
             window.eval_script(&script);
+        }
+    }
+
+    /// Send the bookmark list, and whether the current document is among
+    /// them, to every open page. Entries whose file has gone are filtered out
+    /// of the DISPLAY only — they stay in storage, so an unmounted volume
+    /// does not silently erase the list.
+    pub(crate) fn push_bookmarks_to_pages(&self) {
+        let stored = crate::defaults::get_strings(crate::defaults::BOOKMARKS_KEY);
+        let live: Vec<&String> = stored
+            .iter()
+            .filter(|p| std::path::Path::new(p.as_str()).exists())
+            .collect();
+        let items = live
+            .iter()
+            .map(|p| {
+                let name = std::path::Path::new(p.as_str())
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| (*p).clone());
+                format!(
+                    "{{name:{},path:{}}}",
+                    mdcore::escape::js_string_literal(&name),
+                    mdcore::escape::js_string_literal(p)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        for window in self.ivars().windows.borrow().iter() {
+            let current = window.path.borrow().to_string_lossy().into_owned();
+            let starred = crate::state::is_bookmarked(&stored, &current);
+            let script = format!(
+                "window.mdviewSetBookmarks && window.mdviewSetBookmarks([{items}], {starred});"
+            );
+            // If the page is still loading, queue the script; otherwise, evaluate it directly.
+            // loadHTMLString is asynchronous, so evaluating immediately against a document
+            // that does not exist yet would silently no-op.
+            if unsafe { window.webview.isLoading() } {
+                window.pending_scripts.borrow_mut().push(script);
+            } else {
+                window.eval_script(&script);
+            }
         }
     }
 

@@ -82,6 +82,10 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     view_menu.addItem(&item(mtm, "Toggle Theme", sel!(cycleTheme:), "t"));
     menubar.addItem(&view_holder);
 
+    let (bm_holder, bm_menu) = submenu(mtm, "Bookmarks");
+    bm_menu.addItem(&item(mtm, "Bookmark This Document", sel!(toggleBookmark:), "d"));
+    menubar.addItem(&bm_holder);
+
     let (window_holder, window_menu) = submenu(mtm, "Window");
     window_menu.addItem(&item(mtm, "Minimize", sel!(performMiniaturize:), "m"));
     menubar.addItem(&window_holder);

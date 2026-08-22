@@ -399,6 +399,7 @@
   }
 
   var sidebarTab = "outline";
+  var bookmarks = [];
 
   function setSidebar(open, tab) {
     var sidebar = document.getElementById("mdview-sidebar");
@@ -415,6 +416,16 @@
     renderSidebarBody();
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
   }
+
+  window.mdviewSetBookmarks = function (items, starred) {
+    bookmarks = items || [];
+    var star = document.getElementById("mdview-star");
+    if (star) {
+      star.textContent = starred ? "★" : "☆";
+      star.setAttribute("aria-pressed", starred ? "true" : "false");
+    }
+    if (sidebarTab === "bookmarks") renderSidebarBody();
+  };
 
   // Turn heading text into a URL-safe id. Duplicates get a numeric suffix so
   // two "## Setup" headings still scroll to different places.
@@ -486,7 +497,27 @@
         });
       }
     } else {
-      body.innerHTML = "<p class=\"mdview-sidebar-empty\">No bookmarks yet.</p>";
+      if (!bookmarks.length) {
+        body.innerHTML = "<p class=\"mdview-sidebar-empty\">No bookmarks yet.</p>";
+        return;
+      }
+      body.innerHTML = "<ul></ul>";
+      var list = body.firstChild;
+      for (var k = 0; k < bookmarks.length; k++) {
+        (function (entry) {
+          var li = document.createElement("li");
+          var a = document.createElement("a");
+          a.href = "#";
+          a.textContent = entry.name;   // textContent, never innerHTML
+          a.title = entry.path;
+          a.addEventListener("click", function (event) {
+            event.preventDefault();
+            postToHost("openPath:" + entry.path);
+          });
+          li.appendChild(a);
+          list.appendChild(li);
+        })(bookmarks[k]);
+      }
     }
   }
 
@@ -512,6 +543,13 @@
         var current = document.documentElement.getAttribute("data-theme") || "system";
         var next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
         postToHost("setTheme:" + next);
+      });
+    }
+
+    var starBtn = document.getElementById("mdview-star");
+    if (starBtn) {
+      starBtn.addEventListener("click", function () {
+        postToHost("toggleBookmark");
       });
     }
 
