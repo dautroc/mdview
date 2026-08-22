@@ -80,14 +80,6 @@ impl Theme {
             Theme::SolarizedDark | Theme::Eighties | Theme::Mocha => Some(true),
         }
     }
-
-    /// Temporary: ⌘T still cycles until Task 3 moves that affordance into
-    /// `app.rs`. Advances through `all()` in order, wrapping at the end.
-    pub fn next(self) -> Theme {
-        let all = Theme::all();
-        let i = all.iter().position(|t| *t == self).unwrap_or(0);
-        all[(i + 1) % all.len()]
-    }
 }
 
 #[cfg(test)]

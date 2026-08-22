@@ -184,11 +184,14 @@ define_class!(
 
         #[unsafe(method(cycleTheme:))]
         fn cycle_theme_action(&self, _sender: Option<&NSObject>) {
-            // Route through handle_message so ⌘T and the in-page theme
-            // button (which posts the same "cycleTheme" message) can never
-            // apply a different cycle order — Theme::next is the one
-            // definition, the same way ⌘D routes through ToggleBookmark.
-            self.handle_message(crate::state::Message::CycleTheme);
+            // Advance through Theme::all() in order, wrapping at the end.
+            let current = mdcore::Theme::from_wire(
+                &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
+            );
+            let all = mdcore::Theme::all();
+            let i = all.iter().position(|t| *t == current).unwrap_or(0);
+            let next = all[(i + 1) % all.len()];
+            self.handle_message(crate::state::Message::SetTheme(next));
         }
 
         #[unsafe(method(toggleSidebar:))]
@@ -428,15 +431,11 @@ impl AppDelegate {
         match message {
             Message::SetTheme(theme) => {
                 crate::defaults::set_string(crate::defaults::THEME_KEY, theme.as_wire());
-                self.apply_theme(theme);
-            }
-            Message::CycleTheme => {
-                let current = mdcore::Theme::from_wire(
-                    &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
-                );
-                let next = current.next();
-                crate::defaults::set_string(crate::defaults::THEME_KEY, next.as_wire());
-                self.apply_theme(next);
+                // A runtime theme change cannot swap the pinned sheet's contents —
+                // that CSS is baked in by Rust for the theme the page was built with.
+                // Reload the page so the new theme's pinned sheet is emitted.
+                let Some(window) = self.frontmost_window() else { return };
+                window.reload(&self.ivars().highlighter);
             }
             Message::ToggleBookmark => {
                 let Some(window) = self.frontmost_window() else { return };

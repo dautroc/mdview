@@ -38,7 +38,6 @@ pub fn is_bookmarked(list: &[String], path: &str) -> bool {
 #[allow(dead_code)]
 pub enum Message {
     SetTheme(Theme),
-    CycleTheme,
     ToggleBookmark,
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
@@ -50,9 +49,6 @@ pub enum Message {
 pub fn parse_message(raw: &str) -> Option<Message> {
     if raw == "toggleBookmark" {
         return Some(Message::ToggleBookmark);
-    }
-    if raw == "cycleTheme" {
-        return Some(Message::CycleTheme);
     }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
@@ -127,10 +123,9 @@ mod tests {
     #[test]
     fn parses_each_message_kind() {
         assert_eq!(parse_message("toggleBookmark"), Some(Message::ToggleBookmark));
-        assert_eq!(parse_message("cycleTheme"), Some(Message::CycleTheme));
         assert_eq!(
-            parse_message("setTheme:solarized-dark"),
-            Some(Message::SetTheme(Theme::SolarizedDark))
+            parse_message("setTheme:mocha"),
+            Some(Message::SetTheme(Theme::Mocha))
         );
         assert_eq!(
             parse_message("openPath:/Users/x/a.md"),
@@ -157,7 +152,7 @@ mod tests {
         assert_eq!(parse_message("nonsense"), None);
         assert_eq!(parse_message("openPath:"), None);
         assert_eq!(parse_message("setSidebar:1"), None);
-        assert_eq!(parse_message("setTheme:chartreuse"), Some(Message::SetTheme(Theme::System)));
+        assert_eq!(parse_message("setTheme:tokyo-night"), Some(Message::SetTheme(Theme::System)));
     }
 
     #[test]

@@ -154,15 +154,15 @@
     var light = document.getElementById("mdview-hl-light");
     var dark = document.getElementById("mdview-hl-dark");
     if (!light || !dark) return;
-    if (theme === "light") {
-      light.media = "all";
-      dark.media = "not all";
-    } else if (theme === "dark") {
-      light.media = "not all";
-      dark.media = "all";
-    } else {
+    if (theme === "system") {
+      // Only System defers to the OS. Named themes ship their own pinned
+      // sheet, so both of these must stay inert or two highlight stylesheets
+      // would apply at once and source order would decide the winner.
       light.media = "all";
       dark.media = "(prefers-color-scheme: dark)";
+    } else {
+      light.media = "not all";
+      dark.media = "not all";
     }
   }
 
@@ -194,6 +194,13 @@
       document.documentElement.setAttribute("data-theme", theme);
     }
     applyHighlightSheets(theme);
+    // Mark the current theme in the picker so the list shows the selection.
+    var items = document.querySelectorAll(".mdview-theme-item");
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var isSelected = item.getAttribute("data-theme-id") === theme;
+      item.setAttribute("aria-checked", isSelected ? "true" : "false");
+    }
     // Everything above is an attribute flip and repaints instantly — but the
     // browser cannot paint until this task yields, and re-rendering diagrams
     // does substantial synchronous work in mermaid. Defer it a frame so the
@@ -581,17 +588,6 @@
       });
     }
 
-    var themeBtn = document.getElementById("mdview-theme");
-    if (themeBtn) {
-      themeBtn.addEventListener("click", function () {
-        // The cycle order (System -> Light -> Dark) is defined exactly once,
-        // in Rust's Theme::next, which also drives the ⌘T shortcut. Posting
-        // a bare "cycleTheme" message and letting the host apply it there
-        // means this button and ⌘T can never disagree about the order.
-        postToHost("cycleTheme");
-      });
-    }
-
     var starBtn = document.getElementById("mdview-star");
     if (starBtn) {
       starBtn.addEventListener("click", function () {
@@ -605,6 +601,18 @@
         var tab = event.target.getAttribute("data-tab");
         if (tab) setSidebar(true, tab);
       });
+    }
+
+    var themeItems = document.querySelectorAll(".mdview-theme-item");
+    for (var j = 0; j < themeItems.length; j++) {
+      (function (item) {
+        item.addEventListener("click", function () {
+          var themeId = item.getAttribute("data-theme-id");
+          if (themeId) {
+            postToHost("setTheme:" + themeId);
+          }
+        });
+      })(themeItems[j]);
     }
   }
 
