@@ -82,6 +82,20 @@ impl Theme {
     }
 }
 
+/// What `page.css` paints for `System` in each OS appearance. Mirrored here so
+/// the window chrome can match a page that has no theme of its own; the test
+/// below reads the stylesheet and fails if the two drift apart.
+pub const SYSTEM_LIGHT_BG: crate::chrome::Rgb = crate::chrome::Rgb { r: 0xff, g: 0xff, b: 0xff };
+pub const SYSTEM_DARK_BG: crate::chrome::Rgb = crate::chrome::Rgb { r: 0x0d, g: 0x11, b: 0x17 };
+
+/// The page background a theme paints, so the window chrome around the page
+/// can be given the same colour instead of staying system grey above a dark
+/// document. `None` for `System`, which defers to the OS appearance.
+pub fn background(theme: Theme) -> Option<crate::chrome::Rgb> {
+    let name = theme.syntect_name()?;
+    crate::highlight::palette_for(name).map(|(_, bg, _)| bg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +141,52 @@ mod tests {
                 assert!(set.themes.contains_key(name), "no syntect theme named {name}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+
+    #[test]
+    fn every_named_theme_reports_a_background_and_system_does_not() {
+        assert_eq!(background(Theme::System), None, "System defers to the OS");
+        for theme in Theme::all() {
+            if *theme == Theme::System {
+                continue;
+            }
+            let bg = background(*theme).expect("named themes must report a background");
+            // The window colour has to agree with the page, or the titlebar
+            // reads as a seam rather than an edge.
+            assert_eq!(
+                theme.is_dark(),
+                Some(crate::chrome::luminance(bg) < 0.5),
+                "{} background disagrees with its declared darkness",
+                theme.as_wire()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod system_background_tests {
+    use super::*;
+
+    /// Pull the `--bg` declared in the first `:root` block at or after `from`.
+    fn bg_after(css: &str, from: usize) -> String {
+        let root = css[from..].find(":root").expect("no :root block") + from;
+        let decl = css[root..].find("--bg:").expect("no --bg") + root + "--bg:".len();
+        let end = css[decl..].find(';').expect("unterminated --bg") + decl;
+        css[decl..end].trim().to_string()
+    }
+
+    #[test]
+    fn the_system_window_colours_match_what_the_stylesheet_paints() {
+        let css = crate::assets::PAGE_CSS;
+        let dark_at = css
+            .find("prefers-color-scheme: dark")
+            .expect("no dark media query");
+        assert_eq!(bg_after(css, 0), SYSTEM_LIGHT_BG.hex());
+        assert_eq!(bg_after(css, dark_at), SYSTEM_DARK_BG.hex());
     }
 }

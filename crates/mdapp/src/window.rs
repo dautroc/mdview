@@ -1,15 +1,21 @@
 use std::cell::{Cell, RefCell};
+use std::ptr::NonNull;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use mdcore::Highlighter;
+use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+    NSBackingStoreType, NSColor, NSTitlebarSeparatorStyle, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL,
+};
 use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
 
 /// Ivars for `WindowCloseDelegate`: just the shared flag it flips.
@@ -129,6 +135,15 @@ impl DocumentWindow {
             webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*navigation)));
         }
 
+        // Let the titlebar take the window's own background colour instead of
+        // staying system grey above a themed page, and drop the hairline so the
+        // two read as one surface. The content view deliberately does *not*
+        // extend under the titlebar: WKWebView has no way to mark a region
+        // draggable, so a full-height content view would leave the window with
+        // nowhere to drag it by.
+        window.setTitlebarAppearsTransparent(true);
+        window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+
         let closed = Rc::new(Cell::new(false));
         let window_delegate = WindowCloseDelegate::new(mtm, closed.clone());
         unsafe {
@@ -200,10 +215,15 @@ impl DocumentWindow {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "MDView".to_string());
         self.window.setTitle(&NSString::from_str(&title));
+        // The proxy icon and its ⌘-click path menu, which every macOS document
+        // window has and users reach for without thinking.
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        self.window.setRepresentedURL(Some(&url));
 
         let theme = mdcore::Theme::from_wire(
             &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
         );
+        self.apply_window_chrome(theme);
         match mdcore::render_document_with(&path, highlighter, theme) {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
@@ -254,6 +274,70 @@ impl DocumentWindow {
     /// The old watcher MUST be dropped before the new one starts. A stale
     /// watcher keeps firing live updates for the previous document's
     /// directory, which would re-render this window from the wrong file.
+    /// Give the window chrome the page's own colouring, so the titlebar reads
+    /// as the top of the document rather than a grey band above it. Runs on
+    /// every load, which is also how a theme change arrives: `SetTheme`
+    /// persists the choice and reloads each window.
+    fn apply_window_chrome(&self, theme: mdcore::Theme) {
+        fn srgb(rgb: mdcore::Rgb) -> Retained<NSColor> {
+            NSColor::colorWithSRGBRed_green_blue_alpha(
+                f64::from(rgb.r) / 255.0,
+                f64::from(rgb.g) / 255.0,
+                f64::from(rgb.b) / 255.0,
+                1.0,
+            )
+        }
+
+        let appearance_name = match theme.is_dark() {
+            // A named theme fixes the appearance regardless of the OS setting,
+            // or a dark page would keep light traffic lights and title text.
+            Some(true) => Some(unsafe { NSAppearanceNameDarkAqua }),
+            Some(false) => Some(unsafe { NSAppearanceNameAqua }),
+            // System follows the OS, which is what a nil appearance means.
+            None => None,
+        };
+        let appearance =
+            appearance_name.and_then(NSAppearance::appearanceNamed);
+        self.window.setAppearance(appearance.as_deref());
+
+        let background = match mdcore::theme::background(theme) {
+            Some(rgb) => srgb(rgb),
+            // System has no colour of its own: the stylesheet switches on the
+            // OS appearance, so the window has to as well. A dynamic colour is
+            // re-resolved by AppKit whenever the appearance changes, which
+            // keeps the titlebar matching a page that restyles itself without
+            // reloading. `textBackgroundColor` is the obvious stand-in but is
+            // ~#1e1e1e in the dark, against the page's #0d1117.
+            None => {
+                let light = srgb(mdcore::theme::SYSTEM_LIGHT_BG);
+                let dark = srgb(mdcore::theme::SYSTEM_DARK_BG);
+                let provider = RcBlock::new(move |appearance: NonNull<NSAppearance>| {
+                    // Safety: AppKit hands the provider a live appearance for
+                    // the duration of the call.
+                    let appearance = unsafe { appearance.as_ref() };
+                    let names = NSArray::from_slice(&[
+                        unsafe { NSAppearanceNameAqua },
+                        unsafe { NSAppearanceNameDarkAqua },
+                    ]);
+                    let is_dark = appearance
+                        .bestMatchFromAppearancesWithNames(&names)
+                        .is_some_and(|name| &*name == unsafe { NSAppearanceNameDarkAqua });
+                    // The returned pointer stays valid: both colours are owned
+                    // by this closure, the block owns the closure, and AppKit
+                    // holds the block for as long as the colour it returns.
+                    NonNull::from(if is_dark { &*dark } else { &*light })
+                });
+                unsafe {
+                    NSColor::colorWithName_dynamicProvider(
+                        Some(&NSString::from_str("MDViewSystemBackground")),
+                        &provider,
+                    )
+                }
+            }
+        };
+        self.window.setBackgroundColor(Some(&background));
+    }
+
     pub fn load(&self, path: &Path, highlighter: &Highlighter) {
         *self.path.borrow_mut() = path.to_path_buf();
         *self.watcher.borrow_mut() = None;
