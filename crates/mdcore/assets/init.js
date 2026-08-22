@@ -184,6 +184,9 @@
 
   // Called from Rust when the theme changes. KaTeX needs no re-render: its
   // output inherits colour from CSS. Only mermaid bakes the theme in.
+  var themeFrame = 0;
+  var themeGeneration = 0;
+
   window.mdviewApplyTheme = function (theme) {
     if (theme === "system") {
       document.documentElement.removeAttribute("data-theme");
@@ -200,8 +203,18 @@
     // the zoom wrapper and button with it (wrapZoomable inserts them inside
     // that node). Chain the enhancer exactly as mdviewRenderAll does, or
     // diagrams lose click-to-zoom until the next save.
-    requestAnimationFrame(function () {
-      rerenderDiagrams().then(enhanceZoomables);
+    // Coalesce rapid changes. Each re-render lays out every diagram in
+    // mermaid, so N quick clicks would otherwise queue N full re-layouts that
+    // serialise and lag behind the clicks. Cancel any frame not yet run, and
+    // tag each attempt so a superseded render cannot re-enhance after a newer
+    // one has already finished.
+    if (themeFrame) cancelAnimationFrame(themeFrame);
+    var generation = ++themeGeneration;
+    themeFrame = requestAnimationFrame(function () {
+      themeFrame = 0;
+      rerenderDiagrams().then(function () {
+        if (generation === themeGeneration) enhanceZoomables();
+      });
     });
   };
 
