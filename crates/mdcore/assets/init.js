@@ -31,6 +31,16 @@
     }
   }
 
+  // The explicit theme lives in <html data-theme>, which does NOT affect
+  // prefers-color-scheme. Reading the media query here would render every
+  // diagram in the OS palette while the rest of the page honours the user's
+  // choice. Fall back to the query only when no explicit theme is pinned.
+  function effectiveTheme() {
+    var pinned = document.documentElement.getAttribute("data-theme");
+    if (pinned === "dark" || pinned === "light") return pinned;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+
   // Always resolves (never rejects), and resolves synchronously-ish via a
   // microtask even when mermaid is absent or throws, so callers can chain
   // off it unconditionally without a try/catch of their own.
@@ -41,9 +51,7 @@
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: "strict",
-        theme: window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "default",
+        theme: effectiveTheme() === "dark" ? "dark" : "default",
       });
       var result = mermaid.run({ querySelector: "pre.mermaid" });
       if (result && typeof result.then === "function") {
@@ -180,7 +188,11 @@
       document.documentElement.setAttribute("data-theme", theme);
     }
     applyHighlightSheets(theme);
-    rerenderDiagrams();
+    // rerenderDiagrams() destroys and rebuilds every pre.mermaid node, taking
+    // the zoom wrapper and button with it (wrapZoomable inserts them inside
+    // that node). Chain the enhancer exactly as mdviewRenderAll does, or
+    // diagrams lose click-to-zoom until the next save.
+    rerenderDiagrams().then(enhanceZoomables);
   };
 
   function getLightbox() {
