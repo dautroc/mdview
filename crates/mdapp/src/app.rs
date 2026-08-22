@@ -217,11 +217,14 @@ define_class!(
         #[unsafe(method(openRecent:))]
         fn open_recent_action(&self, sender: Option<&NSMenuItem>) {
             let Some(sender) = sender else { return };
-            let index = sender.tag() as usize;
-            let live = self.live_history();
-            if let Some(path) = live.get(index) {
-                self.open_document(std::path::Path::new(path.as_str()));
-            }
+            let Some(object) = sender.representedObject() else {
+                return;
+            };
+            let Ok(path) = object.downcast::<NSString>() else {
+                return;
+            };
+            // No index, no list, no timing: the item names its own document.
+            self.open_document(std::path::Path::new(&path.to_string()));
         }
 
         #[unsafe(method(clearRecent:))]
@@ -247,9 +250,9 @@ impl AppDelegate {
         unsafe { objc2::msg_send![super(this), init] }
     }
 
-    /// History filtered to entries that still exist on disk. The menu's item
-    /// tags index into THIS list, so `openRecent:` must resolve against the
-    /// identical filter — hence one function, called by both.
+    /// History filtered to entries that still exist on disk. This is a snapshot;
+    /// callers must not assume an index into it stays valid across time, or hold
+    /// it while the list could change.
     fn live_history(&self) -> Vec<String> {
         crate::defaults::get_strings(crate::defaults::HISTORY_KEY)
             .into_iter()
@@ -257,9 +260,9 @@ impl AppDelegate {
             .collect()
     }
 
-    /// Refill File > Open Recent from persisted history. Entries are tagged
-    /// with their index, which is how the action learns which one was picked
-    /// without parsing the title back into a path.
+    /// Refill File > Open Recent from persisted history. Each item carries the
+    /// path as its represented object rather than an index, so clicking the item
+    /// opens the document it names even if earlier files have since been deleted.
     pub(crate) fn rebuild_recent_menu(&self) {
         let Some(menu) = self.ivars().recent_menu.borrow().clone() else {
             return;
@@ -269,7 +272,7 @@ impl AppDelegate {
 
         let live = self.live_history();
 
-        for (index, path) in live.iter().enumerate() {
+        for path in live.iter() {
             let name = std::path::Path::new(path.as_str())
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -282,7 +285,11 @@ impl AppDelegate {
                     &NSString::from_str(""),
                 )
             };
-            entry.setTag(index as isize);
+            // Carry the path on the item rather than an index into a list that
+            // is recomputed at click time. An index is only valid for the list
+            // that produced it; if a file is deleted before the click, the
+            // list shifts and the index silently resolves to a neighbour.
+            unsafe { entry.setRepresentedObject(Some(&NSString::from_str(path))) };
             menu.addItem(&entry);
         }
 
