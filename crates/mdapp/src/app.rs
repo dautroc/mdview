@@ -247,6 +247,12 @@ impl AppDelegate {
         if let Some(existing) = self.frontmost_window() {
             existing.load(path, &state.highlighter);
             existing.window.makeKeyAndOrderFront(None);
+            // The reuse branch returns early, so the new-window branch's call
+            // is unreachable here — and this is the path nearly every open
+            // takes. Without it the star and list describe the PREVIOUS
+            // document, and a ⌘D against that stale state would toggle the
+            // wrong way.
+            self.push_bookmarks_to_pages();
             return;
         }
 
@@ -367,14 +373,12 @@ impl AppDelegate {
             let script = format!(
                 "window.mdviewSetBookmarks && window.mdviewSetBookmarks([{items}], {starred});"
             );
-            // If the page is still loading, queue the script; otherwise, evaluate it directly.
-            // loadHTMLString is asynchronous, so evaluating immediately against a document
-            // that does not exist yet would silently no-op.
-            if unsafe { window.webview.isLoading() } {
-                window.pending_scripts.borrow_mut().push(script);
-            } else {
-                window.eval_script(&script);
-            }
+            // Always queue. `drain_pending_banners` performs the one
+            // authoritative isLoading() check at drain time; re-checking it
+            // here would be reading it in the very window where it is
+            // unreliable — between loadHTMLString returning and WebKit
+            // starting the navigation.
+            window.pending_scripts.borrow_mut().push(script);
         }
     }
 
