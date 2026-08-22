@@ -79,10 +79,10 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
     // `:root[data-theme=…]` block — that is CSS Nesting, unsupported by WebKit
     // before macOS 13.4 while this app supports 11.0. Selecting whole sheets
     // with a `media` attribute works on every WebKit and needs no nesting.
-    let (light_media, dark_media) = match theme {
-        Theme::System => ("all", "(prefers-color-scheme: dark)"),
-        Theme::Light => ("all", "not all"),
-        Theme::Dark => ("not all", "all"),
+    let (light_media, dark_media) = match theme.is_dark() {
+        None => ("all", "(prefers-color-scheme: dark)"),
+        Some(false) => ("all", "not all"),
+        Some(true) => ("not all", "all"),
     };
 
     format!(
@@ -298,22 +298,23 @@ mod tests {
 
     #[test]
     fn explicit_themes_pin_the_attribute() {
-        assert!(build_page(&doc(), "", crate::theme::Theme::Dark).contains("data-theme=\"dark\""));
-        assert!(build_page(&doc(), "", crate::theme::Theme::Light).contains("data-theme=\"light\""));
+        assert!(build_page(&doc(), "", crate::theme::Theme::SolarizedDark).contains("data-theme=\"solarized-dark\""));
+        assert!(build_page(&doc(), "", crate::theme::Theme::GitHub).contains("data-theme=\"github\""));
     }
 
     #[test]
     fn highlight_sheets_are_selected_by_media_not_nesting() {
         // Syntect sheets are whole rulesets; nesting them under
         // `:root[data-theme=…]` needs CSS Nesting, which WebKit lacks before
-        // macOS 13.4 while this app supports 11.0. Exactly one occurrence of
-        // each attribute selector should remain — the chrome block in page.css.
-        let dark = build_page(&doc(), "", crate::theme::Theme::Dark);
-        assert_eq!(dark.matches(":root[data-theme=\"dark\"]").count(), 1);
+        // macOS 13.4 while this app supports 11.0. Media queries select the
+        // appropriate sheet; the chrome block in page.css applies to the selection.
+        let dark = build_page(&doc(), "", crate::theme::Theme::SolarizedDark);
+        assert!(dark.contains("data-theme=\"solarized-dark\""));
         assert!(dark.contains("id=\"mdview-hl-dark\" media=\"all\""));
         assert!(dark.contains("id=\"mdview-hl-light\" media=\"not all\""));
 
-        let light = build_page(&doc(), "", crate::theme::Theme::Light);
+        let light = build_page(&doc(), "", crate::theme::Theme::GitHub);
+        assert!(light.contains("data-theme=\"github\""));
         assert!(light.contains("id=\"mdview-hl-light\" media=\"all\""));
         assert!(light.contains("id=\"mdview-hl-dark\" media=\"not all\""));
 

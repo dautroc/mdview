@@ -45,8 +45,8 @@ fn theme_flag_selects_the_html_data_theme_attribute() {
     let path = fixture_file("theme.md", "# T\n");
 
     for (flag, expected) in [
-        ("dark", Some("dark")),
-        ("light", Some("light")),
+        ("solarized-dark", Some("solarized-dark")),
+        ("github", Some("github")),
         ("system", None),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_mdview"))

@@ -3,6 +3,7 @@
 //! Markdown to self-contained HTML. Knows nothing about AppKit or windows.
 
 pub mod assets;
+pub mod chrome;
 pub mod document;
 pub mod escape;
 pub mod highlight;
@@ -13,6 +14,7 @@ pub mod theme;
 
 use std::path::{Path, PathBuf};
 
+pub use chrome::Rgb;
 pub use document::{Document, DocumentError};
 pub use highlight::Highlighter;
 pub use theme::Theme;

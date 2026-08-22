@@ -76,6 +76,20 @@ pub fn theme_css() -> (String, String) {
     (light, dark)
 }
 
+/// Class-based CSS for one syntect theme, plus its background and foreground
+/// so the page chrome can be derived from the same source.
+pub fn palette_for(name: &str) -> Option<(String, crate::chrome::Rgb, crate::chrome::Rgb)> {
+    let themes = ThemeSet::load_defaults();
+    let theme = themes.themes.get(name)?;
+    let css = css_for_theme_with_class_style(theme, CLASS_STYLE).ok()?;
+    let to_rgb = |c: syntect::highlighting::Color| crate::chrome::Rgb { r: c.r, g: c.g, b: c.b };
+    Some((
+        css,
+        to_rgb(theme.settings.background?),
+        to_rgb(theme.settings.foreground?),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

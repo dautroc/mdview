@@ -129,8 +129,8 @@ mod tests {
         assert_eq!(parse_message("toggleBookmark"), Some(Message::ToggleBookmark));
         assert_eq!(parse_message("cycleTheme"), Some(Message::CycleTheme));
         assert_eq!(
-            parse_message("setTheme:dark"),
-            Some(Message::SetTheme(Theme::Dark))
+            parse_message("setTheme:solarized-dark"),
+            Some(Message::SetTheme(Theme::SolarizedDark))
         );
         assert_eq!(
             parse_message("openPath:/Users/x/a.md"),
