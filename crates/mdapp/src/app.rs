@@ -193,7 +193,8 @@ define_class!(
 
         #[unsafe(method(toggleSidebar:))]
         fn toggle_sidebar_action(&self, _sender: Option<&NSObject>) {
-            let open = !crate::defaults::get_bool(crate::defaults::SIDEBAR_OPEN_KEY);
+            let current = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY).unwrap_or(true);
+            let open = !current;
             let tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
                 .unwrap_or_else(|| "outline".to_string());
             crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);

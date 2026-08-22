@@ -114,6 +114,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 </nav>
 <div id="mdview-sidebar-body"></div>
 </aside>
+<button type="button" id="mdview-sidebar-open" aria-label="Show sidebar" hidden>&#8249;</button>
 </div>
 <script nonce="{nonce}">{katex_js}</script>
 <script nonce="{nonce}">{mermaid_js}</script>
@@ -340,5 +341,18 @@ mod tests {
         assert!(html.contains("id=\"mdview-sidebar-body\""));
         assert!(html.contains("data-tab=\"outline\""));
         assert!(html.contains("data-tab=\"bookmarks\""));
+    }
+
+    #[test]
+    fn the_open_handle_survives_a_hidden_sidebar() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        let handle = html.find("id=\"mdview-sidebar-open\"").expect("handle missing");
+        let aside_end = html.find("</aside>").expect("aside must close");
+        let content = html.find("id=\"mdview-content\"").expect("content missing");
+        let main_end = html.find("</main>").expect("main must close");
+        // Outside the aside, or hiding the sidebar hides its own opener.
+        assert!(handle > aside_end, "handle must not live inside the sidebar");
+        // Outside the swapped content, or a live-reload save destroys it.
+        assert!(handle < content || handle > main_end, "handle must not live inside #mdview-content");
     }
 }

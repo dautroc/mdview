@@ -418,6 +418,8 @@
     if (!sidebar) return;
     sidebarTab = tab || sidebarTab;
     sidebar.hidden = !open;
+    var opener = document.getElementById("mdview-sidebar-open");
+    if (opener) opener.hidden = open;
     var tabs = document.querySelectorAll(".mdview-tab");
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].setAttribute(
@@ -546,6 +548,13 @@
     if (closeBtn) {
       closeBtn.addEventListener("click", function () {
         setSidebar(false, sidebarTab);
+      });
+    }
+
+    var opener = document.getElementById("mdview-sidebar-open");
+    if (opener) {
+      opener.addEventListener("click", function () {
+        setSidebar(true, sidebarTab);
       });
     }
 

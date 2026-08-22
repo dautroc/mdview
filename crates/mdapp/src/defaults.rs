@@ -52,6 +52,16 @@ pub fn get_bool(key: &str) -> bool {
     defaults().boolForKey(&key)
 }
 
+/// `Some(value)` when the key is present, `None` when it has never been set.
+/// `get_bool` cannot express that difference, and a default of "open" is only
+/// correct until the user has expressed a preference.
+#[allow(dead_code)]
+pub fn get_bool_opt(key: &str) -> Option<bool> {
+    let key = NSString::from_str(key);
+    let defaults = defaults();
+    defaults.objectForKey(&key).map(|_| defaults.boolForKey(&key))
+}
+
 #[allow(dead_code)]
 pub fn set_bool(key: &str, value: bool) {
     let key = NSString::from_str(key);

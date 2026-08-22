@@ -218,7 +218,7 @@ impl DocumentWindow {
                 // Queue sidebar state restoration: loadHTMLString is asynchronous,
                 // so window.mdviewSetSidebar doesn't exist yet. The watch tick's
                 // drain_pending_banners will inject this once isLoading() is false.
-                let sidebar_open = crate::defaults::get_bool(crate::defaults::SIDEBAR_OPEN_KEY);
+                let sidebar_open = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY).unwrap_or(true);
                 let sidebar_tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
                     .unwrap_or_else(|| "outline".to_string());
                 let sidebar_script = format!(
