@@ -326,13 +326,6 @@ img { max-width: 100%; }
   top: calc(100% + .25rem);
   z-index: 20;
 }
-.mdview-theme-group {
-  display: flex; flex-direction: column; gap: 0;
-}
-.mdview-theme-group-label {
-  color: var(--muted); font-size: .75rem; font-weight: 600;
-  padding: .5rem .75rem .25rem; text-transform: uppercase;
-}
 .mdview-sidebar-head .mdview-theme-item {
   background: none; border: 0; color: var(--fg); cursor: pointer;
   font: inherit; padding: .5rem .75rem; text-align: left;

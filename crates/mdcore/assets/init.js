@@ -502,6 +502,39 @@
   // recreated by live reload. These listeners must attach exactly once here,
   // not inside mdviewRenderAll (which runs again on every save).
 
+  // The theme the page was built with. Previews are transient; this is what
+  // the picker reverts to when the pointer leaves it without a click.
+  var savedTheme = document.documentElement.getAttribute("data-theme") || "system";
+  var savedDark = document.documentElement.getAttribute("data-dark");
+
+  // Apply a theme without rebuilding the page. Rust emits every theme's chrome
+  // block scoped to :root[data-theme=…] and every syntect sheet behind its own
+  // id, so switching is an attribute flip. Mermaid keeps the colours it was
+  // drawn with -- re-rendering diagrams on hover is what made theme changes
+  // feel slow before, and the commit path reloads and redraws them anyway.
+  function applyTheme(themeId, dark) {
+    var root = document.documentElement;
+    if (!themeId || themeId === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", themeId);
+    if (dark === "0" || dark === "1") root.setAttribute("data-dark", dark);
+    else root.removeAttribute("data-dark");
+
+    // Syntect emits full rulesets, which cannot be scoped by attribute, so the
+    // sheets are selected by toggling `media` instead.
+    var sheets = document.querySelectorAll('style[id^="mdview-hl-"]');
+    for (var i = 0; i < sheets.length; i++) {
+      var id = sheets[i].id;
+      if (id === "mdview-hl-light") {
+        sheets[i].media = themeId && themeId !== "system" ? "not all" : "all";
+      } else if (id === "mdview-hl-dark") {
+        sheets[i].media =
+          themeId && themeId !== "system" ? "not all" : "(prefers-color-scheme: dark)";
+      } else {
+        sheets[i].media = id === "mdview-hl-" + themeId ? "all" : "not all";
+      }
+    }
+  }
+
   function attachSidebarListeners() {
     var toggle = document.getElementById("mdview-sidebar-toggle");
     if (toggle) {
@@ -520,22 +553,47 @@
 
     var tabs = document.querySelectorAll(".mdview-tab");
     for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener("click", function (event) {
-        var tab = event.target.getAttribute("data-tab");
-        if (tab) setSidebar(true, tab);
-      });
+      // Bind the button itself: the tabs hold an <svg>, so event.target is the
+      // icon (or a line inside it) and carries no data-tab.
+      (function (button) {
+        button.addEventListener("click", function () {
+          var tab = button.getAttribute("data-tab");
+          if (tab) setSidebar(true, tab);
+        });
+      })(tabs[i]);
     }
 
+    var picker = document.getElementById("mdview-theme");
     var themeItems = document.querySelectorAll(".mdview-theme-item");
     for (var j = 0; j < themeItems.length; j++) {
       (function (item) {
+        // Hovering previews; only a click commits. The preview is a local
+        // attribute flip, so it costs nothing and needs no round trip.
+        item.addEventListener("mouseenter", function () {
+          applyTheme(
+            item.getAttribute("data-theme-id"),
+            item.getAttribute("data-theme-dark")
+          );
+        });
         item.addEventListener("click", function () {
           var themeId = item.getAttribute("data-theme-id");
           if (themeId) {
+            // Adopt it as the theme to revert to, so the pending reload does
+            // not race the picker closing and snap back to the old one.
+            savedTheme = themeId;
+            savedDark = item.getAttribute("data-theme-dark");
+            if (picker) picker.open = false;
             postToHost("setTheme:" + themeId + ":" + Math.round(window.scrollY));
           }
         });
       })(themeItems[j]);
+    }
+
+    if (picker) {
+      picker.addEventListener("mouseleave", function () {
+        applyTheme(savedTheme, savedDark);
+        picker.open = false;
+      });
     }
   }
 

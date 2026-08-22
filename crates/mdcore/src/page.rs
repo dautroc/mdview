@@ -64,44 +64,28 @@ style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; font-src data:;"
 /// Build the theme picker markup listing all themes, marking `selected` as
 /// the current one via `aria-checked` so the list reflects the page's own
 /// theme rather than relying on JS to discover it after the fact.
+///
+/// The list is flat: the names carry their own light/dark sense, so grouping
+/// headings only added rows to scan past. Each item also carries the theme's
+/// darkness, which the wire value alone does not reveal, so a hover preview
+/// can stamp `data-dark` without a round trip to Rust.
 fn build_theme_picker(selected: Theme) -> String {
     let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\" title=\"Theme\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"8\" cy=\"8\" r=\"6.25\"/><path d=\"M8 1.75a6.25 6.25 0 0 1 0 12.5z\" fill=\"currentColor\" stroke=\"none\"/></svg></summary>\n<div class=\"mdview-theme-list\" role=\"menu\">\n");
 
-    // Group themes: System, then Light, then Dark
-    let mut groups: Vec<(Option<bool>, Vec<Theme>)> = vec![
-        (None, vec![]),
-        (Some(false), vec![]),
-        (Some(true), vec![]),
-    ];
-
     for theme in Theme::all() {
-        let is_dark = theme.is_dark();
-        if let Some(group) = groups.iter_mut().find(|(k, _)| *k == is_dark) {
-            group.1.push(*theme);
-        }
-    }
-
-    for (is_dark, themes) in groups {
-        if !themes.is_empty() {
-            if let Some(false) = is_dark {
-                html.push_str("<div class=\"mdview-theme-group\"><div class=\"mdview-theme-group-label\">Light</div>\n");
-            } else if let Some(true) = is_dark {
-                html.push_str("<div class=\"mdview-theme-group\"><div class=\"mdview-theme-group-label\">Dark</div>\n");
-            }
-
-            for theme in themes {
-                html.push_str(&format!(
-                    "<button type=\"button\" class=\"mdview-theme-item\" role=\"menuitemradio\" aria-checked=\"{}\" data-theme-id=\"{}\">{}</button>\n",
-                    theme == selected,
-                    theme.as_wire(),
-                    theme.label()
-                ));
-            }
-
-            if is_dark.is_some() {
-                html.push_str("</div>\n");
-            }
-        }
+        let theme = *theme;
+        let dark = match theme.is_dark() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "",
+        };
+        html.push_str(&format!(
+            "<button type=\"button\" class=\"mdview-theme-item\" role=\"menuitemradio\" aria-checked=\"{}\" data-theme-id=\"{}\" data-theme-dark=\"{}\">{}</button>\n",
+            theme == selected,
+            theme.as_wire(),
+            dark,
+            theme.label()
+        ));
     }
 
     html.push_str("</div></details>");
@@ -134,32 +118,40 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         None => String::new(),
     };
 
-    // Build chrome tokens and syntax CSS based on the selected theme
-    let (chrome_css, named_theme_css) = match theme {
-        Theme::System => {
-            // For System, emit nothing special (page.css handles the defaults)
-            (String::new(), String::new())
-        }
-        _ => {
-            // For named themes, derive chrome from the palette and emit the syntect CSS
-            let syntect_name = theme.syntect_name().unwrap();
-            if let Some((css, bg, fg)) = highlight::palette_for(syntect_name) {
-                let is_dark = theme.is_dark().unwrap();
-                let tokens = chrome::tokens(bg, fg, is_dark);
-                let chrome_vars = tokens.to_css_vars();
-                let chrome_style = format!(":root {{{}}}", chrome_vars);
-                (format!("<style>{}</style>\n", chrome_style), format!("<style media=\"all\">{}</style>\n", css))
-            } else {
-                (String::new(), String::new())
-            }
-        }
-    };
+    // Emit chrome and syntax CSS for *every* named theme, not just the active
+    // one. Applying a theme is then a matter of flipping `data-theme` and the
+    // sheets' `media` attributes, which is what lets init.js preview a theme on
+    // hover without asking Rust to rebuild and reload the page.
+    //
+    // The chrome blocks are scoped `:root[data-theme="…"]`, a plain attribute
+    // selector rather than CSS Nesting, so they work on the WebKit shipped with
+    // macOS 11. Syntect's sheets are full rulesets and cannot be scoped that
+    // way at all, hence the `media` toggle.
+    let mut chrome_css = String::new();
+    let mut named_theme_css = String::new();
+    for candidate in Theme::all() {
+        let Some(syntect_name) = candidate.syntect_name() else {
+            continue;
+        };
+        let Some((css, bg, fg)) = highlight::palette_for(syntect_name) else {
+            continue;
+        };
+        let is_dark = candidate.is_dark().unwrap_or(false);
+        let tokens = chrome::tokens(bg, fg, is_dark);
+        chrome_css.push_str(&format!(
+            "<style>:root[data-theme=\"{}\"]{{{}}}</style>\n",
+            candidate.as_wire(),
+            tokens.to_css_vars()
+        ));
+        let media = if *candidate == theme { "all" } else { "not all" };
+        named_theme_css.push_str(&format!(
+            "<style id=\"mdview-hl-{}\" media=\"{}\">{}</style>\n",
+            candidate.as_wire(),
+            media,
+            css
+        ));
+    }
 
-    // Syntect's stylesheets are full rulesets, so they cannot be wrapped in a
-    // `:root[data-theme=…]` block — that is CSS Nesting, unsupported by WebKit
-    // before macOS 13.4 while this app supports 11.0. For System, select sheets
-    // with `media` attributes. For named themes, emit the theme's own syntect CSS
-    // with media="all", and disable the System sheets with media="not all".
     let (light_media, dark_media) = match theme {
         Theme::System => ("all", "(prefers-color-scheme: dark)"),
         _ => ("not all", "not all"),
@@ -569,6 +561,49 @@ mod tests {
             !block.contains("height: 100vh") || block.contains("box-sizing: border-box"),
             "a 100vh sidebar with padding must be border-box"
         );
+    }
+
+    #[test]
+    fn the_theme_picker_is_a_flat_list_of_names() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        for label in ["Light", "Dark"] {
+            assert!(
+                !html.contains(&format!(">{label}</div>")),
+                "the picker must not group names under a {label} heading"
+            );
+        }
+        assert_eq!(
+            html.matches("class=\"mdview-theme-item\"").count(),
+            Theme::all().len(),
+            "every theme must still be listed"
+        );
+    }
+
+    #[test]
+    fn every_theme_ships_its_own_chrome_and_highlight_sheet() {
+        // A hover preview is only an attribute flip if the CSS for the theme
+        // being previewed is already on the page.
+        let html = build_page(&doc(), "<p>hi</p>", Theme::Mocha);
+        for theme in Theme::all() {
+            let Some(wire) = theme.syntect_name().map(|_| theme.as_wire()) else {
+                continue;
+            };
+            assert!(
+                html.contains(&format!(":root[data-theme=\"{wire}\"]")),
+                "{wire} must ship a scoped chrome block"
+            );
+            assert!(
+                html.contains(&format!("id=\"mdview-hl-{wire}\"")),
+                "{wire} must ship its own highlight sheet"
+            );
+            assert!(
+                html.contains(&format!("data-theme-id=\"{wire}\" data-theme-dark=\"")),
+                "{wire} must expose its darkness to the preview"
+            );
+        }
+        // Only the active theme's sheet is live; the rest wait behind `not all`.
+        assert!(html.contains("id=\"mdview-hl-mocha\" media=\"all\""));
+        assert!(html.contains("id=\"mdview-hl-github\" media=\"not all\""));
     }
 
     #[test]
