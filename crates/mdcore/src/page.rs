@@ -564,6 +564,35 @@ mod tests {
     }
 
     #[test]
+    fn fullwidth_state_removes_only_the_content_width_cap() {
+        let css = assets::PAGE_CSS;
+        let content_start = css.find("#mdview-content {").expect("content rule");
+        let content = &css[content_start
+            ..content_start + css[content_start..].find('}').expect("content rule close")];
+        assert!(
+            content.contains("max-width: 46rem"),
+            "centered view must remain the default"
+        );
+        assert!(
+            content.contains("padding: 3rem 1.5rem 6rem"),
+            "both width modes must retain the current page padding"
+        );
+        let full_start = css
+            .find(":root[data-fullwidth=\"1\"] #mdview-content {")
+            .expect("fullwidth override");
+        let full =
+            &css[full_start..full_start + css[full_start..].find('}').expect("override close")];
+        assert!(
+            full.contains("max-width: none"),
+            "fullwidth must remove the cap"
+        );
+        assert!(
+            !full.contains("padding:"),
+            "fullwidth must inherit the base padding"
+        );
+    }
+
+    #[test]
     fn the_theme_picker_is_a_flat_list_of_names() {
         let html = build_page(&doc(), "<p>hi</p>", Theme::System);
         for label in ["Light", "Dark"] {

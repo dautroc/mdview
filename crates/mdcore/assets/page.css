@@ -230,6 +230,8 @@ img { max-width: 100%; }
   padding: 3rem 1.5rem 6rem;
 }
 
+:root[data-fullwidth="1"] #mdview-content { max-width: none; }
+
 #mdview-sidebar {
   border-left: 1px solid var(--border);
   /* There is no global border-box reset, so height:100vh plus the padding
