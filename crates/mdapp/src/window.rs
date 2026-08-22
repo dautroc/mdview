@@ -180,7 +180,10 @@ impl DocumentWindow {
             .unwrap_or_else(|| "MDView".to_string());
         self.window.setTitle(&NSString::from_str(&title));
 
-        match mdcore::render_document_with(&path, highlighter) {
+        let theme = mdcore::Theme::from_wire(
+            &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
+        );
+        match mdcore::render_document_with(&path, highlighter, theme) {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
                 self.expecting_own_load.set(true);

@@ -24,6 +24,34 @@
   }
 }
 
+/* An explicit choice beats the OS. `:root[data-theme=…]` has higher
+   specificity than the bare `:root` inside the media query above, so these
+   win wherever the attribute is present — and when it is absent (System),
+   they simply never match. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --code-bg: #f6f8fa;
+  --link: #0969da;
+  --banner-bg: #fff8c5;
+  --banner-fg: #4d3800;
+  --banner-border: #d4a72c;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #9198a1;
+  --border: #3d444d;
+  --code-bg: #161b22;
+  --link: #4493f8;
+  --banner-bg: #3b2300;
+  --banner-fg: #f8e3a1;
+  --banner-border: #9e6a03;
+}
+
 html { background: var(--bg); }
 
 body {
