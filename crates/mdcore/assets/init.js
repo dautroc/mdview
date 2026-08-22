@@ -389,8 +389,13 @@
     bookmarks = items || [];
     var star = document.getElementById("mdview-star");
     if (star) {
-      star.textContent = starred ? "★" : "☆";
+      // aria-pressed drives the fill in CSS; never write textContent here,
+      // which would replace the inline SVG with a bare glyph.
       star.setAttribute("aria-pressed", starred ? "true" : "false");
+      star.setAttribute(
+        "aria-label",
+        starred ? "Remove bookmark" : "Bookmark this document"
+      );
     }
     if (sidebarTab === "bookmarks") renderSidebarBody();
   };

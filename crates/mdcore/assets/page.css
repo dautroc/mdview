@@ -232,11 +232,18 @@ img { max-width: 100%; }
 
 #mdview-sidebar {
   border-left: 1px solid var(--border);
+  /* There is no global border-box reset, so height:100vh plus the padding
+     below would make this box taller than the viewport. */
+  box-sizing: border-box;
   flex: 0 0 260px;
   height: 100vh;
   overflow-y: auto;
   position: sticky;
   top: 0;
+  /* #mdview-sidebar-toggle is fixed at top:1rem and spans ~38px. Start the
+     panel's own chrome below it, so the toolbar can use the full width
+     instead of reserving a dead strip on the right. */
+  padding-top: 3.5rem;
 }
 #mdview-sidebar[hidden] { display: none; }
 
@@ -260,32 +267,57 @@ img { max-width: 100%; }
 #mdview-sidebar-toggle svg { display: block; width: 20px; height: 20px; }
 
 .mdview-sidebar-head {
-  display: flex; gap: .25rem; justify-content: flex-end;
-  padding: .5rem;
-  /* #mdview-sidebar-toggle is fixed at right:1rem and spans ~38px, so it
-     covers this header's right edge. Reserve that strip or the theme
-     picker sits underneath it and cannot be clicked. */
-  padding-right: 3.5rem;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: .5rem;
+  justify-content: space-between;
+  padding: .5rem .75rem .6rem;
 }
-.mdview-sidebar-head button,
+
+/* Tabs read as one segmented control rather than two loose buttons. */
+.mdview-tabs {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+}
 .mdview-tab {
-  background: none; border: 1px solid transparent; border-radius: 6px;
-  color: var(--muted); cursor: pointer; font: inherit; padding: .25rem .5rem;
+  align-items: center;
+  background: none; border: 0; border-radius: 5px;
+  color: var(--muted); cursor: pointer; display: flex;
+  font: inherit; padding: .3rem .6rem;
 }
-.mdview-sidebar-head button:hover, .mdview-tab:hover { border-color: var(--border); color: var(--fg); }
-.mdview-tabs { display: flex; gap: .25rem; padding: 0 .5rem .5rem; }
-.mdview-tab[aria-selected="true"] { border-color: var(--border); color: var(--fg); }
+.mdview-tab:hover { color: var(--fg); }
+.mdview-tab[aria-selected="true"] {
+  background: var(--bg); box-shadow: 0 1px 2px rgb(0 0 0 / 18%); color: var(--fg);
+}
+
+.mdview-sidebar-actions { align-items: center; display: flex; gap: .15rem; }
+.mdview-sidebar-actions > button,
+.mdview-sidebar-actions summary {
+  align-items: center;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--muted); cursor: pointer; display: flex;
+  font: inherit; padding: .35rem;
+}
+.mdview-sidebar-actions > button:hover,
+.mdview-sidebar-actions summary:hover { border-color: var(--border); color: var(--fg); }
+.mdview-sidebar-head svg { display: block; }
+/* Bookmarked state is the filled star; the glyph itself never changes. */
+#mdview-star[aria-pressed="true"] { color: var(--fg); }
+#mdview-star[aria-pressed="true"] svg { fill: currentColor; }
 
 #mdview-theme {
   background: none; color: var(--muted); cursor: pointer; position: relative;
 }
-#mdview-theme summary {
-  display: block; padding: .25rem .5rem; border-radius: 6px;
-  list-style: none;
-}
-#mdview-theme summary:hover { border-color: var(--border); color: var(--fg); }
-#mdview-theme[open] summary { border: 1px solid var(--border); color: var(--fg); }
-#mdview-theme[open] summary::-webkit-details-marker { display: none; }
+#mdview-theme summary { list-style: none; }
+/* Unconditionally: the marker was only hidden while open, so the closed
+   picker showed a stray disclosure triangle. */
+#mdview-theme summary::-webkit-details-marker { display: none; }
+#mdview-theme[open] summary { border-color: var(--border); color: var(--fg); }
 
 .mdview-theme-list {
   background: var(--code-bg);
@@ -315,7 +347,7 @@ img { max-width: 100%; }
 }
 .mdview-theme-item:hover { background: var(--bg); }
 
-#mdview-sidebar-body { padding: 0 .75rem 2rem; }
+#mdview-sidebar-body { padding: .75rem .75rem 2rem; }
 #mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }
 #mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
 #mdview-sidebar-body a:hover { color: var(--link); }

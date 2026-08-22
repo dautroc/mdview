@@ -65,7 +65,7 @@ style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; font-src data:;"
 /// the current one via `aria-checked` so the list reflects the page's own
 /// theme rather than relying on JS to discover it after the fact.
 fn build_theme_picker(selected: Theme) -> String {
-    let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\">◐</summary>\n<div class=\"mdview-theme-list\" role=\"menu\">\n");
+    let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\" title=\"Theme\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"8\" cy=\"8\" r=\"6.25\"/><path d=\"M8 1.75a6.25 6.25 0 0 1 0 12.5z\" fill=\"currentColor\" stroke=\"none\"/></svg></summary>\n<div class=\"mdview-theme-list\" role=\"menu\">\n");
 
     // Group themes: System, then Light, then Dark
     let mut groups: Vec<(Option<bool>, Vec<Theme>)> = vec![
@@ -186,14 +186,16 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <main id="mdview-main"><div id="mdview-content">{body}</div></main>
 <aside id="mdview-sidebar" hidden>
 <header class="mdview-sidebar-head">
-<button type="button" id="mdview-star" aria-label="Bookmark this document">☆</button>
-{theme_picker}
-</header>
-<nav class="mdview-tabs">
-<button type="button" class="mdview-tab" data-tab="outline" aria-label="Outline" title="Outline"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="3" x2="8" y2="3"/><line x1="2" y1="8" x2="12" y2="8"/><line x1="2" y1="13" x2="14" y2="13"/></svg></button>
-<button type="button" class="mdview-tab" data-tab="bookmarks" aria-label="Bookmarks" title="Bookmarks"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10v9.5L8 9l-5 2.5V2z"/></svg></button>
+<nav class="mdview-tabs" role="tablist">
+<button type="button" class="mdview-tab" role="tab" aria-controls="mdview-sidebar-body" data-tab="outline" aria-label="Outline" title="Outline"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="3" x2="8" y2="3"/><line x1="2" y1="8" x2="12" y2="8"/><line x1="2" y1="13" x2="14" y2="13"/></svg></button>
+<button type="button" class="mdview-tab" role="tab" aria-controls="mdview-sidebar-body" data-tab="bookmarks" aria-label="Bookmarks" title="Bookmarks"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10v9.5L8 9l-5 2.5V2z"/></svg></button>
 </nav>
-<div id="mdview-sidebar-body"></div>
+<div class="mdview-sidebar-actions">
+<button type="button" id="mdview-star" aria-label="Bookmark this document" title="Bookmark this document" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.9l1.88 3.8 4.2.61-3.04 2.96.72 4.18L8 11.48l-3.76 1.97.72-4.18L1.92 6.31l4.2-.61z"/></svg></button>
+{theme_picker}
+</div>
+</header>
+<div id="mdview-sidebar-body" role="tabpanel"></div>
 </aside>
 <button type="button" id="mdview-sidebar-toggle" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="18" y2="4"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="2" y1="16" x2="18" y2="16"/></svg></button>
 </div>
@@ -548,16 +550,37 @@ mod tests {
     }
 
     #[test]
-    fn the_sidebar_header_reserves_room_for_the_fixed_toggle() {
-        // The header's own controls (star, theme picker) sit flush right, exactly
-        // where the fixed toggle lands. Without reserved padding the theme picker
-        // is underneath it and unclickable.
+    fn the_sidebar_reserves_room_for_the_fixed_toggle() {
+        // The header's controls (tabs, star, theme picker) would otherwise sit
+        // under the toggle, which is fixed at top-right and paints above them.
+        // The panel clears it vertically so the toolbar can span the full width.
         let css = assets::PAGE_CSS;
-        let start = css.find(".mdview-sidebar-head {").expect("no sidebar-head rule");
+        let start = css.find("#mdview-sidebar {").expect("no sidebar rule");
         let block = &css[start..start + css[start..].find('}').expect("unterminated rule")];
         assert!(
-            block.contains("padding-right:"),
-            "sidebar header must reserve the toggle's footprint on the right"
+            block.contains("padding-top:"),
+            "the sidebar must clear the fixed toggle's footprint"
+        );
+        // That padding is added to height:100vh unless the box is border-box,
+        // which would push the panel past the bottom of the viewport.
+        assert!(
+            !block.contains("height: 100vh") || block.contains("box-sizing: border-box"),
+            "a 100vh sidebar with padding must be border-box"
+        );
+    }
+
+    #[test]
+    fn the_theme_picker_hides_its_disclosure_triangle_when_closed() {
+        // Scoping the marker rule to [open] left a stray triangle on the closed
+        // picker, which is the state it is in almost all of the time.
+        let css = assets::PAGE_CSS;
+        let marker = css
+            .find("summary::-webkit-details-marker")
+            .expect("no marker rule");
+        let line_start = css[..marker].rfind('\n').map_or(0, |i| i + 1);
+        assert!(
+            !css[line_start..marker].contains("[open]"),
+            "the disclosure triangle must be hidden in both states"
         );
     }
 
