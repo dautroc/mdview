@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::assets;
+use crate::chrome;
 use crate::document::Document;
-use crate::highlight::theme_css;
+use crate::highlight;
 use crate::theme::Theme;
 
 /// Process-lifetime counter mixed into every nonce, so that two pages built
@@ -60,9 +61,53 @@ style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; font-src data:;"
     )
 }
 
+/// Build the theme picker markup listing all themes.
+fn build_theme_picker() -> String {
+    let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\">◐</summary>\n<div class=\"mdview-theme-list\">\n");
+
+    // Group themes: System, then Light, then Dark
+    let mut groups: Vec<(Option<bool>, Vec<Theme>)> = vec![
+        (None, vec![]),
+        (Some(false), vec![]),
+        (Some(true), vec![]),
+    ];
+
+    for theme in Theme::all() {
+        let is_dark = theme.is_dark();
+        if let Some(group) = groups.iter_mut().find(|(k, _)| *k == is_dark) {
+            group.1.push(*theme);
+        }
+    }
+
+    for (is_dark, themes) in groups {
+        if !themes.is_empty() {
+            if let Some(false) = is_dark {
+                html.push_str("<div class=\"mdview-theme-group\"><div class=\"mdview-theme-group-label\">Light</div>\n");
+            } else if let Some(true) = is_dark {
+                html.push_str("<div class=\"mdview-theme-group\"><div class=\"mdview-theme-group-label\">Dark</div>\n");
+            }
+
+            for theme in themes {
+                html.push_str(&format!(
+                    "<button type=\"button\" class=\"mdview-theme-item\" data-theme-id=\"{}\">{}</button>\n",
+                    theme.as_wire(),
+                    theme.label()
+                ));
+            }
+
+            if is_dark.is_some() {
+                html.push_str("</div>\n");
+            }
+        }
+    }
+
+    html.push_str("</div></details>");
+    html
+}
+
 /// Assemble a complete, self-contained HTML document around rendered body HTML.
 pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
-    let (light_css, dark_css) = theme_css();
+    let (light_css, dark_css) = highlight::theme_css();
     let title = doc
         .path
         .file_name()
@@ -75,15 +120,38 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         other => format!(" data-theme=\"{}\"", other.as_wire()),
     };
 
+    // Build chrome tokens and syntax CSS based on the selected theme
+    let (chrome_css, named_theme_css) = match theme {
+        Theme::System => {
+            // For System, emit nothing special (page.css handles the defaults)
+            (String::new(), String::new())
+        }
+        _ => {
+            // For named themes, derive chrome from the palette and emit the syntect CSS
+            let syntect_name = theme.syntect_name().unwrap();
+            if let Some((css, bg, fg)) = highlight::palette_for(syntect_name) {
+                let is_dark = theme.is_dark().unwrap();
+                let tokens = chrome::tokens(bg, fg, is_dark);
+                let chrome_vars = tokens.to_css_vars();
+                let chrome_style = format!(":root {{{}}}", chrome_vars);
+                (format!("<style>{}</style>\n", chrome_style), format!("<style media=\"all\">{}</style>\n", css))
+            } else {
+                (String::new(), String::new())
+            }
+        }
+    };
+
     // Syntect's stylesheets are full rulesets, so they cannot be wrapped in a
     // `:root[data-theme=…]` block — that is CSS Nesting, unsupported by WebKit
-    // before macOS 13.4 while this app supports 11.0. Selecting whole sheets
-    // with a `media` attribute works on every WebKit and needs no nesting.
-    let (light_media, dark_media) = match theme.is_dark() {
-        None => ("all", "(prefers-color-scheme: dark)"),
-        Some(false) => ("all", "not all"),
-        Some(true) => ("not all", "all"),
+    // before macOS 13.4 while this app supports 11.0. For System, select sheets
+    // with `media` attributes. For named themes, emit the theme's own syntect CSS
+    // with media="all", and disable the System sheets with media="not all".
+    let (light_media, dark_media) = match theme {
+        Theme::System => ("all", "(prefers-color-scheme: dark)"),
+        _ => ("not all", "not all"),
     };
+
+    let theme_picker = build_theme_picker();
 
     format!(
         r#"<!DOCTYPE html>
@@ -95,7 +163,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <title>{title}</title>
 <style>{page_css}</style>
 <style>{katex_css}</style>
-<style id="mdview-hl-light" media="{light_media}">{light_css}</style>
+{chrome_css}{named_theme_css}<style id="mdview-hl-light" media="{light_media}">{light_css}</style>
 <style id="mdview-hl-dark" media="{dark_media}">{dark_css}</style>
 </head>
 <body>
@@ -105,7 +173,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <aside id="mdview-sidebar" hidden>
 <header class="mdview-sidebar-head">
 <button type="button" id="mdview-star" aria-label="Bookmark this document">☆</button>
-<button type="button" id="mdview-theme" aria-label="Toggle theme">◐</button>
+{theme_picker}
 <button type="button" id="mdview-sidebar-close" aria-label="Hide sidebar">×</button>
 </header>
 <nav class="mdview-tabs">
@@ -128,11 +196,14 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         title = crate::escape::escape_html(&title),
         page_css = assets::PAGE_CSS,
         katex_css = assets::KATEX_CSS,
+        chrome_css = chrome_css,
+        named_theme_css = named_theme_css,
         light_media = light_media,
         dark_media = dark_media,
         light_css = light_css,
         dark_css = dark_css,
         body = body_html,
+        theme_picker = theme_picker,
         katex_js = assets::KATEX_JS,
         mermaid_js = assets::MERMAID_JS,
         init_js = assets::INIT_JS,
@@ -289,36 +360,52 @@ mod tests {
     }
 
     #[test]
-    fn system_theme_emits_no_data_theme_attribute() {
-        // With no attribute the existing prefers-color-scheme query decides,
-        // which is exactly what "System" means.
-        let html = build_page(&doc(), "", crate::theme::Theme::System);
+    fn system_pins_no_theme_and_keeps_the_media_query() {
+        let html = build_page(&doc(), "", Theme::System);
         assert!(!html.contains("<html data-theme="), "System must not pin a theme");
+        assert!(html.contains("@media (prefers-color-scheme: dark)"));
     }
 
     #[test]
-    fn explicit_themes_pin_the_attribute() {
-        assert!(build_page(&doc(), "", crate::theme::Theme::SolarizedDark).contains("data-theme=\"solarized-dark\""));
-        assert!(build_page(&doc(), "", crate::theme::Theme::GitHub).contains("data-theme=\"github\""));
+    fn a_named_theme_pins_the_attribute_and_emits_derived_chrome() {
+        let html = build_page(&doc(), "", Theme::Mocha);
+        assert!(html.contains("<html data-theme=\"mocha\""));
+        // Chrome comes from the syntect palette, so Mocha's own background
+        // must appear as the --bg token rather than a hand-written colour.
+        assert!(html.contains("--bg:#3b3228"), "chrome not derived from the palette");
+    }
+
+    #[test]
+    fn each_named_theme_emits_a_distinct_page() {
+        let mut seen = std::collections::HashSet::new();
+        for theme in Theme::all().iter().filter(|t| **t != Theme::System) {
+            assert!(
+                seen.insert(build_page(&doc(), "", *theme)),
+                "{} produced a duplicate page",
+                theme.label()
+            );
+        }
+    }
+
+    #[test]
+    fn the_picker_lists_every_theme_by_label() {
+        let html = build_page(&doc(), "", Theme::System);
+        for theme in Theme::all() {
+            assert!(
+                html.contains(&format!("data-theme-id=\"{}\"", theme.as_wire())),
+                "picker missing {}",
+                theme.label()
+            );
+            assert!(html.contains(theme.label()), "picker missing label {}", theme.label());
+        }
     }
 
     #[test]
     fn no_css_nesting_is_emitted() {
         // WebKit before macOS 13.4 cannot parse nested rules and the bundle
-        // declares 11.0, so a nested block fails silently at parse time.
-        let dark = build_page(&doc(), "", Theme::SolarizedDark);
-        assert!(!dark.contains("] { /*"), "syntect CSS must not be nested under a selector");
-    }
-
-    #[test]
-    fn chrome_is_not_yet_derived_from_the_named_theme() {
-        // TRANSITIONAL, remove in Task 2. page.css still keys chrome off
-        // [data-theme="light"|"dark"], which as_wire() no longer emits, so a
-        // named theme currently gets syntect colours with fallback chrome.
-        // Task 2 replaces this with a positive assertion that --bg matches the
-        // theme's own palette background.
-        let dark = build_page(&doc(), "", Theme::Mocha);
-        assert!(!dark.contains("--bg:#3b3228"), "Task 2 should have replaced this test");
+        // declares 11.0; a nested block fails silently at parse time.
+        let html = build_page(&doc(), "", Theme::Mocha);
+        assert!(!html.contains(":root[data-theme=\"mocha\"] { /*"));
     }
 
     #[test]

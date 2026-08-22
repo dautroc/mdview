@@ -24,34 +24,6 @@
   }
 }
 
-/* An explicit choice beats the OS. `:root[data-theme=…]` has higher
-   specificity than the bare `:root` inside the media query above, so these
-   win wherever the attribute is present — and when it is absent (System),
-   they simply never match. */
-:root[data-theme="light"] {
-  --bg: #ffffff;
-  --fg: #1f2328;
-  --muted: #59636e;
-  --border: #d1d9e0;
-  --code-bg: #f6f8fa;
-  --link: #0969da;
-  --banner-bg: #fff8c5;
-  --banner-fg: #4d3800;
-  --banner-border: #d4a72c;
-}
-
-:root[data-theme="dark"] {
-  --bg: #0d1117;
-  --fg: #e6edf3;
-  --muted: #9198a1;
-  --border: #3d444d;
-  --code-bg: #161b22;
-  --link: #4493f8;
-  --banner-bg: #3b2300;
-  --banner-fg: #f8e3a1;
-  --banner-border: #9e6a03;
-}
-
 html { background: var(--bg); }
 
 body {
@@ -296,6 +268,37 @@ img { max-width: 100%; }
 .mdview-sidebar-head button:hover, .mdview-tab:hover { border-color: var(--border); color: var(--fg); }
 .mdview-tabs { display: flex; gap: .25rem; padding: 0 .5rem .5rem; }
 .mdview-tab[aria-selected="true"] { border-color: var(--border); color: var(--fg); }
+
+#mdview-theme {
+  background: none; color: var(--muted); cursor: pointer;
+}
+#mdview-theme summary {
+  display: block; padding: .25rem .5rem; border-radius: 6px;
+  list-style: none;
+}
+#mdview-theme summary:hover { border-color: var(--border); color: var(--fg); }
+#mdview-theme[open] summary { border: 1px solid var(--border); color: var(--fg); }
+#mdview-theme[open] summary::-webkit-details-marker { display: none; }
+
+.mdview-theme-list {
+  background: var(--bg); border: 1px solid var(--border); border-top: 0;
+  border-radius: 0 0 6px 6px; display: flex; flex-direction: column; gap: 0;
+  padding: 0;
+}
+.mdview-theme-group {
+  border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0;
+}
+.mdview-theme-group:last-child { border-bottom: 0; }
+.mdview-theme-group-label {
+  color: var(--muted); font-size: .75rem; font-weight: 600;
+  padding: .5rem .75rem .25rem; text-transform: uppercase;
+}
+.mdview-theme-item {
+  background: none; border: 0; color: var(--fg); cursor: pointer;
+  font: inherit; padding: .5rem .75rem; text-align: left;
+}
+.mdview-theme-item:hover { background: var(--code-bg); }
+
 #mdview-sidebar-body { padding: 0 .75rem 2rem; }
 #mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }
 #mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
