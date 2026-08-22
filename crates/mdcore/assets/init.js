@@ -386,5 +386,78 @@
     renderDiagrams().then(enhanceZoomables);
   };
 
-  document.addEventListener("DOMContentLoaded", window.mdviewRenderAll);
+  // ---- Sidebar state management -------------------------------------------
+
+  function postToHost(text) {
+    try {
+      window.webkit.messageHandlers.mdview.postMessage(text);
+    } catch (err) {
+      /* running outside the app (e.g. --print-html output opened in a
+         browser): the page still works, it just cannot persist. */
+    }
+  }
+
+  var sidebarTab = "outline";
+
+  function setSidebar(open, tab) {
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (!sidebar) return;
+    sidebarTab = tab || sidebarTab;
+    sidebar.hidden = !open;
+    var tabs = document.querySelectorAll(".mdview-tab");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].setAttribute(
+        "aria-selected",
+        tabs[i].getAttribute("data-tab") === sidebarTab ? "true" : "false"
+      );
+    }
+    renderSidebarBody();
+    postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
+  }
+
+  // Task 7 replaces the outline branch; Task 8 the bookmarks branch.
+  function renderSidebarBody() {
+    var body = document.getElementById("mdview-sidebar-body");
+    if (!body) return;
+    body.innerHTML = "<p class=\"mdview-sidebar-empty\">Nothing here yet.</p>";
+  }
+
+  window.mdviewSetSidebar = setSidebar;
+
+  // ---- Sidebar event listeners (attach once at DOMContentLoaded) ----------
+  //
+  // The sidebar markup is OUTSIDE #mdview-content and is therefore not
+  // recreated by live reload. These listeners must attach exactly once here,
+  // not inside mdviewRenderAll (which runs again on every save).
+
+  function attachSidebarListeners() {
+    var closeBtn = document.getElementById("mdview-sidebar-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        setSidebar(false, sidebarTab);
+      });
+    }
+
+    var themeBtn = document.getElementById("mdview-theme");
+    if (themeBtn) {
+      themeBtn.addEventListener("click", function () {
+        var current = document.documentElement.getAttribute("data-theme") || "system";
+        var next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
+        postToHost("setTheme:" + next);
+      });
+    }
+
+    var tabs = document.querySelectorAll(".mdview-tab");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener("click", function (event) {
+        var tab = event.target.getAttribute("data-tab");
+        if (tab) setSidebar(true, tab);
+      });
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    attachSidebarListeners();
+    window.mdviewRenderAll();
+  });
 })();

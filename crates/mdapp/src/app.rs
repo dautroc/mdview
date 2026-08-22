@@ -188,6 +188,22 @@ define_class!(
             crate::defaults::set_string(crate::defaults::THEME_KEY, next.as_wire());
             self.apply_theme(next);
         }
+
+        #[unsafe(method(toggleSidebar:))]
+        fn toggle_sidebar_action(&self, _sender: Option<&NSObject>) {
+            let open = !crate::defaults::get_bool(crate::defaults::SIDEBAR_OPEN_KEY);
+            let tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
+                .unwrap_or_else(|| "outline".to_string());
+            crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);
+            let script = format!(
+                "window.mdviewSetSidebar && window.mdviewSetSidebar({}, {});",
+                open,
+                mdcore::escape::js_string_literal(&tab)
+            );
+            for window in self.ivars().windows.borrow().iter() {
+                window.eval_script(&script);
+            }
+        }
     }
 );
 
@@ -286,7 +302,10 @@ impl AppDelegate {
             // Tasks 6 and 8 fill these in; ignoring them now is correct, not a stub.
             Message::ToggleBookmark => {}
             Message::OpenPath(_) => {}
-            Message::SetSidebar { .. } => {}
+            Message::SetSidebar { open, tab } => {
+                crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);
+                crate::defaults::set_string(crate::defaults::SIDEBAR_TAB_KEY, &tab);
+            }
         }
     }
 

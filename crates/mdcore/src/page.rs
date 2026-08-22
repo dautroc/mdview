@@ -100,7 +100,21 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 </head>
 <body>
 <div id="mdview-banners"></div>
-<div id="mdview-content">{body}</div>
+<div id="mdview-layout">
+<main id="mdview-main"><div id="mdview-content">{body}</div></main>
+<aside id="mdview-sidebar" hidden>
+<header class="mdview-sidebar-head">
+<button type="button" id="mdview-star" aria-label="Bookmark this document">☆</button>
+<button type="button" id="mdview-theme" aria-label="Toggle theme">◐</button>
+<button type="button" id="mdview-sidebar-close" aria-label="Hide sidebar">×</button>
+</header>
+<nav class="mdview-tabs">
+<button type="button" class="mdview-tab" data-tab="outline">Outline</button>
+<button type="button" class="mdview-tab" data-tab="bookmarks">Bookmarks</button>
+</nav>
+<div id="mdview-sidebar-body"></div>
+</aside>
+</div>
 <script nonce="{nonce}">{katex_js}</script>
 <script nonce="{nonce}">{mermaid_js}</script>
 <script nonce="{nonce}">{init_js}</script>
@@ -304,5 +318,27 @@ mod tests {
 
         let system = build_page(&doc(), "", crate::theme::Theme::System);
         assert!(system.contains("id=\"mdview-hl-dark\" media=\"(prefers-color-scheme: dark)\""));
+    }
+
+    #[test]
+    fn sidebar_lives_outside_the_swappable_content() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        let sidebar = html.find("id=\"mdview-sidebar\"").expect("sidebar missing");
+        let content_open = html.find("id=\"mdview-content\"").expect("content missing");
+        let content_close = html.find("</main>").expect("main must close");
+        // Live reload replaces #mdview-content's innerHTML. The sidebar must
+        // not be inside it, or every save would destroy the sidebar.
+        assert!(
+            sidebar < content_open || sidebar > content_close,
+            "sidebar must not sit inside #mdview-content"
+        );
+    }
+
+    #[test]
+    fn sidebar_exposes_the_contract_later_tasks_fill_in() {
+        let html = build_page(&doc(), "", Theme::System);
+        assert!(html.contains("id=\"mdview-sidebar-body\""));
+        assert!(html.contains("data-tab=\"outline\""));
+        assert!(html.contains("data-tab=\"bookmarks\""));
     }
 }

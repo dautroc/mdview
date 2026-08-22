@@ -102,6 +102,10 @@ fn rendered_html_carries_every_token_mdapp_js_depends_on() {
     assert!(html.contains("id=\"mdview-banners\""), "missing #mdview-banners: {html}");
     assert!(html.contains("window.mdviewRenderAll"), "missing window.mdviewRenderAll: {html}");
 
+    for token in ["mdview-sidebar", "mdview-sidebar-body"] {
+        assert!(html.contains(token), "missing sidebar token {token}");
+    }
+
     // Self-contained: no external stylesheet, no externally-sourced script.
     assert_eq!(html.matches("<link").count(), 0, "no external stylesheets: {html}");
     assert_eq!(html.matches("src=\"http").count(), 0, "no external scripts: {html}");

@@ -207,6 +207,16 @@ impl DocumentWindow {
                     );
                 }
                 self.content_ready.set(true);
+                // Restore the sidebar state after each load.
+                let sidebar_open = crate::defaults::get_bool(crate::defaults::SIDEBAR_OPEN_KEY);
+                let sidebar_tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
+                    .unwrap_or_else(|| "outline".to_string());
+                let sidebar_script = format!(
+                    "window.mdviewSetSidebar && window.mdviewSetSidebar({}, {});",
+                    sidebar_open,
+                    mdcore::escape::js_string_literal(&sidebar_tab)
+                );
+                self.eval_script(&sidebar_script);
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
                 if doc.lossy {

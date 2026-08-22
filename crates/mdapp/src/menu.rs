@@ -74,6 +74,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     view_menu.addItem(&item(mtm, "Zoom In", sel!(zoomIn:), "="));
     view_menu.addItem(&item(mtm, "Zoom Out", sel!(zoomOut:), "-"));
     view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    view_menu.addItem(&item(mtm, "Toggle Sidebar", sel!(toggleSidebar:), "s"));
     view_menu.addItem(&item(mtm, "Toggle Theme", sel!(cycleTheme:), "t"));
     menubar.addItem(&view_holder);
 
