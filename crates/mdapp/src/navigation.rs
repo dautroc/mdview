@@ -7,8 +7,8 @@ use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_foundation::MainThreadMarker;
 use objc2_web_kit::{
-    WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKNavigationType,
-    WKWebView,
+    WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate,
+    WKNavigationType, WKWebView,
 };
 
 const MARKDOWN_EXTENSIONS: [&str; 3] = ["md", "markdown", "mdown"];
@@ -88,6 +88,7 @@ pub fn decide(
 pub struct NavigationState {
     pub handler: Rc<dyn Fn(NavigationRequest)>,
     pub expecting_own_load: Rc<Cell<bool>>,
+    pub page_ready: Rc<Cell<bool>>,
 }
 
 define_class!(
@@ -141,6 +142,11 @@ define_class!(
                 }
             }
         }
+
+        #[unsafe(method(webView:didFinishNavigation:))]
+        fn did_finish_navigation(&self, _webview: &WKWebView, _navigation: Option<&WKNavigation>) {
+            self.ivars().page_ready.set(true);
+        }
     }
 );
 
@@ -149,10 +155,12 @@ impl NavigationDelegate {
         mtm: MainThreadMarker,
         handler: Rc<dyn Fn(NavigationRequest)>,
         expecting_own_load: Rc<Cell<bool>>,
+        page_ready: Rc<Cell<bool>>,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(NavigationState {
             handler,
             expecting_own_load,
+            page_ready,
         });
         unsafe { objc2::msg_send![super(this), init] }
     }

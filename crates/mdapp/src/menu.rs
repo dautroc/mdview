@@ -53,27 +53,6 @@ fn submenu(mtm: MainThreadMarker, title: &str) -> (Retained<NSMenuItem>, Retaine
     (holder, menu)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fullwidth_menu_contract_uses_option_command_f() {
-        assert_eq!(FULL_WIDTH_TITLE, "Full Width");
-        assert_eq!(FULL_WIDTH_KEY_EQUIVALENT, "f");
-        assert_eq!(
-            full_width_modifier_mask(),
-            NSEventModifierFlags::Command | NSEventModifierFlags::Option
-        );
-    }
-
-    #[test]
-    fn fullwidth_menu_checkmark_matches_the_preference() {
-        assert_eq!(full_width_menu_state(true), NSControlStateValueOn);
-        assert_eq!(full_width_menu_state(false), NSControlStateValueOff);
-    }
-}
-
 /// Install the application menu bar.
 ///
 /// Menu items use a nil target, so AppKit sends each action up the responder
@@ -155,4 +134,25 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     app.setHelpMenu(Some(&help_menu));
 
     recent_menu
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fullwidth_menu_contract_uses_option_command_f() {
+        assert_eq!(FULL_WIDTH_TITLE, "Full Width");
+        assert_eq!(FULL_WIDTH_KEY_EQUIVALENT, "f");
+        assert_eq!(
+            full_width_modifier_mask(),
+            NSEventModifierFlags::Command | NSEventModifierFlags::Option
+        );
+    }
+
+    #[test]
+    fn fullwidth_menu_checkmark_matches_the_preference() {
+        assert_eq!(full_width_menu_state(true), NSControlStateValueOn);
+        assert_eq!(full_width_menu_state(false), NSControlStateValueOff);
+    }
 }

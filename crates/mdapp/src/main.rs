@@ -116,5 +116,23 @@ mod bundle_version_tests {
             !set_full_width.contains("eval_script"),
             "full-width changes must stay queued until the page is ready"
         );
+        assert!(window.contains("page_ready: Rc<Cell<bool>>"));
+        assert_eq!(window.matches("self.page_ready.set(false)").count(), 2);
+        assert!(window.contains("if !self.page_ready.get()"));
+        let drain_start = window
+            .find("pub fn drain_pending_banners")
+            .expect("window must drain queued page state");
+        let drain_end = drain_start
+            + window[drain_start..]
+                .find("pub fn set_full_width")
+                .expect("drain_pending_banners must end before set_full_width");
+        assert!(
+            !window[drain_start..drain_end].contains("isLoading"),
+            "navigation completion, not WebKit's handoff-time loading state, gates draining"
+        );
+        let navigation = include_str!("navigation.rs");
+        assert!(navigation.contains("page_ready: Rc<Cell<bool>>"));
+        assert!(navigation.contains("#[unsafe(method(webView:didFinishNavigation:))]"));
+        assert!(navigation.contains("self.ivars().page_ready.set(true)"));
     }
 }

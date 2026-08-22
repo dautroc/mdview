@@ -86,6 +86,9 @@ pub struct DocumentWindow {
     /// through. Shared with `NavigationDelegate`, mirroring how `closed` is
     /// shared with `WindowCloseDelegate`.
     expecting_own_load: Rc<Cell<bool>>,
+    /// Set false before each `loadHTMLString` and true only when WebKit calls
+    /// the navigation delegate's `didFinishNavigation:` callback.
+    page_ready: Rc<Cell<bool>>,
 }
 
 impl DocumentWindow {
@@ -126,10 +129,12 @@ impl DocumentWindow {
         };
 
         let expecting_own_load = Rc::new(Cell::new(false));
+        let page_ready = Rc::new(Cell::new(false));
         let navigation = crate::navigation::NavigationDelegate::new(
             mtm,
             on_navigate,
             expecting_own_load.clone(),
+            page_ready.clone(),
         );
         unsafe {
             webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*navigation)));
@@ -182,6 +187,7 @@ impl DocumentWindow {
             closed,
             content_ready: Cell::new(false),
             expecting_own_load,
+            page_ready,
         });
 
         doc_window.reload(highlighter);
@@ -227,6 +233,7 @@ impl DocumentWindow {
         match mdcore::render_document_with(&path, highlighter, theme) {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
+                self.page_ready.set(false);
                 self.expecting_own_load.set(true);
                 unsafe {
                     self.webview.loadHTMLString_baseURL(
@@ -237,7 +244,7 @@ impl DocumentWindow {
                 self.content_ready.set(true);
                 // Queue sidebar state restoration: loadHTMLString is asynchronous,
                 // so window.mdviewSetSidebar doesn't exist yet. The watch tick's
-                // drain_pending_banners will inject this once isLoading() is false.
+                // drain_pending_banners will inject this after navigation finishes.
                 let sidebar_open = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY).unwrap_or(true);
                 let sidebar_tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
                     .unwrap_or_else(|| "outline".to_string());
@@ -367,6 +374,7 @@ impl DocumentWindow {
 </head><body><h2>Cannot display this file</h2><p>{}</p></body></html>",
             mdcore::escape::escape_html(message)
         );
+        self.page_ready.set(false);
         self.expecting_own_load.set(true);
         unsafe {
             self.webview
@@ -457,11 +465,11 @@ impl DocumentWindow {
     }
 
     /// Inject any banners queued by the last load. Safe to call repeatedly.
-    /// Does nothing while the page is still loading — `loadHTMLString` is
-    /// asynchronous, and draining early would empty the queue into a document
-    /// that does not exist yet, losing the banner permanently.
+    /// Does nothing until WebKit confirms that the current navigation finished.
+    /// Draining early would empty the queue into a document that does not
+    /// exist yet, losing the banner permanently.
     pub fn drain_pending_banners(&self) {
-        if unsafe { self.webview.isLoading() } {
+        if !self.page_ready.get() {
             return;
         }
         let scripts = std::mem::take(&mut *self.pending_scripts.borrow_mut());
