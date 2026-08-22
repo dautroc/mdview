@@ -132,7 +132,11 @@ mod bundle_version_tests {
         );
         let navigation = include_str!("navigation.rs");
         assert!(navigation.contains("page_ready: Rc<Cell<bool>>"));
+        assert!(navigation.contains("expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>"));
         assert!(navigation.contains("#[unsafe(method(webView:didFinishNavigation:))]"));
+        assert!(navigation.contains("Retained::as_ptr(expected)"));
         assert!(navigation.contains("self.ivars().page_ready.set(true)"));
+        assert!(window.contains("expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>"));
+        assert!(window.contains("*self.expected_navigation.borrow_mut() = navigation"));
     }
 }

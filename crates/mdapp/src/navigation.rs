@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -89,6 +89,7 @@ pub struct NavigationState {
     pub handler: Rc<dyn Fn(NavigationRequest)>,
     pub expecting_own_load: Rc<Cell<bool>>,
     pub page_ready: Rc<Cell<bool>>,
+    pub expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
 }
 
 define_class!(
@@ -144,8 +145,17 @@ define_class!(
         }
 
         #[unsafe(method(webView:didFinishNavigation:))]
-        fn did_finish_navigation(&self, _webview: &WKWebView, _navigation: Option<&WKNavigation>) {
-            self.ivars().page_ready.set(true);
+        fn did_finish_navigation(&self, _webview: &WKWebView, navigation: Option<&WKNavigation>) {
+            let Some(navigation) = navigation else {
+                return;
+            };
+            let expected_navigation = self.ivars().expected_navigation.borrow();
+            let is_expected = expected_navigation.as_ref().is_some_and(|expected| {
+                std::ptr::eq(Retained::as_ptr(expected), navigation as *const WKNavigation)
+            });
+            if is_expected {
+                self.ivars().page_ready.set(true);
+            }
         }
     }
 );
@@ -156,13 +166,40 @@ impl NavigationDelegate {
         handler: Rc<dyn Fn(NavigationRequest)>,
         expecting_own_load: Rc<Cell<bool>>,
         page_ready: Rc<Cell<bool>>,
+        expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(NavigationState {
             handler,
             expecting_own_load,
             page_ready,
+            expected_navigation,
         });
         unsafe { objc2::msg_send![super(this), init] }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct ReadinessState {
+    active: Option<u64>,
+    ready: bool,
+}
+
+#[cfg(test)]
+impl ReadinessState {
+    fn start(&mut self, navigation: u64) {
+        self.active = Some(navigation);
+        self.ready = false;
+    }
+
+    fn finish(&mut self, navigation: u64) {
+        if self.active == Some(navigation) {
+            self.ready = true;
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready
     }
 }
 
@@ -193,6 +230,19 @@ mod tests {
             decide(Some("about:blank"), Some("about"), None, true, true),
             Decision::Allow
         );
+    }
+
+    #[test]
+    fn only_the_active_navigation_completion_marks_the_page_ready() {
+        let mut readiness = ReadinessState::default();
+        readiness.start(1);
+        readiness.start(2);
+
+        readiness.finish(1);
+        assert!(!readiness.is_ready());
+
+        readiness.finish(2);
+        assert!(readiness.is_ready());
     }
 
     #[test]

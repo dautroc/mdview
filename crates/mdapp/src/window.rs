@@ -16,7 +16,7 @@ use objc2_app_kit::{
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL,
 };
-use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
+use objc2_web_kit::{WKNavigation, WKWebView, WKWebViewConfiguration};
 
 /// Ivars for `WindowCloseDelegate`: just the shared flag it flips.
 pub struct WindowCloseState {
@@ -89,6 +89,9 @@ pub struct DocumentWindow {
     /// Set false before each `loadHTMLString` and true only when WebKit calls
     /// the navigation delegate's `didFinishNavigation:` callback.
     page_ready: Rc<Cell<bool>>,
+    /// The retained navigation expected to finish. Replacing this before each
+    /// load makes a late completion from an older page harmless.
+    expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
 }
 
 impl DocumentWindow {
@@ -130,11 +133,13 @@ impl DocumentWindow {
 
         let expecting_own_load = Rc::new(Cell::new(false));
         let page_ready = Rc::new(Cell::new(false));
+        let expected_navigation = Rc::new(RefCell::new(None));
         let navigation = crate::navigation::NavigationDelegate::new(
             mtm,
             on_navigate,
             expecting_own_load.clone(),
             page_ready.clone(),
+            expected_navigation.clone(),
         );
         unsafe {
             webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*navigation)));
@@ -188,6 +193,7 @@ impl DocumentWindow {
             content_ready: Cell::new(false),
             expecting_own_load,
             page_ready,
+            expected_navigation,
         });
 
         doc_window.reload(highlighter);
@@ -234,13 +240,15 @@ impl DocumentWindow {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
                 self.page_ready.set(false);
+                *self.expected_navigation.borrow_mut() = None;
                 self.expecting_own_load.set(true);
-                unsafe {
+                let navigation = unsafe {
                     self.webview.loadHTMLString_baseURL(
                         &NSString::from_str(&doc.html),
                         Some(&base),
-                    );
-                }
+                    )
+                };
+                *self.expected_navigation.borrow_mut() = navigation;
                 self.content_ready.set(true);
                 // Queue sidebar state restoration: loadHTMLString is asynchronous,
                 // so window.mdviewSetSidebar doesn't exist yet. The watch tick's
@@ -375,11 +383,13 @@ impl DocumentWindow {
             mdcore::escape::escape_html(message)
         );
         self.page_ready.set(false);
+        *self.expected_navigation.borrow_mut() = None;
         self.expecting_own_load.set(true);
-        unsafe {
+        let navigation = unsafe {
             self.webview
-                .loadHTMLString_baseURL(&NSString::from_str(&html), None);
-        }
+                .loadHTMLString_baseURL(&NSString::from_str(&html), None)
+        };
+        *self.expected_navigation.borrow_mut() = navigation;
         // The error page has no `#mdview-content` or `#mdview-banners`: a
         // later `live_update`'s JS swap would silently no-op forever, and a
         // queued banner would have nowhere to land. Mark content not-ready so
