@@ -22,11 +22,55 @@ pub fn render_body(markdown: &str) -> String {
 /// Same as `render_body`, but reuses a `Highlighter`. Live reload calls this
 /// on every save, and rebuilding the syntax set each time would be wasteful.
 pub fn render_body_with(markdown: &str, highlighter: &Highlighter) -> String {
+    render_body_in(markdown, highlighter, None)
+}
+
+/// Same again, resolving the document's own images against `base_dir` and
+/// embedding them. A page handed to WKWebView as a string cannot read `file:`
+/// subresources, so without this a document's pictures silently do not appear.
+/// Pass `None` when there is no directory to resolve against; destinations are
+/// then left exactly as written.
+pub fn render_body_in(
+    markdown: &str,
+    highlighter: &Highlighter,
+    base_dir: Option<&std::path::Path>,
+) -> String {
     let parser = Parser::new_ext(markdown, markdown_options());
     let events = transform_events(parser, highlighter);
+    let events = inline_images(events, base_dir);
     let mut out = String::new();
     html::push_html(&mut out, events.into_iter());
     out
+}
+
+/// Replace each image destination with a `data:` URI where one can be built.
+fn inline_images<'a>(events: Vec<Event<'a>>, base_dir: Option<&std::path::Path>) -> Vec<Event<'a>> {
+    let Some(base_dir) = base_dir else {
+        return events;
+    };
+    events
+        .into_iter()
+        .map(|event| match event {
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => {
+                let dest_url = match crate::images::inline(&dest_url, base_dir) {
+                    Some(data) => CowStr::from(data),
+                    None => dest_url,
+                };
+                Event::Start(Tag::Image {
+                    link_type,
+                    dest_url,
+                    title,
+                    id,
+                })
+            }
+            other => other,
+        })
+        .collect()
 }
 
 /// Collapse each fenced/indented code block into a single pre-rendered

@@ -83,7 +83,6 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
         NSEventModifierFlags::Command | NSEventModifierFlags::Option,
     );
     view_menu.addItem(&sidebar_item);
-    view_menu.addItem(&item(mtm, "Next Theme", sel!(cycleTheme:), "t"));
     menubar.addItem(&view_holder);
 
     let (bm_holder, bm_menu) = submenu(mtm, "Bookmarks");

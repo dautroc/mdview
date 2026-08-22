@@ -7,6 +7,7 @@ pub mod chrome;
 pub mod document;
 pub mod escape;
 pub mod highlight;
+pub mod images;
 pub mod math;
 pub mod page;
 pub mod render;
@@ -44,7 +45,7 @@ pub fn render_document_with(
     theme: Theme,
 ) -> Result<RenderedDoc, DocumentError> {
     let doc = Document::load(path)?;
-    let body = render::render_body_with(&doc.source, highlighter);
+    let body = render::render_body_in(&doc.source, highlighter, Some(&doc.base_dir));
     Ok(RenderedDoc {
         html: page::build_page(&doc, &body, theme),
         base_dir: doc.base_dir.clone(),
@@ -59,7 +60,7 @@ pub fn render_body_of(
     highlighter: &Highlighter,
 ) -> Result<(String, bool), DocumentError> {
     let doc = Document::load(path)?;
-    let body = render::render_body_with(&doc.source, highlighter);
+    let body = render::render_body_in(&doc.source, highlighter, Some(&doc.base_dir));
     Ok((body, doc.lossy))
 }
 

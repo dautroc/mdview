@@ -186,27 +186,6 @@ define_class!(
             }
         }
 
-        #[unsafe(method(cycleTheme:))]
-        fn cycle_theme_action(&self, _sender: Option<&NSObject>) {
-            // Advance through Theme::all() in order, wrapping at the end.
-            //
-            // This sends SetTheme(next, None) — no scroll offset — unlike the
-            // picker, which reads window.scrollY in JS and sends it along.
-            // ⌘T is a menu/keyboard action dispatched from Rust with no event
-            // from the page, so there is no synchronous way to read the
-            // frontmost window's current scroll position here without an
-            // async round-trip through evaluateJavaScript. Left as a scroll
-            // reset rather than adding that plumbing for a keyboard shortcut;
-            // the picker path (mouse-driven, already in JS) keeps the offset.
-            let current = mdcore::Theme::from_wire(
-                &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
-            );
-            let all = mdcore::Theme::all();
-            let i = all.iter().position(|t| *t == current).unwrap_or(0);
-            let next = all[(i + 1) % all.len()];
-            self.handle_message(crate::state::Message::SetTheme(next, None));
-        }
-
         #[unsafe(method(toggleSidebar:))]
         fn toggle_sidebar_action(&self, _sender: Option<&NSObject>) {
             let current = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY).unwrap_or(true);
