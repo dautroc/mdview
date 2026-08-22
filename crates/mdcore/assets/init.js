@@ -18,18 +18,40 @@
     }
   }
 
+  // Stash each diagram's ORIGINAL source before mermaid replaces it with an
+  // SVG. A previous attempt re-read the rendered output as if it were source,
+  // which fed mermaid its own SVG and corrupted the diagram. Source is only
+  // recoverable before the first render, so capture it here.
+  function stashMermaidSources() {
+    var nodes = document.querySelectorAll("pre.mermaid");
+    for (var i = 0; i < nodes.length; i++) {
+      if (!nodes[i].hasAttribute("data-mermaid-src")) {
+        nodes[i].setAttribute("data-mermaid-src", nodes[i].textContent);
+      }
+    }
+  }
+
+  // The explicit theme lives in <html data-theme>, which does NOT affect
+  // prefers-color-scheme. Reading the media query here would render every
+  // diagram in the OS palette while the rest of the page honours the user's
+  // choice. Fall back to the query only when no explicit theme is pinned.
+  function effectiveTheme() {
+    var pinned = document.documentElement.getAttribute("data-theme");
+    if (pinned === "dark" || pinned === "light") return pinned;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+
   // Always resolves (never rejects), and resolves synchronously-ish via a
   // microtask even when mermaid is absent or throws, so callers can chain
   // off it unconditionally without a try/catch of their own.
   function renderDiagrams() {
     if (typeof mermaid === "undefined") return Promise.resolve();
+    stashMermaidSources();
     try {
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: "strict",
-        theme: window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "default",
+        theme: effectiveTheme() === "dark" ? "dark" : "default",
       });
       var result = mermaid.run({ querySelector: "pre.mermaid" });
       if (result && typeof result.then === "function") {
@@ -122,6 +144,56 @@
       wrapZoomable(images[j], true);
     }
   }
+
+  // Chrome colours come from CSS custom properties keyed off data-theme, but
+  // the syntect highlight palettes are whole stylesheets selected by a media
+  // attribute (they cannot be nested under a selector — that needs CSS
+  // Nesting, unsupported before macOS 13.4). Both must move together or the
+  // page recolours while code blocks stay behind.
+  function applyHighlightSheets(theme) {
+    var light = document.getElementById("mdview-hl-light");
+    var dark = document.getElementById("mdview-hl-dark");
+    if (!light || !dark) return;
+    if (theme === "light") {
+      light.media = "all";
+      dark.media = "not all";
+    } else if (theme === "dark") {
+      light.media = "not all";
+      dark.media = "all";
+    } else {
+      light.media = "all";
+      dark.media = "(prefers-color-scheme: dark)";
+    }
+  }
+
+  // Restore every diagram to its stashed source and let mermaid render it
+  // again under the new theme. mermaid skips nodes carrying data-processed,
+  // so that attribute must go too.
+  function rerenderDiagrams() {
+    var nodes = document.querySelectorAll("pre.mermaid[data-mermaid-src]");
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      node.removeAttribute("data-processed");
+      node.textContent = node.getAttribute("data-mermaid-src");
+    }
+    return renderDiagrams();
+  }
+
+  // Called from Rust when the theme changes. KaTeX needs no re-render: its
+  // output inherits colour from CSS. Only mermaid bakes the theme in.
+  window.mdviewApplyTheme = function (theme) {
+    if (theme === "system") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+    applyHighlightSheets(theme);
+    // rerenderDiagrams() destroys and rebuilds every pre.mermaid node, taking
+    // the zoom wrapper and button with it (wrapZoomable inserts them inside
+    // that node). Chain the enhancer exactly as mdviewRenderAll does, or
+    // diagrams lose click-to-zoom until the next save.
+    rerenderDiagrams().then(enhanceZoomables);
+  };
 
   function getLightbox() {
     var existing = document.getElementById("mdview-lightbox");
@@ -324,7 +396,188 @@
     // enhanceZoomables() runs exactly once, after diagrams exist, and still
     // runs -- covering images -- even when mermaid itself failed.
     renderDiagrams().then(enhanceZoomables);
+    renderSidebarBody();
   };
 
-  document.addEventListener("DOMContentLoaded", window.mdviewRenderAll);
+  // ---- Sidebar state management -------------------------------------------
+
+  function postToHost(text) {
+    try {
+      window.webkit.messageHandlers.mdview.postMessage(text);
+    } catch (err) {
+      /* running outside the app (e.g. --print-html output opened in a
+         browser): the page still works, it just cannot persist. */
+    }
+  }
+
+  var sidebarTab = "outline";
+  var bookmarks = [];
+
+  function setSidebar(open, tab) {
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (!sidebar) return;
+    sidebarTab = tab || sidebarTab;
+    sidebar.hidden = !open;
+    var tabs = document.querySelectorAll(".mdview-tab");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].setAttribute(
+        "aria-selected",
+        tabs[i].getAttribute("data-tab") === sidebarTab ? "true" : "false"
+      );
+    }
+    renderSidebarBody();
+    postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
+  }
+
+  window.mdviewSetBookmarks = function (items, starred) {
+    bookmarks = items || [];
+    var star = document.getElementById("mdview-star");
+    if (star) {
+      star.textContent = starred ? "★" : "☆";
+      star.setAttribute("aria-pressed", starred ? "true" : "false");
+    }
+    if (sidebarTab === "bookmarks") renderSidebarBody();
+  };
+
+  // Turn heading text into a URL-safe id. Duplicates get a numeric suffix so
+  // two "## Setup" headings still scroll to different places.
+  function slugify(text, seen) {
+    var base = text
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-");
+    if (!base) base = "section";
+    var slug = base;
+    var n = 2;
+    while (seen[slug]) {
+      slug = base + "-" + n;
+      n++;
+    }
+    seen[slug] = true;
+    return slug;
+  }
+
+  // Build the outline from the rendered document. Rebuilt wholesale on every
+  // render rather than patched: incremental updates over already-processed
+  // nodes are the defect class that has bitten this project twice.
+  function buildOutline() {
+    var content = document.getElementById("mdview-content");
+    if (!content) return "<p class=\"mdview-sidebar-empty\">No document.</p>";
+    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    if (!headings.length) {
+      return "<p class=\"mdview-sidebar-empty\">No headings.</p>";
+    }
+    var seen = {};
+    var parts = ["<ul>"];
+    for (var i = 0; i < headings.length; i++) {
+      var h = headings[i];
+      if (!h.id) h.id = slugify(h.textContent, seen);
+      var level = parseInt(h.tagName.substring(1), 10);
+      parts.push(
+        '<li style="padding-left:' + ((level - 1) * 0.6) + 'rem">' +
+        '<a href="#" data-outline-id="' + h.id + '"></a></li>'
+      );
+      // textContent is assigned below rather than interpolated, so heading
+      // text can never inject markup into the sidebar.
+    }
+    parts.push("</ul>");
+    var html = parts.join("");
+    var host = document.createElement("div");
+    host.innerHTML = html;
+    var links = host.querySelectorAll("a[data-outline-id]");
+    for (var j = 0; j < links.length; j++) {
+      links[j].textContent = headings[j].textContent;
+    }
+    return host.innerHTML;
+  }
+
+  // Task 7 replaces the outline branch; Task 8 the bookmarks branch.
+  function renderSidebarBody() {
+    var body = document.getElementById("mdview-sidebar-body");
+    if (!body) return;
+    if (sidebarTab === "outline") {
+      body.innerHTML = buildOutline();
+      var links = body.querySelectorAll("a[data-outline-id]");
+      for (var i = 0; i < links.length; i++) {
+        links[i].addEventListener("click", function (event) {
+          event.preventDefault();
+          var target = document.getElementById(
+            event.currentTarget.getAttribute("data-outline-id")
+          );
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+    } else {
+      if (!bookmarks.length) {
+        body.innerHTML = "<p class=\"mdview-sidebar-empty\">No bookmarks yet.</p>";
+        return;
+      }
+      body.innerHTML = "<ul></ul>";
+      var list = body.firstChild;
+      for (var k = 0; k < bookmarks.length; k++) {
+        (function (entry) {
+          var li = document.createElement("li");
+          var a = document.createElement("a");
+          a.href = "#";
+          a.textContent = entry.name;   // textContent, never innerHTML
+          a.title = entry.path;
+          a.addEventListener("click", function (event) {
+            event.preventDefault();
+            postToHost("openPath:" + entry.path);
+          });
+          li.appendChild(a);
+          list.appendChild(li);
+        })(bookmarks[k]);
+      }
+    }
+  }
+
+  window.mdviewSetSidebar = setSidebar;
+
+  // ---- Sidebar event listeners (attach once at DOMContentLoaded) ----------
+  //
+  // The sidebar markup is OUTSIDE #mdview-content and is therefore not
+  // recreated by live reload. These listeners must attach exactly once here,
+  // not inside mdviewRenderAll (which runs again on every save).
+
+  function attachSidebarListeners() {
+    var closeBtn = document.getElementById("mdview-sidebar-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        setSidebar(false, sidebarTab);
+      });
+    }
+
+    var themeBtn = document.getElementById("mdview-theme");
+    if (themeBtn) {
+      themeBtn.addEventListener("click", function () {
+        // The cycle order (System -> Light -> Dark) is defined exactly once,
+        // in Rust's Theme::next, which also drives the ⌘T shortcut. Posting
+        // a bare "cycleTheme" message and letting the host apply it there
+        // means this button and ⌘T can never disagree about the order.
+        postToHost("cycleTheme");
+      });
+    }
+
+    var starBtn = document.getElementById("mdview-star");
+    if (starBtn) {
+      starBtn.addEventListener("click", function () {
+        postToHost("toggleBookmark");
+      });
+    }
+
+    var tabs = document.querySelectorAll(".mdview-tab");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener("click", function (event) {
+        var tab = event.target.getAttribute("data-tab");
+        if (tab) setSidebar(true, tab);
+      });
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    attachSidebarListeners();
+    window.mdviewRenderAll();
+  });
 })();

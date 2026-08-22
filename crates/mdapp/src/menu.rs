@@ -1,7 +1,7 @@
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::MainThreadOnly;
-use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
+use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
 use objc2_foundation::{MainThreadMarker, NSString};
 
 /// Build one menu item. `key` is the command-key equivalent ("" for none).
@@ -40,7 +40,9 @@ fn submenu(mtm: MainThreadMarker, title: &str) -> (Retained<NSMenuItem>, Retaine
 /// Menu items use a nil target, so AppKit sends each action up the responder
 /// chain and it lands on the application delegate. That is why the delegate
 /// implements the action selectors rather than the window doing so.
-pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
+///
+/// Returns the Open Recent submenu so the delegate can refill it from history.
+pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     let menubar = NSMenu::new(mtm);
 
     // Application menu. Its title is ignored by AppKit, which substitutes the
@@ -55,6 +57,8 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     let (file_holder, file_menu) = submenu(mtm, "File");
     file_menu.addItem(&item(mtm, "Open…", sel!(openDocument:), "o"));
     file_menu.addItem(&item(mtm, "Reload", sel!(reloadDocument:), "r"));
+    let (recent_holder, recent_menu) = submenu(mtm, "Open Recent");
+    file_menu.addItem(&recent_holder);
     file_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     file_menu.addItem(&item(mtm, "Close Window", sel!(performClose:), "w"));
     menubar.addItem(&file_holder);
@@ -73,7 +77,18 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     // needs the unshifted "=" here instead.
     view_menu.addItem(&item(mtm, "Zoom In", sel!(zoomIn:), "="));
     view_menu.addItem(&item(mtm, "Zoom Out", sel!(zoomOut:), "-"));
+    view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    let sidebar_item = item(mtm, "Toggle Sidebar", sel!(toggleSidebar:), "s");
+    sidebar_item.setKeyEquivalentModifierMask(
+        NSEventModifierFlags::Command | NSEventModifierFlags::Option,
+    );
+    view_menu.addItem(&sidebar_item);
+    view_menu.addItem(&item(mtm, "Toggle Theme", sel!(cycleTheme:), "t"));
     menubar.addItem(&view_holder);
+
+    let (bm_holder, bm_menu) = submenu(mtm, "Bookmarks");
+    bm_menu.addItem(&item(mtm, "Bookmark This Document", sel!(toggleBookmark:), "d"));
+    menubar.addItem(&bm_holder);
 
     let (window_holder, window_menu) = submenu(mtm, "Window");
     window_menu.addItem(&item(mtm, "Minimize", sel!(performMiniaturize:), "m"));
@@ -88,4 +103,6 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     app.setMainMenu(Some(&menubar));
     app.setWindowsMenu(Some(&window_menu));
     app.setHelpMenu(Some(&help_menu));
+
+    recent_menu
 }

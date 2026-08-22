@@ -9,11 +9,13 @@ pub mod highlight;
 pub mod math;
 pub mod page;
 pub mod render;
+pub mod theme;
 
 use std::path::{Path, PathBuf};
 
 pub use document::{Document, DocumentError};
 pub use highlight::Highlighter;
+pub use theme::Theme;
 
 /// A document rendered and ready to hand to a web view.
 #[derive(Debug, Clone)]
@@ -27,9 +29,9 @@ pub struct RenderedDoc {
 }
 
 /// Load and render a Markdown file. This is the entire contract `mdapp` uses.
-pub fn render_document(path: impl AsRef<Path>) -> Result<RenderedDoc, DocumentError> {
+pub fn render_document(path: impl AsRef<Path>, theme: Theme) -> Result<RenderedDoc, DocumentError> {
     let highlighter = Highlighter::new();
-    render_document_with(path, &highlighter)
+    render_document_with(path, &highlighter, theme)
 }
 
 /// Same as `render_document`, reusing a `Highlighter` across renders. Live
@@ -37,11 +39,12 @@ pub fn render_document(path: impl AsRef<Path>) -> Result<RenderedDoc, DocumentEr
 pub fn render_document_with(
     path: impl AsRef<Path>,
     highlighter: &Highlighter,
+    theme: Theme,
 ) -> Result<RenderedDoc, DocumentError> {
     let doc = Document::load(path)?;
     let body = render::render_body_with(&doc.source, highlighter);
     Ok(RenderedDoc {
-        html: page::build_page(&doc, &body),
+        html: page::build_page(&doc, &body, theme),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
     })

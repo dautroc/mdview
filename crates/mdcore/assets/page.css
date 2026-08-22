@@ -24,15 +24,42 @@
   }
 }
 
+/* An explicit choice beats the OS. `:root[data-theme=…]` has higher
+   specificity than the bare `:root` inside the media query above, so these
+   win wherever the attribute is present — and when it is absent (System),
+   they simply never match. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --code-bg: #f6f8fa;
+  --link: #0969da;
+  --banner-bg: #fff8c5;
+  --banner-fg: #4d3800;
+  --banner-border: #d4a72c;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #9198a1;
+  --border: #3d444d;
+  --code-bg: #161b22;
+  --link: #4493f8;
+  --banner-bg: #3b2300;
+  --banner-fg: #f8e3a1;
+  --banner-border: #9e6a03;
+}
+
 html { background: var(--bg); }
 
 body {
   background: var(--bg);
   color: var(--fg);
   font: 16px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif;
-  margin: 0 auto;
-  max-width: 46rem;
-  padding: 3rem 1.5rem 6rem;
+  margin: 0;
+  padding: 0;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -221,3 +248,37 @@ img { max-width: 100%; }
 }
 
 .mdview-lightbox-close:hover { background: var(--code-bg); }
+
+#mdview-layout { display: flex; align-items: flex-start; }
+#mdview-main { flex: 1 1 auto; min-width: 0; }
+
+#mdview-content {
+  margin: 0 auto;
+  max-width: 46rem;
+  padding: 3rem 1.5rem 6rem;
+}
+
+#mdview-sidebar {
+  border-left: 1px solid var(--border);
+  flex: 0 0 260px;
+  height: 100vh;
+  overflow-y: auto;
+  position: sticky;
+  top: 0;
+}
+#mdview-sidebar[hidden] { display: none; }
+
+.mdview-sidebar-head { display: flex; gap: .25rem; justify-content: flex-end; padding: .5rem; }
+.mdview-sidebar-head button,
+.mdview-tab {
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--muted); cursor: pointer; font: inherit; padding: .25rem .5rem;
+}
+.mdview-sidebar-head button:hover, .mdview-tab:hover { border-color: var(--border); color: var(--fg); }
+.mdview-tabs { display: flex; gap: .25rem; padding: 0 .5rem .5rem; }
+.mdview-tab[aria-selected="true"] { border-color: var(--border); color: var(--fg); }
+#mdview-sidebar-body { padding: 0 .75rem 2rem; }
+#mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }
+#mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
+#mdview-sidebar-body a:hover { color: var(--link); }
+.mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }

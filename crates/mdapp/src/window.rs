@@ -50,12 +50,22 @@ pub struct DocumentWindow {
     /// Held so the delegate outlives the web view; WKWebView keeps only a
     /// weak reference to its navigation delegate.
     _navigation: Retained<crate::navigation::NavigationDelegate>,
+    /// Held defensively. WebKit's documented behaviour is that
+    /// WKUserContentController STRONGLY retains its script message handler
+    /// (that retain cycle is why `removeScriptMessageHandlerForName:`
+    /// exists) — ownership is not specified by the objc2 headers, though, so
+    /// this binding stays rather than relying on an unconfirmed lifetime.
+    _bridge: Retained<crate::bridge::Bridge>,
     /// Held so the delegate outlives the window; `NSWindow.delegate` is also
     /// a weak property, so an unheld delegate would be silently dropped.
     _window_delegate: Retained<WindowCloseDelegate>,
     pub watcher: RefCell<Option<crate::watcher::FileWatcher>>,
     /// Banners raised by a load, drained once the page is ready to receive them.
     pub pending_banners: RefCell<Vec<(String, String)>>,
+    /// Scripts queued by a load, injected once the page actually exists.
+    /// `loadHTMLString` is asynchronous, so anything evaluated immediately
+    /// after it runs against the OLD document (or none) and silently no-ops.
+    pub pending_scripts: RefCell<Vec<String>>,
     /// Flipped to `true` by `WindowCloseDelegate::windowWillClose` — the only
     /// reliable signal that this window is gone for good. `NSWindow::isVisible`
     /// is also false while merely hidden (⌘H, ⌘M), which is not the same thing.
@@ -78,6 +88,7 @@ impl DocumentWindow {
         mtm: MainThreadMarker,
         highlighter: &Highlighter,
         on_navigate: Rc<dyn Fn(crate::navigation::NavigationRequest)>,
+        on_message: Rc<dyn Fn(crate::state::Message)>,
     ) -> Rc<Self> {
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(960.0, 720.0));
         let style = NSWindowStyleMask::Titled
@@ -96,6 +107,14 @@ impl DocumentWindow {
         };
 
         let config = unsafe { WKWebViewConfiguration::new(mtm) };
+        let bridge = crate::bridge::Bridge::new(mtm, on_message);
+        unsafe {
+            let controller = config.userContentController();
+            controller.addScriptMessageHandler_name(
+                objc2::runtime::ProtocolObject::from_ref(&*bridge),
+                &NSString::from_str("mdview"),
+            );
+        }
         let webview = unsafe {
             WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config)
         };
@@ -140,9 +159,11 @@ impl DocumentWindow {
             webview,
             path: RefCell::new(path.to_path_buf()),
             _navigation: navigation,
+            _bridge: bridge,
             _window_delegate: window_delegate,
             watcher: RefCell::new(crate::watcher::FileWatcher::start(path).ok()),
             pending_banners: RefCell::new(Vec::new()),
+            pending_scripts: RefCell::new(Vec::new()),
             closed,
             content_ready: Cell::new(false),
             expecting_own_load,
@@ -180,7 +201,10 @@ impl DocumentWindow {
             .unwrap_or_else(|| "MDView".to_string());
         self.window.setTitle(&NSString::from_str(&title));
 
-        match mdcore::render_document_with(&path, highlighter) {
+        let theme = mdcore::Theme::from_wire(
+            &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
+        );
+        match mdcore::render_document_with(&path, highlighter, theme) {
             Ok(doc) => {
                 let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
                 self.expecting_own_load.set(true);
@@ -191,6 +215,18 @@ impl DocumentWindow {
                     );
                 }
                 self.content_ready.set(true);
+                // Queue sidebar state restoration: loadHTMLString is asynchronous,
+                // so window.mdviewSetSidebar doesn't exist yet. The watch tick's
+                // drain_pending_banners will inject this once isLoading() is false.
+                let sidebar_open = crate::defaults::get_bool(crate::defaults::SIDEBAR_OPEN_KEY);
+                let sidebar_tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
+                    .unwrap_or_else(|| "outline".to_string());
+                let sidebar_script = format!(
+                    "window.mdviewSetSidebar && window.mdviewSetSidebar({}, {});",
+                    sidebar_open,
+                    mdcore::escape::js_string_literal(&sidebar_tab)
+                );
+                self.pending_scripts.borrow_mut().push(sidebar_script);
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
                 if doc.lossy {
@@ -210,6 +246,24 @@ impl DocumentWindow {
             }
             Err(err) => self.show_error(&err.to_string()),
         }
+    }
+
+    /// Point this window at a different document: swap the path, rebuild the
+    /// watcher for the new parent directory, and re-render.
+    ///
+    /// The old watcher MUST be dropped before the new one starts. A stale
+    /// watcher keeps firing live updates for the previous document's
+    /// directory, which would re-render this window from the wrong file.
+    pub fn load(&self, path: &Path, highlighter: &Highlighter) {
+        *self.path.borrow_mut() = path.to_path_buf();
+        *self.watcher.borrow_mut() = None;
+        *self.watcher.borrow_mut() = crate::watcher::FileWatcher::start(path).ok();
+        self.pending_banners.borrow_mut().clear();
+        self.reload(highlighter);
+        // Defensive: `reload` clears these banners, but make `load` correct on
+        // its own terms rather than depending on a detail of `reload`.
+        self.clear_banner("missing");
+        self.clear_banner("lossy");
     }
 
     /// Replace the window contents with a readable error page. Used when the
@@ -276,7 +330,7 @@ impl DocumentWindow {
              }})();",
             body = mdcore::escape::js_string_literal(&body)
         );
-        self.eval(&script);
+        self.eval_script(&script);
     }
 
     /// Show (or replace) a banner. `id` identifies the condition, so the code
@@ -300,7 +354,7 @@ impl DocumentWindow {
             id = mdcore::escape::js_string_literal(&format!("mdview-banner-{id}")),
             message = mdcore::escape::js_string_literal(message),
         );
-        self.eval(&script);
+        self.eval_script(&script);
     }
 
     pub fn clear_banner(&self, id: &str) {
@@ -308,7 +362,7 @@ impl DocumentWindow {
             "(function() {{ var el = document.getElementById({id}); if (el) el.remove(); }})();",
             id = mdcore::escape::js_string_literal(&format!("mdview-banner-{id}")),
         );
-        self.eval(&script);
+        self.eval_script(&script);
     }
 
     /// Inject any banners queued by the last load. Safe to call repeatedly.
@@ -319,13 +373,17 @@ impl DocumentWindow {
         if unsafe { self.webview.isLoading() } {
             return;
         }
+        let scripts = std::mem::take(&mut *self.pending_scripts.borrow_mut());
+        for script in scripts {
+            self.eval_script(&script);
+        }
         let pending = std::mem::take(&mut *self.pending_banners.borrow_mut());
         for (id, message) in pending {
             self.show_banner(&id, &message);
         }
     }
 
-    fn eval(&self, script: &str) {
+    pub(crate) fn eval_script(&self, script: &str) {
         unsafe {
             self.webview
                 .evaluateJavaScript_completionHandler(&NSString::from_str(script), None);

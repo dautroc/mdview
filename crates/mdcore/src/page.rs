@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::assets;
 use crate::document::Document;
 use crate::highlight::theme_css;
+use crate::theme::Theme;
 
 /// Process-lifetime counter mixed into every nonce, so that two pages built
 /// back-to-back are guaranteed distinct even if the clock below doesn't
@@ -60,7 +61,7 @@ style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; font-src data:;"
 }
 
 /// Assemble a complete, self-contained HTML document around rendered body HTML.
-pub fn build_page(doc: &Document, body_html: &str) -> String {
+pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
     let (light_css, dark_css) = theme_css();
     let title = doc
         .path
@@ -69,10 +70,24 @@ pub fn build_page(doc: &Document, body_html: &str) -> String {
         .unwrap_or_else(|| "Untitled".to_string());
     let nonce = generate_nonce();
     let csp = csp_header(&nonce);
+    let theme_attr = match theme {
+        Theme::System => String::new(),
+        other => format!(" data-theme=\"{}\"", other.as_wire()),
+    };
+
+    // Syntect's stylesheets are full rulesets, so they cannot be wrapped in a
+    // `:root[data-theme=…]` block — that is CSS Nesting, unsupported by WebKit
+    // before macOS 13.4 while this app supports 11.0. Selecting whole sheets
+    // with a `media` attribute works on every WebKit and needs no nesting.
+    let (light_media, dark_media) = match theme {
+        Theme::System => ("all", "(prefers-color-scheme: dark)"),
+        Theme::Light => ("all", "not all"),
+        Theme::Dark => ("not all", "all"),
+    };
 
     format!(
         r#"<!DOCTYPE html>
-<html>
+<html{theme_attr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -80,23 +95,40 @@ pub fn build_page(doc: &Document, body_html: &str) -> String {
 <title>{title}</title>
 <style>{page_css}</style>
 <style>{katex_css}</style>
-<style>{light_css}</style>
-<style>@media (prefers-color-scheme: dark) {{ {dark_css} }}</style>
+<style id="mdview-hl-light" media="{light_media}">{light_css}</style>
+<style id="mdview-hl-dark" media="{dark_media}">{dark_css}</style>
 </head>
 <body>
 <div id="mdview-banners"></div>
-<div id="mdview-content">{body}</div>
+<div id="mdview-layout">
+<main id="mdview-main"><div id="mdview-content">{body}</div></main>
+<aside id="mdview-sidebar" hidden>
+<header class="mdview-sidebar-head">
+<button type="button" id="mdview-star" aria-label="Bookmark this document">☆</button>
+<button type="button" id="mdview-theme" aria-label="Toggle theme">◐</button>
+<button type="button" id="mdview-sidebar-close" aria-label="Hide sidebar">×</button>
+</header>
+<nav class="mdview-tabs">
+<button type="button" class="mdview-tab" data-tab="outline">Outline</button>
+<button type="button" class="mdview-tab" data-tab="bookmarks">Bookmarks</button>
+</nav>
+<div id="mdview-sidebar-body"></div>
+</aside>
+</div>
 <script nonce="{nonce}">{katex_js}</script>
 <script nonce="{nonce}">{mermaid_js}</script>
 <script nonce="{nonce}">{init_js}</script>
 </body>
 </html>
 "#,
+        theme_attr = theme_attr,
         csp = csp,
         nonce = nonce,
         title = crate::escape::escape_html(&title),
         page_css = assets::PAGE_CSS,
         katex_css = assets::KATEX_CSS,
+        light_media = light_media,
+        dark_media = dark_media,
         light_css = light_css,
         dark_css = dark_css,
         body = body_html,
@@ -122,7 +154,7 @@ mod tests {
 
     #[test]
     fn page_is_a_complete_html_document() {
-        let html = build_page(&doc(), "<p>hi</p>");
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<p>hi</p>"));
         assert!(html.trim_end().ends_with("</html>"));
@@ -146,7 +178,7 @@ mod tests {
 
     #[test]
     fn script_src_carries_a_nonce_matching_the_bundled_scripts() {
-        let html = build_page(&doc(), "");
+        let html = build_page(&doc(), "", Theme::System);
         let script_src = script_src(&html);
 
         assert!(
@@ -168,7 +200,7 @@ mod tests {
 
     #[test]
     fn unsafe_inline_is_not_permitted_in_script_src() {
-        let html = build_page(&doc(), "");
+        let html = build_page(&doc(), "", Theme::System);
         assert!(
             !script_src(&html).contains("unsafe-inline"),
             "script-src must not carry 'unsafe-inline', or any inline <script> in \
@@ -178,7 +210,7 @@ mod tests {
 
     #[test]
     fn style_src_still_allows_inline_for_katex() {
-        let html = build_page(&doc(), "");
+        let html = build_page(&doc(), "", Theme::System);
         assert!(
             html.contains("style-src 'unsafe-inline'"),
             "KaTeX emits inline style attributes and needs this"
@@ -187,8 +219,8 @@ mod tests {
 
     #[test]
     fn two_pages_get_different_nonces() {
-        let html_a = build_page(&doc(), "");
-        let html_b = build_page(&doc(), "");
+        let html_a = build_page(&doc(), "", Theme::System);
+        let html_b = build_page(&doc(), "", Theme::System);
         assert_ne!(
             script_src(&html_a),
             script_src(&html_b),
@@ -201,7 +233,7 @@ mod tests {
         // The raw HTML still passes through into the body (a separate,
         // out-of-scope product decision) — but the CSP that governs the page
         // it lands in must not permit it to run.
-        let html = build_page(&doc(), "<script>alert(1)</script>");
+        let html = build_page(&doc(), "<script>alert(1)</script>", Theme::System);
         assert!(html.contains("<script>alert(1)</script>"), "sanity: raw HTML still passes through");
         assert!(
             !script_src(&html).contains("unsafe-inline"),
@@ -211,7 +243,7 @@ mod tests {
 
     #[test]
     fn both_highlight_themes_are_emitted_under_a_media_query() {
-        let html = build_page(&doc(), "");
+        let html = build_page(&doc(), "", Theme::System);
         assert!(html.contains("@media (prefers-color-scheme: dark)"));
         // The syntect class prefix appears in both light and dark blocks.
         let occurrences = html.matches(".code").count();
@@ -220,7 +252,7 @@ mod tests {
 
     #[test]
     fn assets_are_inlined_not_linked() {
-        let html = build_page(&doc(), "");
+        let html = build_page(&doc(), "", Theme::System);
         assert!(!html.contains("<link"), "no external stylesheets");
         assert!(!html.contains("src=\"http"), "no external scripts");
         assert!(html.contains("katex"), "katex must be inlined");
@@ -229,13 +261,13 @@ mod tests {
 
     #[test]
     fn title_is_the_file_name() {
-        let html = build_page(&doc(), "");
+        let html = build_page(&doc(), "", Theme::System);
         assert!(html.contains("<title>x.md</title>"), "got title mismatch");
     }
 
     #[test]
     fn banner_container_exists_outside_the_swappable_body() {
-        let html = build_page(&doc(), "<p>hi</p>");
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
         let banners = html.find("id=\"mdview-banners\"").expect("banner container");
         let content = html.find("id=\"mdview-content\"").expect("content container");
         assert!(banners < content, "banners must precede the swappable content");
@@ -243,7 +275,7 @@ mod tests {
 
     #[test]
     fn zoom_affordances_are_embedded_in_the_page() {
-        let html = build_page(&doc(), "<p>hi</p>");
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
         // CSS reached the page
         assert!(html.contains(".mdview-zoomable"), "zoom CSS missing");
         assert!(html.contains(".mdview-zoom-btn"), "zoom button CSS missing");
@@ -253,5 +285,60 @@ mod tests {
         // Still no remote assets
         assert!(!html.contains("<link"), "no external stylesheets");
         assert!(!html.contains("src=\"http"), "no external scripts");
+    }
+
+    #[test]
+    fn system_theme_emits_no_data_theme_attribute() {
+        // With no attribute the existing prefers-color-scheme query decides,
+        // which is exactly what "System" means.
+        let html = build_page(&doc(), "", crate::theme::Theme::System);
+        assert!(!html.contains("<html data-theme="), "System must not pin a theme");
+    }
+
+    #[test]
+    fn explicit_themes_pin_the_attribute() {
+        assert!(build_page(&doc(), "", crate::theme::Theme::Dark).contains("data-theme=\"dark\""));
+        assert!(build_page(&doc(), "", crate::theme::Theme::Light).contains("data-theme=\"light\""));
+    }
+
+    #[test]
+    fn highlight_sheets_are_selected_by_media_not_nesting() {
+        // Syntect sheets are whole rulesets; nesting them under
+        // `:root[data-theme=…]` needs CSS Nesting, which WebKit lacks before
+        // macOS 13.4 while this app supports 11.0. Exactly one occurrence of
+        // each attribute selector should remain — the chrome block in page.css.
+        let dark = build_page(&doc(), "", crate::theme::Theme::Dark);
+        assert_eq!(dark.matches(":root[data-theme=\"dark\"]").count(), 1);
+        assert!(dark.contains("id=\"mdview-hl-dark\" media=\"all\""));
+        assert!(dark.contains("id=\"mdview-hl-light\" media=\"not all\""));
+
+        let light = build_page(&doc(), "", crate::theme::Theme::Light);
+        assert!(light.contains("id=\"mdview-hl-light\" media=\"all\""));
+        assert!(light.contains("id=\"mdview-hl-dark\" media=\"not all\""));
+
+        let system = build_page(&doc(), "", crate::theme::Theme::System);
+        assert!(system.contains("id=\"mdview-hl-dark\" media=\"(prefers-color-scheme: dark)\""));
+    }
+
+    #[test]
+    fn sidebar_lives_outside_the_swappable_content() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        let sidebar = html.find("id=\"mdview-sidebar\"").expect("sidebar missing");
+        let content_open = html.find("id=\"mdview-content\"").expect("content missing");
+        let content_close = html.find("</main>").expect("main must close");
+        // Live reload replaces #mdview-content's innerHTML. The sidebar must
+        // not be inside it, or every save would destroy the sidebar.
+        assert!(
+            sidebar < content_open || sidebar > content_close,
+            "sidebar must not sit inside #mdview-content"
+        );
+    }
+
+    #[test]
+    fn sidebar_exposes_the_contract_later_tasks_fill_in() {
+        let html = build_page(&doc(), "", Theme::System);
+        assert!(html.contains("id=\"mdview-sidebar-body\""));
+        assert!(html.contains("data-tab=\"outline\""));
+        assert!(html.contains("data-tab=\"bookmarks\""));
     }
 }
