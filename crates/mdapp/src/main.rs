@@ -85,6 +85,12 @@ mod bundle_version_tests {
     }
 
     #[test]
+    fn readme_lists_the_fullwidth_shortcut() {
+        let readme = include_str!("../../../README.md");
+        assert!(readme.contains("| ⌥⌘F | Toggle fullwidth view |"));
+    }
+
+    #[test]
     fn fullwidth_native_action_is_wired_from_menu_through_reload() {
         let menu = include_str!("menu.rs");
         assert!(

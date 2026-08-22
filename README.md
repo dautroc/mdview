@@ -71,5 +71,6 @@ icon, or press ⌘O.
 | ⌘O | Open a file |
 | ⌘R | Reload |
 | ⌥⌘S | Toggle the sidebar |
+| ⌥⌘F | Toggle fullwidth view |
 | ⌘D | Bookmark this document |
 | ⌘W | Close the window |
