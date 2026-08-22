@@ -457,17 +457,6 @@ impl AppDelegate {
         }
     }
 
-    /// Push a theme onto every open window's page without a reload.
-    pub(crate) fn apply_theme(&self, theme: mdcore::Theme) {
-        let script = format!(
-            "window.mdviewApplyTheme && window.mdviewApplyTheme({});",
-            mdcore::escape::js_string_literal(theme.as_wire())
-        );
-        for window in self.ivars().windows.borrow().iter() {
-            window.eval_script(&script);
-        }
-    }
-
     /// Send the bookmark list, and whether the current document is among
     /// them, to every open page. Entries whose file has gone are filtered out
     /// of the DISPLAY only — they stay in storage, so an unmounted volume
