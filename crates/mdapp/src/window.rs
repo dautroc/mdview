@@ -50,8 +50,11 @@ pub struct DocumentWindow {
     /// Held so the delegate outlives the web view; WKWebView keeps only a
     /// weak reference to its navigation delegate.
     _navigation: Retained<crate::navigation::NavigationDelegate>,
-    /// Held so the bridge outlives the web view; WKUserContentController keeps
-    /// only a weak reference to its script message handler.
+    /// Held defensively. WebKit's documented behaviour is that
+    /// WKUserContentController STRONGLY retains its script message handler
+    /// (that retain cycle is why `removeScriptMessageHandlerForName:`
+    /// exists) — ownership is not specified by the objc2 headers, though, so
+    /// this binding stays rather than relying on an unconfirmed lifetime.
     _bridge: Retained<crate::bridge::Bridge>,
     /// Held so the delegate outlives the window; `NSWindow.delegate` is also
     /// a weak property, so an unheld delegate would be silently dropped.
@@ -370,7 +373,8 @@ impl DocumentWindow {
         if unsafe { self.webview.isLoading() } {
             return;
         }
-        for script in std::mem::take(&mut *self.pending_scripts.borrow_mut()) {
+        let scripts = std::mem::take(&mut *self.pending_scripts.borrow_mut());
+        for script in scripts {
             self.eval_script(&script);
         }
         let pending = std::mem::take(&mut *self.pending_banners.borrow_mut());

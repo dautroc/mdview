@@ -32,6 +32,10 @@ define_class!(
             _controller: &WKUserContentController,
             message: &WKScriptMessage,
         ) {
+            // `body()` is an `unsafe fn` returning `AnyObject`; the guarded
+            // call plus the checked `downcast` below is how its actual type
+            // (always a string, since the page only ever posts strings) is
+            // established safely.
             let body = unsafe { message.body() };
             // The page only ever posts strings. Anything else is malformed
             // and is dropped rather than treated as an error.
