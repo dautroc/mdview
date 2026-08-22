@@ -31,6 +31,8 @@ keeping your scroll position.
 - `crates/mdapp` — the AppKit shell: windows, menus, file handling.
 - `tools/shot.swift` — renders a generated page in a WKWebView and writes a
   PNG.
+- `tools/icon.swift` — draws the app icon. `bundle/MDView.icns` is committed,
+  so building needs no Swift toolchain; run `make icon` after editing it.
 
 Vendored assets are refreshed with `python3 scripts/vendor-assets.py`.
 

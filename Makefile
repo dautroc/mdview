@@ -2,7 +2,7 @@ APP     := MDView.app
 BINARY  := target/release/mdview
 PREFIX  ?= /usr/local
 
-.PHONY: all bundle install install-cli uninstall clean test shot FORCE
+.PHONY: all bundle install install-cli uninstall clean test shot icon FORCE
 
 all: bundle
 
@@ -18,10 +18,11 @@ $(BINARY): FORCE
 
 FORCE:
 
-bundle: $(BINARY) bundle/Info.plist
+bundle: $(BINARY) bundle/Info.plist bundle/MDView.icns
 	rm -rf $(APP)
-	mkdir -p $(APP)/Contents/MacOS
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp bundle/Info.plist $(APP)/Contents/Info.plist
+	cp bundle/MDView.icns $(APP)/Contents/Resources/MDView.icns
 	cp $(BINARY) $(APP)/Contents/MacOS/mdview
 	codesign --force --sign - $(APP)
 	@echo "built $(APP)"
@@ -77,6 +78,16 @@ endif
 	@$(BINARY) --print-html $(if $(THEME),--theme $(THEME),) $(FILE) > target/shots/page.html
 	@$(SHOT_BIN) target/shots/page.html $(SHOT_OUT) $(WIDTH) $(HEIGHT) \
 		'$(if $(SIDEBAR),document.getElementById("mdview-sidebar").hidden=false; document.querySelectorAll(".mdview-tab")[0].setAttribute("aria-selected","true");,) $(JS)'
+
+# Redraw the app icon. bundle/MDView.icns is committed, so building the app
+# needs no Swift toolchain; run this only after editing tools/icon.swift.
+icon:
+	@mkdir -p target/icon
+	swiftc -O -o target/icon/icon tools/icon.swift
+	rm -rf target/icon/MDView.iconset
+	target/icon/icon target/icon/MDView.iconset
+	iconutil -c icns target/icon/MDView.iconset -o bundle/MDView.icns
+	@echo "wrote bundle/MDView.icns"
 
 clean:
 	cargo clean
