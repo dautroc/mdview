@@ -1,7 +1,8 @@
 APP     := MDView.app
 BINARY  := target/release/mdview
 PREFIX  ?= /usr/local
-VERSION := $(shell awk -F'"' '/^version = /{print $$2; exit}' Cargo.toml)
+# The version as it stands. VERSION is reserved for `make version`'s argument.
+CURRENT := $(shell awk -F'"' '/^version = /{print $$2; exit}' Cargo.toml)
 
 # Which executable `bundle` packages. Local builds use the host-arch binary;
 # `dist` overrides it with the universal one.
@@ -9,7 +10,7 @@ BUNDLE_BIN ?= $(BINARY)
 ARCHS      := aarch64-apple-darwin x86_64-apple-darwin
 UNIVERSAL  := target/universal/mdview
 
-.PHONY: all bundle install install-cli uninstall clean test shot icon universal dist FORCE
+.PHONY: all bundle install install-cli uninstall clean test shot icon universal dist version FORCE
 
 all: bundle
 
@@ -37,7 +38,7 @@ bundle: $(BUNDLE_BIN) bundle/Info.plist bundle/MDView.icns
 	# Ad-hoc: arm64 code will not run unsigned at all. It is not a Developer ID
 	# signature, so downloaded copies still meet Gatekeeper -- see README.
 	codesign --force --deep --sign - $(APP)
-	@echo "built $(APP) $(VERSION)"
+	@echo "built $(APP) $(CURRENT)"
 
 install: bundle
 	rm -rf /Applications/$(APP)
@@ -101,6 +102,36 @@ icon:
 	iconutil -c icns target/icon/MDView.iconset -o bundle/MDView.icns
 	@echo "wrote bundle/MDView.icns"
 
+# Bump the version everywhere it is recorded, then prove the copies agree.
+#
+#   make version VERSION=0.2.0
+#
+# The version lives in Cargo.toml, and the bundle keeps its own copy that
+# nothing at runtime would reconcile. CFBundleVersion is a build counter Apple
+# expects to rise on every shipped build, so it advances too. Committing and
+# pushing the result is enough to cut a release; CI notices the new version.
+version:
+	@test -n "$(VERSION)" || { echo "usage: make version VERSION=x.y.z" >&2; exit 1; }
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$$' \
+		|| { echo "version must look like x.y.z, got '$(VERSION)'" >&2; exit 1; }
+	@test "$(VERSION)" != "$(CURRENT)" || { echo "already at $(CURRENT)" >&2; exit 1; }
+	@git rev-parse -q --verify "refs/tags/v$(VERSION)" >/dev/null \
+		&& { echo "v$(VERSION) is already tagged" >&2; exit 1; } || true
+	@sed -i '' '1,/^version = /s/^version = ".*"/version = "$(VERSION)"/' Cargo.toml
+	@sed -i '' 's|<key>CFBundleShortVersionString</key><string>.*</string>|<key>CFBundleShortVersionString</key><string>$(VERSION)</string>|' bundle/Info.plist
+	@build=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' bundle/Info.plist); \
+		next=$$((build + 1)); \
+		sed -i '' "s|<key>CFBundleVersion</key><string>.*</string>|<key>CFBundleVersion</key><string>$$next</string>|" bundle/Info.plist; \
+		echo "  build $$build -> $$next"
+	@# Building refreshes Cargo.lock, which pins the workspace members' versions,
+	@# and runs the test that fails when the two copies disagree.
+	@cargo test -q -p mdapp bundle_version >/dev/null
+	@echo "  Cargo.toml:  $$(awk -F'"' '/^version = /{print $$2; exit}' Cargo.toml)"
+	@echo "  Info.plist:  $$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' bundle/Info.plist)"
+	@echo "  Cargo.lock:  $$(grep -A1 '^name = "mdapp"' Cargo.lock | awk -F'"' '/^version/{print $$2}')"
+	@echo
+	@echo "next: git commit -am 'release $(VERSION)' && git push"
+
 # A single binary carrying both architectures, so one download runs on Apple
 # silicon and Intel alike.
 universal:
@@ -120,12 +151,12 @@ dist: test universal
 	mkdir -p dist target/dmg
 	cp -R $(APP) target/dmg/
 	ln -s /Applications target/dmg/Applications
-	hdiutil create -volname "MDView $(VERSION)" -srcfolder target/dmg \
-		-ov -format UDZO dist/MDView-$(VERSION).dmg
+	hdiutil create -volname "MDView $(CURRENT)" -srcfolder target/dmg \
+		-ov -format UDZO dist/MDView-$(CURRENT).dmg
 	rm -rf target/dmg
 	@echo
-	@echo "dist/MDView-$(VERSION).dmg"
-	@shasum -a 256 dist/MDView-$(VERSION).dmg
+	@echo "dist/MDView-$(CURRENT).dmg"
+	@shasum -a 256 dist/MDView-$(CURRENT).dmg
 
 clean:
 	cargo clean
