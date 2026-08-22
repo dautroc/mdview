@@ -212,6 +212,22 @@ impl DocumentWindow {
         }
     }
 
+    /// Point this window at a different document: swap the path, rebuild the
+    /// watcher for the new parent directory, and re-render.
+    ///
+    /// The old watcher MUST be dropped before the new one starts. A stale
+    /// watcher keeps firing live updates for the previous document's
+    /// directory, which would re-render this window from the wrong file.
+    pub fn load(&self, path: &Path, highlighter: &Highlighter) {
+        *self.path.borrow_mut() = path.to_path_buf();
+        *self.watcher.borrow_mut() = None;
+        *self.watcher.borrow_mut() = crate::watcher::FileWatcher::start(path).ok();
+        self.pending_banners.borrow_mut().clear();
+        self.reload(highlighter);
+        self.clear_banner("missing");
+        self.clear_banner("lossy");
+    }
+
     /// Replace the window contents with a readable error page. Used when the
     /// file cannot be read at all; never leaves the window blank.
     pub fn show_error(&self, message: &str) {

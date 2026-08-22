@@ -64,18 +64,20 @@ define_class!(
 
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
+            // With one reusable window, opening N files can only show one.
+            // Show the FIRST — discarding it in favour of the last would throw
+            // away the file the user most likely meant.
+            let mut opened = false;
             for url in urls.iter() {
-                // Ignore anything that is not a local file; the app has no
-                // business fetching remote documents. `url.path()` alone is
-                // not enough to establish that — `https://example.com/foo`
-                // has a path too — so check the scheme explicitly.
                 if !url.isFileURL() {
                     continue;
                 }
-                let Some(path) = url.path() else {
-                    continue;
-                };
-                self.open_document(std::path::Path::new(&path.to_string()));
+                let Some(path) = url.path() else { continue };
+                let path = std::path::PathBuf::from(path.to_string());
+                if !opened {
+                    self.open_document(&path);
+                    opened = true;
+                }
             }
         }
 
@@ -190,8 +192,18 @@ impl AppDelegate {
         use crate::navigation::NavigationRequest;
         use objc2_app_kit::NSWorkspace;
 
-        let mtm = MainThreadMarker::from(self);
         let state = self.ivars();
+
+        // Reuse the window the user is looking at rather than stacking a new
+        // one per document. `frontmost_window` is the same notion of "current
+        // window" that Reload and the zoom items use, so they cannot disagree.
+        if let Some(existing) = self.frontmost_window() {
+            existing.load(path, &state.highlighter);
+            existing.window.makeKeyAndOrderFront(None);
+            return;
+        }
+
+        let mtm = MainThreadMarker::from(self);
 
         // The web view calls back on the main thread, so a plain Rc closure
         // holding a pointer to the delegate is sound here.
