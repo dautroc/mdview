@@ -384,6 +384,7 @@
     // enhanceZoomables() runs exactly once, after diagrams exist, and still
     // runs -- covering images -- even when mermaid itself failed.
     renderDiagrams().then(enhanceZoomables);
+    renderSidebarBody();
   };
 
   // ---- Sidebar state management -------------------------------------------
@@ -415,11 +416,78 @@
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
   }
 
+  // Turn heading text into a URL-safe id. Duplicates get a numeric suffix so
+  // two "## Setup" headings still scroll to different places.
+  function slugify(text, seen) {
+    var base = text
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-");
+    if (!base) base = "section";
+    var slug = base;
+    var n = 2;
+    while (seen[slug]) {
+      slug = base + "-" + n;
+      n++;
+    }
+    seen[slug] = true;
+    return slug;
+  }
+
+  // Build the outline from the rendered document. Rebuilt wholesale on every
+  // render rather than patched: incremental updates over already-processed
+  // nodes are the defect class that has bitten this project twice.
+  function buildOutline() {
+    var content = document.getElementById("mdview-content");
+    if (!content) return "<p class=\"mdview-sidebar-empty\">No document.</p>";
+    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    if (!headings.length) {
+      return "<p class=\"mdview-sidebar-empty\">No headings.</p>";
+    }
+    var seen = {};
+    var parts = ["<ul>"];
+    for (var i = 0; i < headings.length; i++) {
+      var h = headings[i];
+      if (!h.id) h.id = slugify(h.textContent, seen);
+      var level = parseInt(h.tagName.substring(1), 10);
+      parts.push(
+        '<li style="padding-left:' + ((level - 1) * 0.6) + 'rem">' +
+        '<a href="#" data-outline-id="' + h.id + '"></a></li>'
+      );
+      // textContent is assigned below rather than interpolated, so heading
+      // text can never inject markup into the sidebar.
+    }
+    parts.push("</ul>");
+    var html = parts.join("");
+    var host = document.createElement("div");
+    host.innerHTML = html;
+    var links = host.querySelectorAll("a[data-outline-id]");
+    for (var j = 0; j < links.length; j++) {
+      links[j].textContent = headings[j].textContent;
+    }
+    return host.innerHTML;
+  }
+
   // Task 7 replaces the outline branch; Task 8 the bookmarks branch.
   function renderSidebarBody() {
     var body = document.getElementById("mdview-sidebar-body");
     if (!body) return;
-    body.innerHTML = "<p class=\"mdview-sidebar-empty\">Nothing here yet.</p>";
+    if (sidebarTab === "outline") {
+      body.innerHTML = buildOutline();
+      var links = body.querySelectorAll("a[data-outline-id]");
+      for (var i = 0; i < links.length; i++) {
+        links[i].addEventListener("click", function (event) {
+          event.preventDefault();
+          var target = document.getElementById(
+            event.currentTarget.getAttribute("data-outline-id")
+          );
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+    } else {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">No bookmarks yet.</p>";
+    }
   }
 
   window.mdviewSetSidebar = setSidebar;
