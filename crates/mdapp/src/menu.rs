@@ -1,8 +1,26 @@
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::MainThreadOnly;
-use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
+use objc2_app_kit::{
+    NSApplication, NSControlStateValue, NSControlStateValueOff, NSControlStateValueOn,
+    NSEventModifierFlags, NSMenu, NSMenuItem,
+};
 use objc2_foundation::{MainThreadMarker, NSString};
+
+const FULL_WIDTH_TITLE: &str = "Full Width";
+const FULL_WIDTH_KEY_EQUIVALENT: &str = "f";
+
+pub(crate) fn full_width_menu_state(enabled: bool) -> NSControlStateValue {
+    if enabled {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    }
+}
+
+fn full_width_modifier_mask() -> NSEventModifierFlags {
+    NSEventModifierFlags::Command | NSEventModifierFlags::Option
+}
 
 /// Build one menu item. `key` is the command-key equivalent ("" for none).
 fn item(
@@ -33,6 +51,27 @@ fn submenu(mtm: MainThreadMarker, title: &str) -> (Retained<NSMenuItem>, Retaine
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(title));
     holder.setSubmenu(Some(&menu));
     (holder, menu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fullwidth_menu_contract_uses_option_command_f() {
+        assert_eq!(FULL_WIDTH_TITLE, "Full Width");
+        assert_eq!(FULL_WIDTH_KEY_EQUIVALENT, "f");
+        assert_eq!(
+            full_width_modifier_mask(),
+            NSEventModifierFlags::Command | NSEventModifierFlags::Option
+        );
+    }
+
+    #[test]
+    fn fullwidth_menu_checkmark_matches_the_preference() {
+        assert_eq!(full_width_menu_state(true), NSControlStateValueOn);
+        assert_eq!(full_width_menu_state(false), NSControlStateValueOff);
+    }
 }
 
 /// Install the application menu bar.
@@ -83,6 +122,18 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
         NSEventModifierFlags::Command | NSEventModifierFlags::Option,
     );
     view_menu.addItem(&sidebar_item);
+    let full_width_item = item(
+        mtm,
+        FULL_WIDTH_TITLE,
+        sel!(toggleFullWidth:),
+        FULL_WIDTH_KEY_EQUIVALENT,
+    );
+    full_width_item.setKeyEquivalentModifierMask(full_width_modifier_mask());
+    let full_width = crate::state::resolve_full_width(crate::defaults::get_bool_opt(
+        crate::defaults::FULL_WIDTH_KEY,
+    ));
+    full_width_item.setState(full_width_menu_state(full_width));
+    view_menu.addItem(&full_width_item);
     menubar.addItem(&view_holder);
 
     let (bm_holder, bm_menu) = submenu(mtm, "Bookmarks");

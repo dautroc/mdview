@@ -83,4 +83,21 @@ mod bundle_version_tests {
             "bundle/Info.plist and Cargo.toml disagree about the version"
         );
     }
+
+    #[test]
+    fn fullwidth_native_action_is_wired_from_menu_through_reload() {
+        let menu = include_str!("menu.rs");
+        assert!(
+            menu.contains("sel!(toggleFullWidth:)"),
+            "View item must target the native action"
+        );
+        assert!(menu.contains("NSEventModifierFlags::Command | NSEventModifierFlags::Option"));
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(toggleFullWidth:))]"));
+        assert!(app.contains("set_bool(crate::defaults::FULL_WIDTH_KEY, enabled)"));
+        assert!(app.contains("crate::state::full_width_script(enabled)"));
+        let window = include_str!("window.rs");
+        assert!(window.contains("crate::defaults::FULL_WIDTH_KEY"));
+        assert!(window.contains("crate::state::full_width_script(full_width)"));
+    }
 }

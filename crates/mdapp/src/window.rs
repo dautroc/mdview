@@ -247,6 +247,12 @@ impl DocumentWindow {
                     mdcore::escape::js_string_literal(&sidebar_tab)
                 );
                 self.pending_scripts.borrow_mut().push(sidebar_script);
+                let full_width = crate::state::resolve_full_width(crate::defaults::get_bool_opt(
+                    crate::defaults::FULL_WIDTH_KEY,
+                ));
+                self.pending_scripts
+                    .borrow_mut()
+                    .push(crate::state::full_width_script(full_width).to_string());
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
                 if doc.lossy {

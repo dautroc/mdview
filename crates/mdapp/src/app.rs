@@ -203,6 +203,19 @@ define_class!(
             }
         }
 
+        #[unsafe(method(toggleFullWidth:))]
+        fn toggle_full_width_action(&self, sender: Option<&NSMenuItem>) {
+            let enabled = crate::state::next_full_width(crate::defaults::get_bool_opt(crate::defaults::FULL_WIDTH_KEY));
+            crate::defaults::set_bool(crate::defaults::FULL_WIDTH_KEY, enabled);
+            if let Some(item) = sender {
+                item.setState(crate::menu::full_width_menu_state(enabled));
+            }
+            let script = crate::state::full_width_script(enabled);
+            for window in self.ivars().windows.borrow().iter() {
+                window.eval_script(script);
+            }
+        }
+
         #[unsafe(method(toggleBookmark:))]
         fn toggle_bookmark_action(&self, _sender: Option<&NSObject>) {
             self.handle_message(crate::state::Message::ToggleBookmark);
