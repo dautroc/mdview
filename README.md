@@ -7,6 +7,34 @@ Renders CommonMark plus GFM tables and task lists, syntax-highlighted code,
 images, LaTeX math, and Mermaid diagrams. Everything is embedded in the
 binary, so it works with no network access.
 
+## Install
+
+Download `MDView-<version>.dmg` from the releases page and drag the app to
+Applications. The build is universal, so one download covers Apple silicon and
+Intel.
+
+macOS will refuse to open it the first time. The app is signed ad-hoc rather
+than with an Apple Developer ID, so it is not notarized, and Gatekeeper treats
+anything downloaded without notarization as untrusted. Open **System Settings →
+Privacy & Security**, find MDView near the bottom, and choose **Open Anyway**.
+Control-clicking the app no longer works for this; macOS Sequoia removed that
+shortcut. The equivalent from a terminal is:
+
+```sh
+xattr -d -r com.apple.quarantine /Applications/MDView.app
+```
+
+For the `mdview` command, link the shim the bundle carries:
+
+```sh
+ln -sf /Applications/MDView.app/Contents/Resources/mdview /usr/local/bin/mdview
+```
+
+There is no Homebrew cask. Homebrew dropped `--no-quarantine` in 4.7 and stops
+supporting casks that fail Gatekeeper on 1 September 2026, so a cask for an
+unnotarized app would break almost immediately. Notarizing needs a paid Apple
+Developer account; if that changes, a cask becomes worthwhile.
+
 ## Build
 
     make test
@@ -35,6 +63,16 @@ keeping your scroll position.
   so building needs no Swift toolchain; run `make icon` after editing it.
 
 Vendored assets are refreshed with `python3 scripts/vendor-assets.py`.
+
+## Releasing
+
+`make dist` runs the tests, builds both architectures into one universal
+binary, packages the bundle and writes `dist/MDView-<version>.dmg` with its
+SHA-256. Pushing a `v*` tag runs the same thing in CI and attaches the DMG to a
+GitHub release.
+
+The version lives in `Cargo.toml`; `bundle/Info.plist` carries its own copy and
+a test fails if the two drift, since nothing at runtime would catch it.
 
 ## Looking at the UI
 

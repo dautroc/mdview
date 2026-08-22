@@ -1,8 +1,15 @@
 APP     := MDView.app
 BINARY  := target/release/mdview
 PREFIX  ?= /usr/local
+VERSION := $(shell awk -F'"' '/^version = /{print $$2; exit}' Cargo.toml)
 
-.PHONY: all bundle install install-cli uninstall clean test shot icon FORCE
+# Which executable `bundle` packages. Local builds use the host-arch binary;
+# `dist` overrides it with the universal one.
+BUNDLE_BIN ?= $(BINARY)
+ARCHS      := aarch64-apple-darwin x86_64-apple-darwin
+UNIVERSAL  := target/universal/mdview
+
+.PHONY: all bundle install install-cli uninstall clean test shot icon universal dist FORCE
 
 all: bundle
 
@@ -18,14 +25,19 @@ $(BINARY): FORCE
 
 FORCE:
 
-bundle: $(BINARY) bundle/Info.plist bundle/MDView.icns
+bundle: $(BUNDLE_BIN) bundle/Info.plist bundle/MDView.icns
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp bundle/Info.plist $(APP)/Contents/Info.plist
 	cp bundle/MDView.icns $(APP)/Contents/Resources/MDView.icns
-	cp $(BINARY) $(APP)/Contents/MacOS/mdview
-	codesign --force --sign - $(APP)
-	@echo "built $(APP)"
+	cp $(BUNDLE_BIN) $(APP)/Contents/MacOS/mdview
+	# Carry the CLI shim inside the bundle so a dragged-in .app can still be
+	# linked onto PATH without the repo.
+	install -m 0755 scripts/mdview $(APP)/Contents/Resources/mdview
+	# Ad-hoc: arm64 code will not run unsigned at all. It is not a Developer ID
+	# signature, so downloaded copies still meet Gatekeeper -- see README.
+	codesign --force --deep --sign - $(APP)
+	@echo "built $(APP) $(VERSION)"
 
 install: bundle
 	rm -rf /Applications/$(APP)
@@ -89,6 +101,32 @@ icon:
 	iconutil -c icns target/icon/MDView.iconset -o bundle/MDView.icns
 	@echo "wrote bundle/MDView.icns"
 
+# A single binary carrying both architectures, so one download runs on Apple
+# silicon and Intel alike.
+universal:
+	@for target in $(ARCHS); do \
+		echo "cargo build --release --target $$target"; \
+		cargo build --release --target $$target -p mdapp || exit 1; \
+	done
+	@mkdir -p target/universal
+	lipo -create -output $(UNIVERSAL) $(foreach t,$(ARCHS),target/$(t)/release/mdview)
+	@echo "universal: $$(lipo -archs $(UNIVERSAL))"
+
+# A release DMG. Unsigned beyond ad-hoc, so first launch needs the Gatekeeper
+# step in the README; there is no Developer ID to notarize with.
+dist: test universal
+	$(MAKE) bundle BUNDLE_BIN=$(UNIVERSAL)
+	rm -rf dist target/dmg
+	mkdir -p dist target/dmg
+	cp -R $(APP) target/dmg/
+	ln -s /Applications target/dmg/Applications
+	hdiutil create -volname "MDView $(VERSION)" -srcfolder target/dmg \
+		-ov -format UDZO dist/MDView-$(VERSION).dmg
+	rm -rf target/dmg
+	@echo
+	@echo "dist/MDView-$(VERSION).dmg"
+	@shasum -a 256 dist/MDView-$(VERSION).dmg
+
 clean:
 	cargo clean
-	rm -rf $(APP)
+	rm -rf $(APP) dist

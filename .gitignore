@@ -5,3 +5,5 @@
 
 # Superpowers agent scratch (reports, ledgers, review packages)
 .superpowers/
+
+/dist

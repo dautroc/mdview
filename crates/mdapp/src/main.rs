@@ -64,3 +64,23 @@ fn main() {
 
     app::run(paths);
 }
+
+#[cfg(test)]
+mod bundle_version_tests {
+    /// The bundle carries its own version, independent of Cargo's. A release
+    /// that ships them out of step reports one version in Finder's Get Info
+    /// and another in `--version`, and there is nothing at runtime to catch
+    /// it, so pin them here.
+    #[test]
+    fn the_bundle_version_matches_the_crate_version() {
+        let plist = include_str!("../../../bundle/Info.plist");
+        let key = "<key>CFBundleShortVersionString</key><string>";
+        let start = plist.find(key).expect("no CFBundleShortVersionString") + key.len();
+        let end = start + plist[start..].find('<').expect("unterminated version");
+        assert_eq!(
+            &plist[start..end],
+            env!("CARGO_PKG_VERSION"),
+            "bundle/Info.plist and Cargo.toml disagree about the version"
+        );
+    }
+}
