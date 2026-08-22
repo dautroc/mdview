@@ -99,5 +99,22 @@ mod bundle_version_tests {
         let window = include_str!("window.rs");
         assert!(window.contains("crate::defaults::FULL_WIDTH_KEY"));
         assert!(window.contains("crate::state::queue_full_width_script"));
+        let start = window
+            .find("pub fn set_full_width")
+            .expect("window must queue native full-width changes");
+        let end = start
+            + window[start..]
+                .find("pub(crate) fn eval_script")
+                .expect("set_full_width must end before eval_script");
+        let set_full_width = &window[start..end];
+        assert!(set_full_width.contains("queue_full_width_script"));
+        assert!(
+            !set_full_width.contains("isLoading"),
+            "drain_pending_banners owns the readiness check"
+        );
+        assert!(
+            !set_full_width.contains("eval_script"),
+            "full-width changes must stay queued until the page is ready"
+        );
     }
 }

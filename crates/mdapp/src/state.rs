@@ -250,10 +250,19 @@ mod tests {
 
     #[test]
     fn queueing_fullwidth_replaces_a_stale_script_but_keeps_other_scripts_ordered() {
-        let mut scripts = vec![full_width_script(false).to_string(), "sidebar".to_string()];
+        let mut scripts = vec![
+            full_width_script(false).to_string(),
+            "sidebar".to_string(),
+            full_width_script(true).to_string(),
+            "bookmarks".to_string(),
+            full_width_script(false).to_string(),
+        ];
 
         queue_full_width_script(&mut scripts, true);
 
-        assert_eq!(scripts, vec!["sidebar", full_width_script(true)]);
+        assert_eq!(
+            scripts,
+            vec!["sidebar", "bookmarks", full_width_script(true)]
+        );
     }
 }

@@ -474,13 +474,11 @@ impl DocumentWindow {
         }
     }
 
+    /// Replace any pending full-width state. Readiness is decided only by
+    /// `drain_pending_banners`: immediately after loadHTMLString, WebKit has
+    /// not reliably begun reporting that it is loading yet.
     pub fn set_full_width(&self, enabled: bool) {
         crate::state::queue_full_width_script(&mut self.pending_scripts.borrow_mut(), enabled);
-        if unsafe { self.webview.isLoading() } {
-            return;
-        }
-        self.pending_scripts.borrow_mut().pop();
-        self.eval_script(crate::state::full_width_script(enabled));
     }
 
     pub(crate) fn eval_script(&self, script: &str) {
