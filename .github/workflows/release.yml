@@ -111,6 +111,11 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
+            ## MDView v${{ needs.check.outputs.version }}
+
+            Feature highlights and the complete history are maintained in the
+            [MDView changelog](https://github.com/dautroc/mdview/blob/main/CHANGELOG.md).
+
             Universal build for Apple silicon and Intel.
 
             This app is not notarized, so macOS will refuse it on first launch.
