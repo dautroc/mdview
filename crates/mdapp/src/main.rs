@@ -16,13 +16,25 @@ fn main() {
     let mut paths: Vec<PathBuf> = Vec::new();
 
     for arg in std::env::args_os().skip(1) {
-        match arg.to_string_lossy().as_ref() {
+        let arg = arg.to_string_lossy().into_owned();
+
+        if want_theme {
+            want_theme = false;
+            // A value that itself starts with "--" is another flag, not a
+            // theme name: `--theme --print-html` must not swallow
+            // `--print-html` as an (unrecognised, System-defaulting) theme
+            // value. Treat the missing value as System — already the
+            // default — and let this token fall through to be parsed
+            // normally below instead of being consumed here.
+            if !arg.starts_with("--") {
+                theme = mdcore::Theme::from_wire(&arg);
+                continue;
+            }
+        }
+
+        match arg.as_str() {
             "--print-html" => print_html = true,
             "--theme" => want_theme = true,
-            other if want_theme => {
-                theme = mdcore::Theme::from_wire(other);
-                want_theme = false;
-            }
             "--version" => {
                 println!("mdview {}", mdcore::version());
                 return;
