@@ -240,31 +240,32 @@ img { max-width: 100%; }
   overflow-y: auto;
   position: sticky;
   top: 0;
-  /* #mdview-sidebar-toggle is fixed at top:1rem and spans ~38px. Start the
-     panel's own chrome below it, so the toolbar can use the full width
-     instead of reserving a dead strip on the right. */
-  padding-top: 3.5rem;
+  /* The toolbar sits on the same line as #mdview-sidebar-toggle; the head
+     reserves the toggle's slot at the end of that row. */
+  padding-top: 0;
 }
 #mdview-sidebar[hidden] { display: none; }
 
 #mdview-sidebar-toggle {
+  align-items: center;
   background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--fg);
   cursor: pointer;
+  display: flex;
   font: inherit;
   line-height: 1;
-  padding: .5rem;
+  padding: .35rem;
   position: fixed;
-  right: 1rem;
-  top: 1rem;
+  right: .75rem;
+  top: .55rem;
   /* Above #mdview-banners (10), which is a full-width sticky bar at top:0 and
      would otherwise paint over this button. Below #mdview-theme's list (20). */
   z-index: 11;
 }
 #mdview-sidebar-toggle:hover { background: var(--border); }
-#mdview-sidebar-toggle svg { display: block; width: 20px; height: 20px; }
+#mdview-sidebar-toggle svg { display: block; }
 
 .mdview-sidebar-head {
   align-items: center;
@@ -272,30 +273,15 @@ img { max-width: 100%; }
   display: flex;
   gap: .5rem;
   justify-content: space-between;
-  padding: .5rem .75rem .6rem;
+  padding: .55rem .75rem .6rem;
+  /* Room for the fixed toggle, which lands at the end of this row. */
+  padding-right: 3.25rem;
 }
 
 /* Tabs read as one segmented control rather than two loose buttons. */
-.mdview-tabs {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-}
-.mdview-tab {
-  align-items: center;
-  background: none; border: 0; border-radius: 5px;
-  color: var(--muted); cursor: pointer; display: flex;
-  font: inherit; padding: .3rem .6rem;
-}
-.mdview-tab:hover { color: var(--fg); }
-.mdview-tab[aria-selected="true"] {
-  background: var(--bg); box-shadow: 0 1px 2px rgb(0 0 0 / 18%); color: var(--fg);
-}
-
+.mdview-tabs,
 .mdview-sidebar-actions { align-items: center; display: flex; gap: .15rem; }
+.mdview-tab,
 .mdview-sidebar-actions > button,
 .mdview-sidebar-actions summary {
   align-items: center;
@@ -303,8 +289,14 @@ img { max-width: 100%; }
   color: var(--muted); cursor: pointer; display: flex;
   font: inherit; padding: .35rem;
 }
+.mdview-tab:hover,
 .mdview-sidebar-actions > button:hover,
 .mdview-sidebar-actions summary:hover { border-color: var(--border); color: var(--fg); }
+/* The selected tab needs a border as well as a fill: --code-bg sits close to
+   --bg on the light palettes, and --border is held to a 3:1 contrast floor. */
+.mdview-tab[aria-selected="true"] {
+  background: var(--code-bg); border-color: var(--border); color: var(--fg);
+}
 .mdview-sidebar-head svg { display: block; }
 /* Bookmarked state is the filled star; the glyph itself never changes. */
 #mdview-star[aria-pressed="true"] { color: var(--fg); }

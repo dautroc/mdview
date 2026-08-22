@@ -555,12 +555,14 @@ mod tests {
         // under the toggle, which is fixed at top-right and paints above them.
         // The panel clears it vertically so the toolbar can span the full width.
         let css = assets::PAGE_CSS;
+        let head = css.find(".mdview-sidebar-head {").expect("no sidebar-head rule");
+        let head_block = &css[head..head + css[head..].find('}').expect("unterminated rule")];
+        assert!(
+            head_block.contains("padding-right:"),
+            "the toolbar must reserve the fixed toggle's slot at the end of its row"
+        );
         let start = css.find("#mdview-sidebar {").expect("no sidebar rule");
         let block = &css[start..start + css[start..].find('}').expect("unterminated rule")];
-        assert!(
-            block.contains("padding-top:"),
-            "the sidebar must clear the fixed toggle's footprint"
-        );
         // That padding is added to height:100vh unless the box is border-box,
         // which would push the panel past the bottom of the viewport.
         assert!(
