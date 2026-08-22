@@ -61,9 +61,11 @@ style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; font-src data:;"
     )
 }
 
-/// Build the theme picker markup listing all themes.
-fn build_theme_picker() -> String {
-    let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\">◐</summary>\n<div class=\"mdview-theme-list\">\n");
+/// Build the theme picker markup listing all themes, marking `selected` as
+/// the current one via `aria-checked` so the list reflects the page's own
+/// theme rather than relying on JS to discover it after the fact.
+fn build_theme_picker(selected: Theme) -> String {
+    let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\">◐</summary>\n<div class=\"mdview-theme-list\" role=\"menu\">\n");
 
     // Group themes: System, then Light, then Dark
     let mut groups: Vec<(Option<bool>, Vec<Theme>)> = vec![
@@ -89,7 +91,8 @@ fn build_theme_picker() -> String {
 
             for theme in themes {
                 html.push_str(&format!(
-                    "<button type=\"button\" class=\"mdview-theme-item\" data-theme-id=\"{}\">{}</button>\n",
+                    "<button type=\"button\" class=\"mdview-theme-item\" role=\"menuitemradio\" aria-checked=\"{}\" data-theme-id=\"{}\">{}</button>\n",
+                    theme == selected,
                     theme.as_wire(),
                     theme.label()
                 ));
@@ -118,6 +121,17 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
     let theme_attr = match theme {
         Theme::System => String::new(),
         other => format!(" data-theme=\"{}\"", other.as_wire()),
+    };
+    // A named theme's darkness cannot be recovered on the JS side from its
+    // wire value ("mocha", "github", ...) -- only Rust knows it, via
+    // `Theme::is_dark`. Stamp it explicitly so `effectiveTheme()` in
+    // init.js does not have to guess and fall through to the OS media
+    // query, which would render Mermaid diagrams in the wrong palette.
+    // System alone gets no stamp and defers to the OS, as before.
+    let dark_attr = match theme.is_dark() {
+        Some(true) => " data-dark=\"1\"".to_string(),
+        Some(false) => " data-dark=\"0\"".to_string(),
+        None => String::new(),
     };
 
     // Build chrome tokens and syntax CSS based on the selected theme
@@ -151,11 +165,11 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         _ => ("not all", "not all"),
     };
 
-    let theme_picker = build_theme_picker();
+    let theme_picker = build_theme_picker(theme);
 
     format!(
         r#"<!DOCTYPE html>
-<html{theme_attr}>
+<html{theme_attr}{dark_attr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -191,6 +205,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 </html>
 "#,
         theme_attr = theme_attr,
+        dark_attr = dark_attr,
         csp = csp,
         nonce = nonce,
         title = crate::escape::escape_html(&title),
@@ -373,6 +388,67 @@ mod tests {
         // Chrome comes from the syntect palette, so Mocha's own background
         // must appear as the --bg token rather than a hand-written colour.
         assert!(html.contains("--bg:#3b3228"), "chrome not derived from the palette");
+    }
+
+    /// Pull just the `<html ...>` opening tag, so an assertion about its
+    /// attributes cannot be satisfied by a coincidental match elsewhere in
+    /// the page (e.g. the bundled JS's own comments and string literals
+    /// naming the same attribute).
+    fn html_tag(html: &str) -> &str {
+        let start = html.find("<html").expect("html tag");
+        let end = html[start..].find('>').map(|i| start + i).expect("html tag close");
+        &html[start..=end]
+    }
+
+    #[test]
+    fn a_dark_named_theme_is_stamped_data_dark_1() {
+        let html = build_page(&doc(), "", Theme::Mocha);
+        assert!(
+            html_tag(&html).contains("data-dark=\"1\""),
+            "dark theme must be stamped data-dark=1: {}",
+            html_tag(&html)
+        );
+    }
+
+    #[test]
+    fn a_light_named_theme_is_stamped_data_dark_0() {
+        let html = build_page(&doc(), "", Theme::GitHub);
+        assert!(
+            html_tag(&html).contains("data-dark=\"0\""),
+            "light theme must be stamped data-dark=0: {}",
+            html_tag(&html)
+        );
+    }
+
+    #[test]
+    fn system_emits_no_data_dark_attribute() {
+        // JS cannot derive System's darkness -- it must fall through to the
+        // OS media query -- so no stamp at all must appear for it.
+        let html = build_page(&doc(), "", Theme::System);
+        assert!(
+            !html_tag(&html).contains("data-dark"),
+            "System must not be stamped data-dark: {}",
+            html_tag(&html)
+        );
+    }
+
+    #[test]
+    fn the_picker_marks_only_the_selected_theme_as_checked() {
+        let html = build_page(&doc(), "", Theme::Mocha);
+        let occurrences = html.matches("aria-checked=\"true\"").count();
+        assert_eq!(occurrences, 1, "expected exactly one item marked checked, saw {occurrences}");
+
+        let idx = html.find("aria-checked=\"true\"").expect("a checked item");
+        let tag_start = html[..idx].rfind("<button").expect("enclosing button tag");
+        let tag_end = html[idx..].find('>').map(|i| idx + i).expect("tag close");
+        let tag = &html[tag_start..tag_end];
+        assert!(
+            tag.contains("data-theme-id=\"mocha\""),
+            "the checked item must be the selected theme, got: {tag}"
+        );
+
+        assert!(html.contains("role=\"menu\""), "picker list must be a menu");
+        assert!(html.contains("role=\"menuitemradio\""), "picker items must be menuitemradio");
     }
 
     #[test]

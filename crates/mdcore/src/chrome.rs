@@ -24,6 +24,43 @@ pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     Rgb { r: lerp(a.r, b.r), g: lerp(a.g, b.g), b: lerp(a.b, b.b) }
 }
 
+/// WCAG relative luminance.
+pub fn luminance(c: Rgb) -> f32 {
+    fn linearize(channel: u8) -> f32 {
+        let c = channel as f32 / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * linearize(c.r) + 0.7152 * linearize(c.g) + 0.0722 * linearize(c.b)
+}
+
+/// WCAG contrast ratio, always >= 1.0.
+pub fn contrast(a: Rgb, b: Rgb) -> f32 {
+    let la = luminance(a);
+    let lb = luminance(b);
+    let (lighter, darker) = if la >= lb { (la, lb) } else { (lb, la) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Blend `from` toward `to` by the smallest amount that reaches `target`
+/// contrast against `against`, or return the full blend if unreachable.
+/// A fixed blend fraction cannot serve palettes whose own fg/bg contrast
+/// spans 4.13:1 to 12.82:1 — this targets the property that matters instead.
+pub fn mix_to_contrast(from: Rgb, to: Rgb, against: Rgb, target: f32) -> Rgb {
+    let mut best = to;
+    for step in 0..=20 {
+        let candidate = mix(from, to, step as f32 / 20.0);
+        if contrast(candidate, against) >= target {
+            best = candidate;
+            break;
+        }
+    }
+    best
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChromeTokens {
     pub bg: Rgb,
@@ -55,8 +92,12 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
     ChromeTokens {
         bg,
         fg,
-        muted: mix(fg, bg, 0.40),
-        border: mix(bg, fg, 0.22),
+        // Fixed blend fractions cannot serve palettes whose own fg/bg
+        // contrast ranges from 4.13:1 (Solarized Light) to 12.82:1 (GitHub):
+        // measured results included muted at 2.16:1 on Solarized Light and
+        // border at 1.29-1.74:1 everywhere. Target the contrast ratio itself.
+        muted: mix_to_contrast(bg, fg, bg, 4.5),
+        border: mix_to_contrast(bg, fg, bg, 3.0),
         code_bg,
         link: accent,
         banner_bg: mix(bg, warn, if dark { 0.18 } else { 0.22 }),
@@ -145,5 +186,112 @@ mod tests {
             tokens(LIGHT_BG, LIGHT_FG, false).to_css_vars(),
             tokens(DARK_BG, DARK_FG, true).to_css_vars()
         );
+    }
+}
+
+#[cfg(test)]
+mod contrast_tests {
+    use super::*;
+
+    #[test]
+    fn luminance_endpoints() {
+        let black = Rgb { r: 0, g: 0, b: 0 };
+        let white = Rgb { r: 255, g: 255, b: 255 };
+        assert!(luminance(black) < 0.001);
+        assert!((luminance(white) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn contrast_of_a_colour_with_itself_is_one() {
+        let c = Rgb { r: 0x40, g: 0x80, b: 0xc0 };
+        assert!((contrast(c, c) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn contrast_is_symmetric_and_at_least_one() {
+        let black = Rgb { r: 0, g: 0, b: 0 };
+        let white = Rgb { r: 255, g: 255, b: 255 };
+        assert_eq!(contrast(black, white), contrast(white, black));
+        assert!(contrast(black, white) >= 1.0);
+        assert!((contrast(black, white) - 21.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn mix_to_contrast_reaches_the_target_when_reachable() {
+        let bg = Rgb { r: 0xff, g: 0xff, b: 0xff };
+        let fg = Rgb { r: 0x00, g: 0x00, b: 0x00 };
+        let muted = mix_to_contrast(bg, fg, bg, 4.5);
+        assert!(contrast(muted, bg) >= 4.5);
+        // Must be a genuine blend, not the full jump straight to fg.
+        assert_ne!(muted, fg);
+    }
+
+    #[test]
+    fn mix_to_contrast_falls_back_to_the_full_blend_when_unreachable() {
+        // fg/bg here can never reach a 10:1 contrast, so the smallest amount
+        // that reaches it does not exist -- the fallback must be `to`.
+        let bg = Rgb { r: 0xdd, g: 0xdd, b: 0xdd };
+        let fg = Rgb { r: 0x99, g: 0x99, b: 0x99 };
+        assert!(contrast(fg, bg) < 10.0);
+        assert_eq!(mix_to_contrast(bg, fg, bg, 10.0), fg);
+    }
+
+    /// These assertions are the point of fix 8: the old fixed blend fractions
+    /// measured at 2.16:1-2.62:1 for `--muted` (below even the 3:1 large-text
+    /// floor) and 1.29:1-1.74:1 for `--border` (below the 3:1 non-text floor)
+    /// on real palettes. Run them over all six named themes' actual syntect
+    /// palettes, not synthetic colours.
+    #[test]
+    fn muted_and_border_meet_contrast_targets_on_every_real_palette() {
+        use crate::theme::Theme;
+
+        let mut checked = 0;
+        for theme in Theme::all().iter().filter(|t| **t != Theme::System) {
+            let syntect_name = theme.syntect_name().expect("named theme has a palette");
+            let (_, bg, fg) = crate::highlight::palette_for(syntect_name)
+                .unwrap_or_else(|| panic!("no bundled syntect palette for {}", theme.label()));
+            let is_dark = theme.is_dark().expect("named theme has a darkness");
+            let t = tokens(bg, fg, is_dark);
+            checked += 1;
+
+            // fg/bg pass straight through unchanged.
+            assert_eq!(t.fg, fg, "{}: fg must be unchanged", theme.label());
+            assert_eq!(t.bg, bg, "{}: bg must be unchanged", theme.label());
+            assert_eq!(
+                contrast(t.fg, t.bg),
+                contrast(fg, bg),
+                "{}: fg/bg contrast must be unchanged",
+                theme.label()
+            );
+
+            assert_ne!(t.code_bg, t.bg, "{}: code surface must differ from the page", theme.label());
+
+            let border_contrast = contrast(t.border, t.bg);
+            assert!(
+                border_contrast >= 3.0,
+                "{}: border contrast {border_contrast:.2} below the 3:1 non-text floor",
+                theme.label()
+            );
+
+            let muted_contrast = contrast(t.muted, t.bg);
+            if contrast(fg, bg) >= 4.5 {
+                assert!(
+                    muted_contrast >= 4.5,
+                    "{}: muted contrast {muted_contrast:.2} below the 4.5:1 text floor",
+                    theme.label()
+                );
+            } else {
+                // Solarized Light's own fg/bg contrast is only 4.13:1, below
+                // the 4.5 target -- 4.5 is mathematically unreachable by
+                // blending toward fg. The documented fallback is the full
+                // blend (muted == fg), the best any derived colour can do.
+                assert_eq!(
+                    t.muted, t.fg,
+                    "{}: 4.5 is unreachable on this palette, muted should fall back to fg",
+                    theme.label()
+                );
+            }
+        }
+        assert_eq!(checked, 6, "expected to check all six named themes");
     }
 }

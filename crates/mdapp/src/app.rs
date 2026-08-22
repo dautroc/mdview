@@ -162,6 +162,10 @@ define_class!(
         fn reload_document_action(&self, _sender: Option<&NSObject>) {
             if let Some(window) = self.frontmost_window() {
                 window.reload(&self.ivars().highlighter);
+                // Same hazard as the theme-change reload: the fresh page's
+                // star and bookmark list start empty, so a bookmarked
+                // document would read as unbookmarked until this runs.
+                self.push_bookmarks_to_pages();
             }
         }
 
@@ -185,6 +189,15 @@ define_class!(
         #[unsafe(method(cycleTheme:))]
         fn cycle_theme_action(&self, _sender: Option<&NSObject>) {
             // Advance through Theme::all() in order, wrapping at the end.
+            //
+            // This sends SetTheme(next, None) — no scroll offset — unlike the
+            // picker, which reads window.scrollY in JS and sends it along.
+            // ⌘T is a menu/keyboard action dispatched from Rust with no event
+            // from the page, so there is no synchronous way to read the
+            // frontmost window's current scroll position here without an
+            // async round-trip through evaluateJavaScript. Left as a scroll
+            // reset rather than adding that plumbing for a keyboard shortcut;
+            // the picker path (mouse-driven, already in JS) keeps the offset.
             let current = mdcore::Theme::from_wire(
                 &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
             );
@@ -431,18 +444,37 @@ impl AppDelegate {
         match message {
             Message::SetTheme(theme, scroll_opt) => {
                 crate::defaults::set_string(crate::defaults::THEME_KEY, theme.as_wire());
-                let Some(window) = self.frontmost_window() else { return };
-                // If a scroll offset came through (from picker), queue it to run
-                // after the reload completes. The drain runs it once isLoading()
-                // is false, under the same guard as other post-load scripts.
-                if let Some(y) = scroll_opt {
-                    let script = format!("window.scrollTo(0, {});", y);
-                    window.pending_scripts.borrow_mut().push(script);
+                // The theme is a global preference, not a per-window one: every
+                // open window must pick it up, or the others would keep the old
+                // theme indefinitely. Collect the Rcs first, then reload outside
+                // the borrow — matching watch_tick's pattern — since reload can
+                // reenter `windows` (e.g. via message handling on the new page).
+                let source = self.frontmost_window();
+                let windows: Vec<Rc<DocumentWindow>> =
+                    self.ivars().windows.borrow().iter().cloned().collect();
+                for window in &windows {
+                    // A runtime theme change cannot swap the pinned sheet's
+                    // contents — that CSS is baked in by Rust for the theme the
+                    // page was built with. Reload so the new theme's pinned
+                    // sheet is emitted.
+                    window.reload(&self.ivars().highlighter);
                 }
-                // A runtime theme change cannot swap the pinned sheet's contents —
-                // that CSS is baked in by Rust for the theme the page was built with.
-                // Reload the page so the new theme's pinned sheet is emitted.
-                window.reload(&self.ivars().highlighter);
+                // The fresh page's star is unstarred and its bookmark list is
+                // empty until this runs — without it a bookmarked document
+                // reads as unbookmarked after a theme change, and ⌘D would then
+                // remove the entry instead of adding it back.
+                self.push_bookmarks_to_pages();
+                // Only the window whose picker sent this carries a meaningful
+                // scroll offset; other windows just reload at the top. Queue
+                // after the sidebar-restore script (pushed by `reload` above),
+                // or the offset would apply while the sidebar is still hidden
+                // and the layout differs.
+                if let Some(y) = scroll_opt {
+                    if let Some(window) = source {
+                        let script = format!("window.scrollTo(0, {});", y);
+                        window.pending_scripts.borrow_mut().push(script);
+                    }
+                }
             }
             Message::ToggleBookmark => {
                 let Some(window) = self.frontmost_window() else { return };

@@ -281,7 +281,7 @@ img { max-width: 100%; }
 #mdview-theme[open] summary::-webkit-details-marker { display: none; }
 
 .mdview-theme-list {
-  background: var(--bg);
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
@@ -302,11 +302,11 @@ img { max-width: 100%; }
   color: var(--muted); font-size: .75rem; font-weight: 600;
   padding: .5rem .75rem .25rem; text-transform: uppercase;
 }
-.mdview-theme-item {
+.mdview-sidebar-head .mdview-theme-item {
   background: none; border: 0; color: var(--fg); cursor: pointer;
   font: inherit; padding: .5rem .75rem; text-align: left;
 }
-.mdview-theme-item:hover { background: var(--code-bg); }
+.mdview-theme-item:hover { background: var(--bg); }
 
 #mdview-sidebar-body { padding: 0 .75rem 2rem; }
 #mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }

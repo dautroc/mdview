@@ -31,13 +31,17 @@
     }
   }
 
-  // The explicit theme lives in <html data-theme>, which does NOT affect
-  // prefers-color-scheme. Reading the media query here would render every
-  // diagram in the OS palette while the rest of the page honours the user's
-  // choice. Fall back to the query only when no explicit theme is pinned.
+  // A named theme's wire value ("mocha", "github", ...) does not say
+  // whether it is dark, so JS cannot derive it -- only Rust can, from
+  // Theme::is_dark. Rust stamps that darkness onto the html element as a
+  // data-dark attribute (1 for dark, 0 for light), alongside data-theme.
+  // Only System has no stamp, and defers to the OS media query -- reading
+  // the query for a named theme would render every diagram in the OS
+  // palette while the rest of the page honours the user's choice.
   function effectiveTheme() {
-    var pinned = document.documentElement.getAttribute("data-theme");
-    if (pinned === "dark" || pinned === "light") return pinned;
+    var stamped = document.documentElement.getAttribute("data-dark");
+    if (stamped === "1") return "dark";
+    if (stamped === "0") return "light";
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
 
@@ -144,86 +148,6 @@
       wrapZoomable(images[j], true);
     }
   }
-
-  // Chrome colours come from CSS custom properties keyed off data-theme, but
-  // the syntect highlight palettes are whole stylesheets selected by a media
-  // attribute (they cannot be nested under a selector — that needs CSS
-  // Nesting, unsupported before macOS 13.4). Both must move together or the
-  // page recolours while code blocks stay behind.
-  function applyHighlightSheets(theme) {
-    var light = document.getElementById("mdview-hl-light");
-    var dark = document.getElementById("mdview-hl-dark");
-    if (!light || !dark) return;
-    if (theme === "system") {
-      // Only System defers to the OS. Named themes ship their own pinned
-      // sheet, so both of these must stay inert or two highlight stylesheets
-      // would apply at once and source order would decide the winner.
-      light.media = "all";
-      dark.media = "(prefers-color-scheme: dark)";
-    } else {
-      light.media = "not all";
-      dark.media = "not all";
-    }
-  }
-
-  // Restore every diagram to its stashed source and let mermaid render it
-  // again under the new theme. mermaid skips nodes carrying data-processed,
-  // so that attribute must go too.
-  function rerenderDiagrams() {
-    var nodes = document.querySelectorAll("pre.mermaid[data-mermaid-src]");
-    // Nothing to re-theme. Skip rather than paying mermaid.initialize() and
-    // run() on every theme toggle for a document that has no diagrams.
-    if (!nodes.length) return Promise.resolve();
-    for (var i = 0; i < nodes.length; i++) {
-      var node = nodes[i];
-      node.removeAttribute("data-processed");
-      node.textContent = node.getAttribute("data-mermaid-src");
-    }
-    return renderDiagrams();
-  }
-
-  // Called from Rust when the theme changes. KaTeX needs no re-render: its
-  // output inherits colour from CSS. Only mermaid bakes the theme in.
-  var themeFrame = 0;
-  var themeGeneration = 0;
-
-  window.mdviewApplyTheme = function (theme) {
-    if (theme === "system") {
-      document.documentElement.removeAttribute("data-theme");
-    } else {
-      document.documentElement.setAttribute("data-theme", theme);
-    }
-    applyHighlightSheets(theme);
-    // Mark the current theme in the picker so the list shows the selection.
-    var items = document.querySelectorAll(".mdview-theme-item");
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      var isSelected = item.getAttribute("data-theme-id") === theme;
-      item.setAttribute("aria-checked", isSelected ? "true" : "false");
-    }
-    // Everything above is an attribute flip and repaints instantly — but the
-    // browser cannot paint until this task yields, and re-rendering diagrams
-    // does substantial synchronous work in mermaid. Defer it a frame so the
-    // theme change is visible immediately and the diagrams catch up.
-    //
-    // rerenderDiagrams() destroys and rebuilds every pre.mermaid node, taking
-    // the zoom wrapper and button with it (wrapZoomable inserts them inside
-    // that node). Chain the enhancer exactly as mdviewRenderAll does, or
-    // diagrams lose click-to-zoom until the next save.
-    // Coalesce rapid changes. Each re-render lays out every diagram in
-    // mermaid, so N quick clicks would otherwise queue N full re-layouts that
-    // serialise and lag behind the clicks. Cancel any frame not yet run, and
-    // tag each attempt so a superseded render cannot re-enhance after a newer
-    // one has already finished.
-    if (themeFrame) cancelAnimationFrame(themeFrame);
-    var generation = ++themeGeneration;
-    themeFrame = requestAnimationFrame(function () {
-      themeFrame = 0;
-      rerenderDiagrams().then(function () {
-        if (generation === themeGeneration) enhanceZoomables();
-      });
-    });
-  };
 
   function getLightbox() {
     var existing = document.getElementById("mdview-lightbox");
