@@ -7,3 +7,6 @@
 .superpowers/
 
 /dist
+
+# Design specs and implementation plans: kept locally, not published.
+/docs/superpowers/
