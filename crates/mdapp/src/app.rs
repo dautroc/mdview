@@ -185,12 +185,11 @@ define_class!(
 
         #[unsafe(method(cycleTheme:))]
         fn cycle_theme_action(&self, _sender: Option<&NSObject>) {
-            let current = mdcore::Theme::from_wire(
-                &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
-            );
-            let next = current.next();
-            crate::defaults::set_string(crate::defaults::THEME_KEY, next.as_wire());
-            self.apply_theme(next);
+            // Route through handle_message so ⌘T and the in-page theme
+            // button (which posts the same "cycleTheme" message) can never
+            // apply a different cycle order — Theme::next is the one
+            // definition, the same way ⌘D routes through ToggleBookmark.
+            self.handle_message(crate::state::Message::CycleTheme);
         }
 
         #[unsafe(method(toggleSidebar:))]
@@ -397,6 +396,14 @@ impl AppDelegate {
             Message::SetTheme(theme) => {
                 crate::defaults::set_string(crate::defaults::THEME_KEY, theme.as_wire());
                 self.apply_theme(theme);
+            }
+            Message::CycleTheme => {
+                let current = mdcore::Theme::from_wire(
+                    &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
+                );
+                let next = current.next();
+                crate::defaults::set_string(crate::defaults::THEME_KEY, next.as_wire());
+                self.apply_theme(next);
             }
             Message::ToggleBookmark => {
                 let Some(window) = self.frontmost_window() else { return };

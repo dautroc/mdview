@@ -552,9 +552,11 @@
     var themeBtn = document.getElementById("mdview-theme");
     if (themeBtn) {
       themeBtn.addEventListener("click", function () {
-        var current = document.documentElement.getAttribute("data-theme") || "system";
-        var next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
-        postToHost("setTheme:" + next);
+        // The cycle order (System -> Light -> Dark) is defined exactly once,
+        // in Rust's Theme::next, which also drives the ⌘T shortcut. Posting
+        // a bare "cycleTheme" message and letting the host apply it there
+        // means this button and ⌘T can never disagree about the order.
+        postToHost("cycleTheme");
       });
     }
 

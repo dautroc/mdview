@@ -38,6 +38,7 @@ pub fn is_bookmarked(list: &[String], path: &str) -> bool {
 #[allow(dead_code)]
 pub enum Message {
     SetTheme(Theme),
+    CycleTheme,
     ToggleBookmark,
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
@@ -49,6 +50,9 @@ pub enum Message {
 pub fn parse_message(raw: &str) -> Option<Message> {
     if raw == "toggleBookmark" {
         return Some(Message::ToggleBookmark);
+    }
+    if raw == "cycleTheme" {
+        return Some(Message::CycleTheme);
     }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
@@ -123,6 +127,7 @@ mod tests {
     #[test]
     fn parses_each_message_kind() {
         assert_eq!(parse_message("toggleBookmark"), Some(Message::ToggleBookmark));
+        assert_eq!(parse_message("cycleTheme"), Some(Message::CycleTheme));
         assert_eq!(
             parse_message("setTheme:dark"),
             Some(Message::SetTheme(Theme::Dark))
