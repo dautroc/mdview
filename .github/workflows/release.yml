@@ -1,28 +1,94 @@
-# Builds a universal DMG and attaches it to a GitHub release.
+# Builds a universal DMG and publishes it as a GitHub release.
 #
-# Tag a release to run it:  git tag v0.1.0 && git push origin v0.1.0
+# Two ways in, both ending in the same build:
+#
+#   1. Bump `version` in Cargo.toml (and CFBundleShortVersionString in
+#      bundle/Info.plist, which a test enforces) and push to main. The release
+#      is cut automatically, tag and all.
+#   2. Push a `v*` tag by hand, for a release off something other than a
+#      version bump.
+#
+# Pushes to main that do not change the version cost one cheap job and stop.
 #
 # The app is ad-hoc signed only. There is no Developer ID here, so the DMG is
 # not notarized and first launch needs the Gatekeeper step described in the
-# README. Adding notarization later means adding a signing identity and a
-# notarytool step; nothing else about this workflow changes.
+# README. Adding notarization later means a signing identity and a notarytool
+# step; nothing else about this workflow changes.
 name: release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Release the current version even if its tag exists"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
+# Two pushes in quick succession should not race to publish the same tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # Decide whether there is anything to release before paying for a macOS
+  # runner and two full builds.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags are needed to tell an already-released version from a new one.
+          fetch-depth: 0
+
+      - id: decide
+        run: |
+          set -euo pipefail
+          version=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # A hand-pushed tag must describe the version it points at, or the
+            # release name and the app disagree about what this is.
+            if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version $version"
+              exit 1
+            fi
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "releasing $version from tag ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "releasing $version because force was requested"
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "v$version is already released; nothing to do"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "v$version is new; releasing"
+          fi
+
   dmg:
+    needs: check
+    if: needs.check.outputs.release == 'true'
     # macOS runner: the build links against AppKit and WebKit, and the bundle
     # is assembled with codesign, hdiutil and lipo.
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install both target architectures
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -34,20 +100,16 @@ jobs:
       - name: Build the DMG
         run: make dist
 
-      - name: Check the tag matches the version that was built
-        run: |
-          version=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "$tag" != "$version" ]; then
-            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
-            exit 1
-          fi
-
       - name: Publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          # Named explicitly so a version-bump push creates its own tag; on a
+          # tag push this is the tag that is already here.
+          tag_name: v${{ needs.check.outputs.version }}
+          name: v${{ needs.check.outputs.version }}
           files: dist/*.dmg
           generate_release_notes: true
+          fail_on_unmatched_files: true
           body: |
             Universal build for Apple silicon and Intel.
 
