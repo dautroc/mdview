@@ -188,15 +188,14 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <header class="mdview-sidebar-head">
 <button type="button" id="mdview-star" aria-label="Bookmark this document">☆</button>
 {theme_picker}
-<button type="button" id="mdview-sidebar-close" aria-label="Hide sidebar">×</button>
 </header>
 <nav class="mdview-tabs">
-<button type="button" class="mdview-tab" data-tab="outline">Outline</button>
-<button type="button" class="mdview-tab" data-tab="bookmarks">Bookmarks</button>
+<button type="button" class="mdview-tab" data-tab="outline" aria-label="Outline" title="Outline"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="3" x2="8" y2="3"/><line x1="2" y1="8" x2="12" y2="8"/><line x1="2" y1="13" x2="14" y2="13"/></svg></button>
+<button type="button" class="mdview-tab" data-tab="bookmarks" aria-label="Bookmarks" title="Bookmarks"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10v9.5L8 9l-5 2.5V2z"/></svg></button>
 </nav>
 <div id="mdview-sidebar-body"></div>
 </aside>
-<button type="button" id="mdview-sidebar-open" aria-label="Show sidebar" hidden>&#8249;</button>
+<button type="button" id="mdview-sidebar-toggle" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="18" y2="4"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="2" y1="16" x2="18" y2="16"/></svg></button>
 </div>
 <script nonce="{nonce}">{katex_js}</script>
 <script nonce="{nonce}">{mermaid_js}</script>
@@ -507,15 +506,78 @@ mod tests {
     }
 
     #[test]
-    fn the_open_handle_survives_a_hidden_sidebar() {
+    fn the_sidebar_toggle_survives_a_hidden_sidebar() {
         let html = build_page(&doc(), "<p>hi</p>", Theme::System);
-        let handle = html.find("id=\"mdview-sidebar-open\"").expect("handle missing");
+        let toggle = html.find("id=\"mdview-sidebar-toggle\"").expect("toggle missing");
         let aside_end = html.find("</aside>").expect("aside must close");
         let content = html.find("id=\"mdview-content\"").expect("content missing");
         let main_end = html.find("</main>").expect("main must close");
-        // Outside the aside, or hiding the sidebar hides its own opener.
-        assert!(handle > aside_end, "handle must not live inside the sidebar");
+        // Outside the aside, or hiding the sidebar hides its own toggle.
+        assert!(toggle > aside_end, "toggle must not live inside the sidebar");
         // Outside the swapped content, or a live-reload save destroys it.
-        assert!(handle < content || handle > main_end, "handle must not live inside #mdview-content");
+        assert!(toggle < content || toggle > main_end, "toggle must not live inside #mdview-content");
+    }
+
+    #[test]
+    fn old_sidebar_button_ids_are_gone() {
+        let html = build_page(&doc(), "", Theme::System);
+        assert!(
+            !html.contains("id=\"mdview-sidebar-open\""),
+            "mdview-sidebar-open should be replaced by mdview-sidebar-toggle"
+        );
+        assert!(
+            !html.contains("id=\"mdview-sidebar-close\""),
+            "mdview-sidebar-close should be replaced by mdview-sidebar-toggle"
+        );
+    }
+
+    #[test]
+    fn sidebar_tabs_have_icon_markup() {
+        let html = build_page(&doc(), "", Theme::System);
+        // Count SVG elements that serve as icons
+        let svg_count = html.matches("<svg").count();
+        assert!(
+            svg_count >= 2,
+            "tabs should have SVG icons for outline and bookmarks, got {svg_count} svgs"
+        );
+    }
+
+    #[test]
+    fn sidebar_toggle_has_aria_expanded() {
+        let html = build_page(&doc(), "", Theme::System);
+        let toggle_start = html
+            .find("id=\"mdview-sidebar-toggle\"")
+            .expect("toggle missing");
+        let toggle_end = html[toggle_start..].find('>').expect("tag close") + toggle_start;
+        let toggle_tag = &html[toggle_start..=toggle_end];
+        assert!(
+            toggle_tag.contains("aria-expanded"),
+            "toggle must have aria-expanded attribute, got: {toggle_tag}"
+        );
+    }
+
+    #[test]
+    fn sidebar_tabs_have_accessible_labels() {
+        let html = build_page(&doc(), "", Theme::System);
+        assert!(html.contains("aria-label=\"Outline\""), "outline tab needs aria-label");
+        assert!(
+            html.contains("aria-label=\"Bookmarks\""),
+            "bookmarks tab needs aria-label"
+        );
+        assert!(html.contains("title=\"Outline\""), "outline tab needs title");
+        assert!(html.contains("title=\"Bookmarks\""), "bookmarks tab needs title");
+    }
+
+    #[test]
+    fn no_inline_click_handlers() {
+        let html = build_page(&doc(), "", Theme::System);
+        assert!(
+            !html.contains("onclick="),
+            "no inline onclick= handlers allowed; use addEventListener"
+        );
+        assert!(
+            !html.contains("onchange="),
+            "no inline onchange= handlers allowed; use addEventListener"
+        );
     }
 }

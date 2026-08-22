@@ -372,8 +372,8 @@
     if (!sidebar) return;
     sidebarTab = tab || sidebarTab;
     sidebar.hidden = !open;
-    var opener = document.getElementById("mdview-sidebar-open");
-    if (opener) opener.hidden = open;
+    var toggle = document.getElementById("mdview-sidebar-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
     var tabs = document.querySelectorAll(".mdview-tab");
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].setAttribute(
@@ -498,17 +498,11 @@
   // not inside mdviewRenderAll (which runs again on every save).
 
   function attachSidebarListeners() {
-    var closeBtn = document.getElementById("mdview-sidebar-close");
-    if (closeBtn) {
-      closeBtn.addEventListener("click", function () {
-        setSidebar(false, sidebarTab);
-      });
-    }
-
-    var opener = document.getElementById("mdview-sidebar-open");
-    if (opener) {
-      opener.addEventListener("click", function () {
-        setSidebar(true, sidebarTab);
+    var toggle = document.getElementById("mdview-sidebar-toggle");
+    if (toggle) {
+      toggle.addEventListener("click", function () {
+        var sidebar = document.getElementById("mdview-sidebar");
+        if (sidebar) setSidebar(sidebar.hidden, sidebarTab);
       });
     }
 

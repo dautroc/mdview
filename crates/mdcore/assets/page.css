@@ -240,24 +240,22 @@ img { max-width: 100%; }
 }
 #mdview-sidebar[hidden] { display: none; }
 
-#mdview-sidebar-open {
-  background: var(--bg);
+#mdview-sidebar-toggle {
+  background: var(--code-bg);
   border: 1px solid var(--border);
-  border-radius: 6px 0 0 6px;
-  border-right: 0;
-  color: var(--muted);
+  border-radius: 6px;
+  color: var(--fg);
   cursor: pointer;
   font: inherit;
   line-height: 1;
-  padding: .6rem .35rem;
+  padding: .5rem;
   position: fixed;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 1rem;
+  top: 1rem;
   z-index: 9;
 }
-#mdview-sidebar-open:hover { color: var(--fg); }
-#mdview-sidebar-open[hidden] { display: none; }
+#mdview-sidebar-toggle:hover { background: var(--border); }
+#mdview-sidebar-toggle svg { display: block; width: 20px; height: 20px; }
 
 .mdview-sidebar-head { display: flex; gap: .25rem; justify-content: flex-end; padding: .5rem; }
 .mdview-sidebar-head button,
