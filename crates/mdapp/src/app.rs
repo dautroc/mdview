@@ -36,8 +36,13 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let paths = self.ivars().startup_paths.take();
-            for path in paths {
-                self.open_document(&path);
+            // One reusable window can only show one document, so honour the
+            // FIRST argument for the same reason `application:openURLs:` does:
+            // opening them all in sequence would leave only the last visible,
+            // discarding the file the user most likely meant. Task 3 will
+            // record the rest in history rather than dropping them.
+            if let Some(path) = paths.first() {
+                self.open_document(path);
             }
 
             unsafe {
@@ -67,17 +72,17 @@ define_class!(
             // With one reusable window, opening N files can only show one.
             // Show the FIRST — discarding it in favour of the last would throw
             // away the file the user most likely meant.
-            let mut opened = false;
             for url in urls.iter() {
+                // Ignore anything that is not a local file; the app has no
+                // business fetching remote documents. A path alone is not enough:
+                // https://example.com/foo has a path too.
                 if !url.isFileURL() {
                     continue;
                 }
                 let Some(path) = url.path() else { continue };
                 let path = std::path::PathBuf::from(path.to_string());
-                if !opened {
-                    self.open_document(&path);
-                    opened = true;
-                }
+                self.open_document(&path);
+                break;
             }
         }
 

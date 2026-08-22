@@ -224,6 +224,8 @@ impl DocumentWindow {
         *self.watcher.borrow_mut() = crate::watcher::FileWatcher::start(path).ok();
         self.pending_banners.borrow_mut().clear();
         self.reload(highlighter);
+        // Defensive: `reload` clears these banners, but make `load` correct on
+        // its own terms rather than depending on a detail of `reload`.
         self.clear_banner("missing");
         self.clear_banner("lossy");
     }
