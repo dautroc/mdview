@@ -372,6 +372,7 @@
     if (!sidebar) return;
     sidebarTab = tab || sidebarTab;
     sidebar.hidden = !open;
+    document.documentElement.setAttribute("data-sidebar-open", open ? "1" : "0");
     var toggle = document.getElementById("mdview-sidebar-toggle");
     if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
     var tabs = document.querySelectorAll(".mdview-tab");

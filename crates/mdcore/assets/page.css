@@ -400,11 +400,12 @@ img { max-width: 100%; }
   align-items: center;
   display: flex;
   gap: .25rem;
-  position: absolute;
-  right: .75rem;
+  position: fixed;
+  right: 3.25rem;
   top: .55rem;
-  z-index: 2;
+  z-index: 12;
 }
+:root[data-sidebar-open="1"] #mdview-toolbar { right: calc(260px + 3.25rem); }
 #mdview-contextual-controls,
 #mdview-diff-layout-controls,
 #mdview-options { align-items: center; display: flex; gap: .2rem; }
@@ -460,7 +461,8 @@ img { max-width: 100%; }
 #mdview-diff-layout-controls[hidden] { display: none; }
 
 @media (max-width: 700px) {
-  #mdview-toolbar { right: .5rem; }
+  #mdview-toolbar { right: 3rem; }
+  :root[data-sidebar-open="1"] #mdview-toolbar { right: calc(260px + 3rem); }
   #mdview-contextual-controls > button,
   .mdview-layout-choice,
   #mdview-options-toggle { padding-left: .3rem; padding-right: .3rem; min-width: 1.8rem; }
