@@ -75,6 +75,16 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         other => format!(" data-theme=\"{}\"", other.as_wire()),
     };
 
+    // Syntect's stylesheets are full rulesets, so they cannot be wrapped in a
+    // `:root[data-theme=…]` block — that is CSS Nesting, unsupported by WebKit
+    // before macOS 13.4 while this app supports 11.0. Selecting whole sheets
+    // with a `media` attribute works on every WebKit and needs no nesting.
+    let (light_media, dark_media) = match theme {
+        Theme::System => ("all", "(prefers-color-scheme: dark)"),
+        Theme::Light => ("all", "not all"),
+        Theme::Dark => ("not all", "all"),
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html{theme_attr}>
@@ -85,10 +95,8 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <title>{title}</title>
 <style>{page_css}</style>
 <style>{katex_css}</style>
-<style>{light_css}</style>
-<style>@media (prefers-color-scheme: dark) {{ {dark_css} }}</style>
-<style>:root[data-theme="dark"] {{ {dark_css} }}</style>
-<style>:root[data-theme="light"] {{ {light_css} }}</style>
+<style id="mdview-hl-light" media="{light_media}">{light_css}</style>
+<style id="mdview-hl-dark" media="{dark_media}">{dark_css}</style>
 </head>
 <body>
 <div id="mdview-banners"></div>
@@ -105,6 +113,8 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         title = crate::escape::escape_html(&title),
         page_css = assets::PAGE_CSS,
         katex_css = assets::KATEX_CSS,
+        light_media = light_media,
+        dark_media = dark_media,
         light_css = light_css,
         dark_css = dark_css,
         body = body_html,
@@ -278,10 +288,21 @@ mod tests {
     }
 
     #[test]
-    fn theme_overrides_beat_the_media_query() {
-        let html = build_page(&doc(), "", crate::theme::Theme::System);
-        // Both override blocks ship in every page; only the attribute changes.
-        assert!(html.contains("[data-theme=\"dark\"]"), "dark override CSS missing");
-        assert!(html.contains("[data-theme=\"light\"]"), "light override CSS missing");
+    fn highlight_sheets_are_selected_by_media_not_nesting() {
+        // Syntect sheets are whole rulesets; nesting them under
+        // `:root[data-theme=…]` needs CSS Nesting, which WebKit lacks before
+        // macOS 13.4 while this app supports 11.0. Exactly one occurrence of
+        // each attribute selector should remain — the chrome block in page.css.
+        let dark = build_page(&doc(), "", crate::theme::Theme::Dark);
+        assert_eq!(dark.matches(":root[data-theme=\"dark\"]").count(), 1);
+        assert!(dark.contains("id=\"mdview-hl-dark\" media=\"all\""));
+        assert!(dark.contains("id=\"mdview-hl-light\" media=\"not all\""));
+
+        let light = build_page(&doc(), "", crate::theme::Theme::Light);
+        assert!(light.contains("id=\"mdview-hl-light\" media=\"all\""));
+        assert!(light.contains("id=\"mdview-hl-dark\" media=\"not all\""));
+
+        let system = build_page(&doc(), "", crate::theme::Theme::System);
+        assert!(system.contains("id=\"mdview-hl-dark\" media=\"(prefers-color-scheme: dark)\""));
     }
 }
