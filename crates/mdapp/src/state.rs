@@ -154,4 +154,22 @@ mod tests {
         assert_eq!(parse_message("setSidebar:1"), None);
         assert_eq!(parse_message("setTheme:chartreuse"), Some(Message::SetTheme(Theme::System)));
     }
+
+    #[test]
+    fn sidebar_closed_state_is_carried_not_assumed() {
+        // Pins the `open == "1"` branch against an implementation that
+        // hardcodes true: every other setSidebar test passes "1".
+        assert_eq!(
+            parse_message("setSidebar:0:outline"),
+            Some(Message::SetSidebar { open: false, tab: "outline".into() })
+        );
+    }
+
+    #[test]
+    fn an_empty_tab_name_is_rejected() {
+        // "setSidebar:1" fails earlier for want of a second colon, so this is
+        // the only case that reaches the tab.is_empty() guard. Without it an
+        // empty string would reach callers as a real tab name.
+        assert_eq!(parse_message("setSidebar:1:"), None);
+    }
 }
