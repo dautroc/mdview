@@ -6,7 +6,7 @@ use mdcore::Highlighter;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuItem};
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString,
     NSTimer, NSURL,
@@ -21,6 +21,7 @@ pub struct AppState {
     /// every window and every live reload shares this one.
     pub highlighter: Highlighter,
     pub startup_paths: RefCell<Vec<PathBuf>>,
+    pub recent_menu: RefCell<Option<Retained<NSMenu>>>,
 }
 
 define_class!(
@@ -44,6 +45,9 @@ define_class!(
             if let Some(path) = paths.first() {
                 self.open_document(path);
             }
+
+            // Refill Open Recent after the menu system is ready.
+            self.rebuild_recent_menu();
 
             unsafe {
                 let timer = NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
@@ -209,17 +213,91 @@ define_class!(
         fn toggle_bookmark_action(&self, _sender: Option<&NSObject>) {
             self.handle_message(crate::state::Message::ToggleBookmark);
         }
+
+        #[unsafe(method(openRecent:))]
+        fn open_recent_action(&self, sender: Option<&NSMenuItem>) {
+            let Some(sender) = sender else { return };
+            let index = sender.tag() as usize;
+            let live = self.live_history();
+            if let Some(path) = live.get(index) {
+                self.open_document(std::path::Path::new(path.as_str()));
+            }
+        }
+
+        #[unsafe(method(clearRecent:))]
+        fn clear_recent_action(&self, _sender: Option<&NSObject>) {
+            crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &[]);
+            self.rebuild_recent_menu();
+        }
     }
 );
 
 impl AppDelegate {
-    pub fn new(mtm: MainThreadMarker, startup_paths: Vec<PathBuf>) -> Retained<Self> {
+    pub fn new(
+        mtm: MainThreadMarker,
+        startup_paths: Vec<PathBuf>,
+        recent_menu: Retained<NSMenu>,
+    ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(AppState {
             windows: RefCell::new(Vec::new()),
             highlighter: Highlighter::new(),
             startup_paths: RefCell::new(startup_paths),
+            recent_menu: RefCell::new(Some(recent_menu)),
         });
         unsafe { objc2::msg_send![super(this), init] }
+    }
+
+    /// History filtered to entries that still exist on disk. The menu's item
+    /// tags index into THIS list, so `openRecent:` must resolve against the
+    /// identical filter — hence one function, called by both.
+    fn live_history(&self) -> Vec<String> {
+        crate::defaults::get_strings(crate::defaults::HISTORY_KEY)
+            .into_iter()
+            .filter(|p| std::path::Path::new(p.as_str()).exists())
+            .collect()
+    }
+
+    /// Refill File > Open Recent from persisted history. Entries are tagged
+    /// with their index, which is how the action learns which one was picked
+    /// without parsing the title back into a path.
+    pub(crate) fn rebuild_recent_menu(&self) {
+        let Some(menu) = self.ivars().recent_menu.borrow().clone() else {
+            return;
+        };
+        let mtm = MainThreadMarker::from(self);
+        menu.removeAllItems();
+
+        let live = self.live_history();
+
+        for (index, path) in live.iter().enumerate() {
+            let name = std::path::Path::new(path.as_str())
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
+            let entry = unsafe {
+                NSMenuItem::initWithTitle_action_keyEquivalent(
+                    NSMenuItem::alloc(mtm),
+                    &NSString::from_str(&name),
+                    Some(objc2::sel!(openRecent:)),
+                    &NSString::from_str(""),
+                )
+            };
+            entry.setTag(index as isize);
+            menu.addItem(&entry);
+        }
+
+        if !live.is_empty() {
+            menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+        }
+        let clear = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Clear Menu"),
+                Some(objc2::sel!(clearRecent:)),
+                &NSString::from_str(""),
+            )
+        };
+        menu.addItem(&clear);
     }
 
     /// The single entry point every way of opening a file funnels into:
@@ -253,6 +331,7 @@ impl AppDelegate {
             // document, and a ⌘D against that stale state would toggle the
             // wrong way.
             self.push_bookmarks_to_pages();
+            self.rebuild_recent_menu();
             return;
         }
 
@@ -283,6 +362,7 @@ impl AppDelegate {
         let window = DocumentWindow::open(path, mtm, &state.highlighter, handler, on_message);
         state.windows.borrow_mut().push(window);
         self.push_bookmarks_to_pages();
+        self.rebuild_recent_menu();
     }
 
     /// The window the user is looking at, or None when every window is closed.
@@ -411,9 +491,9 @@ pub fn run(paths: Vec<PathBuf>) -> ! {
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
-    crate::menu::install(&app, mtm);
+    let recent_menu = crate::menu::install(&app, mtm);
 
-    let delegate = AppDelegate::new(mtm, paths);
+    let delegate = AppDelegate::new(mtm, paths, recent_menu);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 
     app.run();

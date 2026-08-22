@@ -40,7 +40,9 @@ fn submenu(mtm: MainThreadMarker, title: &str) -> (Retained<NSMenuItem>, Retaine
 /// Menu items use a nil target, so AppKit sends each action up the responder
 /// chain and it lands on the application delegate. That is why the delegate
 /// implements the action selectors rather than the window doing so.
-pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
+///
+/// Returns the Open Recent submenu so the delegate can refill it from history.
+pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     let menubar = NSMenu::new(mtm);
 
     // Application menu. Its title is ignored by AppKit, which substitutes the
@@ -55,6 +57,8 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     let (file_holder, file_menu) = submenu(mtm, "File");
     file_menu.addItem(&item(mtm, "Open…", sel!(openDocument:), "o"));
     file_menu.addItem(&item(mtm, "Reload", sel!(reloadDocument:), "r"));
+    let (recent_holder, recent_menu) = submenu(mtm, "Open Recent");
+    file_menu.addItem(&recent_holder);
     file_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     file_menu.addItem(&item(mtm, "Close Window", sel!(performClose:), "w"));
     menubar.addItem(&file_holder);
@@ -99,4 +103,6 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) {
     app.setMainMenu(Some(&menubar));
     app.setWindowsMenu(Some(&window_menu));
     app.setHelpMenu(Some(&help_menu));
+
+    recent_menu
 }
