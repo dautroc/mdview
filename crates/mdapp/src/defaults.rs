@@ -31,7 +31,6 @@ pub fn set_strings(key: &str, values: &[String]) {
     let refs: Vec<&NSString> = items.iter().map(|s| &**s).collect();
     let array = NSArray::from_slice(&refs);
     unsafe { defaults().setObject_forKey(Some(&array), &key) };
-    defaults().synchronize();
 }
 
 #[allow(dead_code)]
