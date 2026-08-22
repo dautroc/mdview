@@ -250,9 +250,10 @@ impl DocumentWindow {
                 let full_width = crate::state::resolve_full_width(crate::defaults::get_bool_opt(
                     crate::defaults::FULL_WIDTH_KEY,
                 ));
-                self.pending_scripts
-                    .borrow_mut()
-                    .push(crate::state::full_width_script(full_width).to_string());
+                crate::state::queue_full_width_script(
+                    &mut self.pending_scripts.borrow_mut(),
+                    full_width,
+                );
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
                 if doc.lossy {
@@ -471,6 +472,15 @@ impl DocumentWindow {
         for (id, message) in pending {
             self.show_banner(&id, &message);
         }
+    }
+
+    pub fn set_full_width(&self, enabled: bool) {
+        crate::state::queue_full_width_script(&mut self.pending_scripts.borrow_mut(), enabled);
+        if unsafe { self.webview.isLoading() } {
+            return;
+        }
+        self.pending_scripts.borrow_mut().pop();
+        self.eval_script(crate::state::full_width_script(enabled));
     }
 
     pub(crate) fn eval_script(&self, script: &str) {

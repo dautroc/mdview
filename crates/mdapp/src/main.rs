@@ -95,9 +95,9 @@ mod bundle_version_tests {
         let app = include_str!("app.rs");
         assert!(app.contains("#[unsafe(method(toggleFullWidth:))]"));
         assert!(app.contains("set_bool(crate::defaults::FULL_WIDTH_KEY, enabled)"));
-        assert!(app.contains("crate::state::full_width_script(enabled)"));
+        assert!(app.contains("window.set_full_width(enabled)"));
         let window = include_str!("window.rs");
         assert!(window.contains("crate::defaults::FULL_WIDTH_KEY"));
-        assert!(window.contains("crate::state::full_width_script(full_width)"));
+        assert!(window.contains("crate::state::queue_full_width_script"));
     }
 }

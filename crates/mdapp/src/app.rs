@@ -210,9 +210,8 @@ define_class!(
             if let Some(item) = sender {
                 item.setState(crate::menu::full_width_menu_state(enabled));
             }
-            let script = crate::state::full_width_script(enabled);
             for window in self.ivars().windows.borrow().iter() {
-                window.eval_script(script);
+                window.set_full_width(enabled);
             }
         }
 

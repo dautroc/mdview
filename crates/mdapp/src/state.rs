@@ -22,6 +22,13 @@ pub fn full_width_script(enabled: bool) -> &'static str {
     }
 }
 
+pub fn queue_full_width_script(scripts: &mut Vec<String>, enabled: bool) {
+    scripts.retain(|script| {
+        script != full_width_script(true) && script != full_width_script(false)
+    });
+    scripts.push(full_width_script(enabled).to_string());
+}
+
 /// Put `path` at the front of `list`, promoting an existing entry rather than
 /// duplicating it, and truncate to `cap`.
 #[allow(dead_code)]
@@ -239,5 +246,14 @@ mod tests {
             full_width_script(false),
             "document.documentElement.removeAttribute('data-fullwidth');"
         );
+    }
+
+    #[test]
+    fn queueing_fullwidth_replaces_a_stale_script_but_keeps_other_scripts_ordered() {
+        let mut scripts = vec![full_width_script(false).to_string(), "sidebar".to_string()];
+
+        queue_full_width_script(&mut scripts, true);
+
+        assert_eq!(scripts, vec!["sidebar", full_width_script(true)]);
     }
 }
