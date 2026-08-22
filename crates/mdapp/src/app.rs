@@ -37,14 +37,12 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let paths = self.ivars().startup_paths.take();
-            // One reusable window can only show one document, so honour the
-            // FIRST argument for the same reason `application:openURLs:` does:
-            // opening them all in sequence would leave only the last visible,
-            // discarding the file the user most likely meant. Task 3 will
-            // record the rest in history rather than dropping them.
-            if let Some(path) = paths.first() {
-                self.open_document(path);
-            }
+            // One reusable window can only show one document, so open the
+            // FIRST argument for the same reason `application:openURLs:` and
+            // `present_open_panel` do, and record the rest in history so
+            // they stay reachable from File > Open Recent instead of being
+            // silently dropped.
+            self.open_first_record_rest(&paths);
 
             // Refill Open Recent after the menu system is ready.
             self.rebuild_recent_menu();
@@ -74,8 +72,10 @@ define_class!(
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
             // With one reusable window, opening N files can only show one.
-            // Show the FIRST — discarding it in favour of the last would throw
-            // away the file the user most likely meant.
+            // Open the FIRST and record the rest in history rather than
+            // dropping them — discarding them entirely would throw away
+            // files the user explicitly selected.
+            let mut paths = Vec::new();
             for url in urls.iter() {
                 // Ignore anything that is not a local file; the app has no
                 // business fetching remote documents. A path alone is not enough:
@@ -84,10 +84,9 @@ define_class!(
                     continue;
                 }
                 let Some(path) = url.path() else { continue };
-                let path = std::path::PathBuf::from(path.to_string());
-                self.open_document(&path);
-                break;
+                paths.push(std::path::PathBuf::from(path.to_string()));
             }
+            self.open_first_record_rest(&paths);
         }
 
         #[unsafe(method(applicationShouldOpenUntitledFile:))]
@@ -306,14 +305,41 @@ impl AppDelegate {
         menu.addItem(&clear);
     }
 
+    /// Open the first path and record the rest in history without displaying
+    /// them. One window can only show one document, but the user asked for
+    /// all of them, so the others stay reachable from File > Open Recent.
+    fn open_first_record_rest(&self, paths: &[std::path::PathBuf]) {
+        let Some((first, rest)) = paths.split_first() else { return };
+        for path in rest.iter().rev() {
+            if let Some(s) = path.to_str() {
+                let history = crate::state::push_history(
+                    &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
+                    s,
+                    50,
+                );
+                crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &history);
+            }
+        }
+        self.open_document(first);
+    }
+
     /// The single entry point every way of opening a file funnels into:
     /// startup arguments, Finder, the Open panel, and dropped files.
     pub fn open_document(&self, path: &std::path::Path) {
         use crate::navigation::NavigationRequest;
         use objc2_app_kit::NSWorkspace;
 
+        // Persisted history and bookmarks are keyed by path string, so a
+        // relative path would produce a second identity for the same document
+        // and would resolve against whatever CWD the process happens to have.
+        let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
         // Every way of opening a document funnels through here, which makes
         // this the one correct place to record history.
+        //
+        // `path.to_str()` silently omits a non-UTF-8 path from history (and
+        // from Open Recent) while still opening it in the window below — a
+        // deliberate, if narrow, gap rather than an oversight.
         if let Some(path_str) = path.to_str() {
             let history = crate::state::push_history(
                 &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
@@ -492,11 +518,13 @@ impl AppDelegate {
         }
 
         let urls = panel.URLs();
+        let mut paths = Vec::new();
         for url in urls.iter() {
             if let Some(path) = url.path() {
-                self.open_document(std::path::Path::new(&path.to_string()));
+                paths.push(std::path::PathBuf::from(path.to_string()));
             }
         }
+        self.open_first_record_rest(&paths);
     }
 }
 
