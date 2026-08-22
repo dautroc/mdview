@@ -311,6 +311,12 @@ impl AppDelegate {
     fn open_first_record_rest(&self, paths: &[std::path::PathBuf]) {
         let Some((first, rest)) = paths.split_first() else { return };
         for path in rest.iter().rev() {
+            // Canonicalize here too. `open_document` normalises the path it
+            // opens, so recording the extras as-given would key the same
+            // document two different ways — a relative argv path against the
+            // process CWD, or an unresolved symlink — which is the identity
+            // split canonicalization exists to prevent.
+            let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
             if let Some(s) = path.to_str() {
                 let history = crate::state::push_history(
                     &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
