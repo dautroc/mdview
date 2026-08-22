@@ -82,3 +82,141 @@ img { max-width: 100%; }
   margin: 0 0 .5rem;
   padding: .5rem .75rem;
 }
+
+/* Click-to-zoom affordances for Mermaid diagrams and images. */
+
+.mdview-zoomable {
+  display: block;
+  position: relative;
+}
+
+.mdview-zoomable.mdview-zoomable-inline {
+  display: inline-block;
+}
+
+.mdview-zoom-btn {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  display: flex;
+  font-size: 14px;
+  height: 28px;
+  justify-content: center;
+  line-height: 1;
+  opacity: 0;
+  padding: 0;
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  transition: opacity .12s ease-in-out;
+  width: 28px;
+  z-index: 2;
+}
+
+.mdview-zoomable:hover .mdview-zoom-btn,
+.mdview-zoom-btn:focus-visible {
+  opacity: 1;
+}
+
+.mdview-zoom-btn:hover {
+  background: var(--code-bg);
+}
+
+#mdview-lightbox {
+  align-items: center;
+  background: rgba(0, 0, 0, .6);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1000;
+}
+
+#mdview-lightbox[hidden] { display: none; }
+
+.mdview-lightbox-stage {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: grab;
+  display: flex;
+  height: 84vh;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+  width: 84vw;
+}
+
+.mdview-lightbox-stage.mdview-dragging { cursor: grabbing; }
+
+.mdview-lightbox-inner {
+  align-items: center;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.mdview-lightbox-inner img,
+.mdview-lightbox-inner svg {
+  display: block;
+  max-height: 100%;
+  max-width: 100%;
+}
+
+.mdview-lightbox-controls {
+  bottom: 1rem;
+  display: flex;
+  gap: .5rem;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 1001;
+}
+
+.mdview-lightbox-btn {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  display: flex;
+  font-size: 16px;
+  height: 32px;
+  justify-content: center;
+  line-height: 1;
+  width: 32px;
+}
+
+.mdview-lightbox-btn:hover { background: var(--code-bg); }
+
+.mdview-lightbox-close {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 18px;
+  height: 32px;
+  line-height: 1;
+  position: absolute;
+  right: 1rem;
+  top: 1rem;
+  width: 32px;
+  z-index: 1001;
+}
+
+.mdview-lightbox-close:hover { background: var(--code-bg); }

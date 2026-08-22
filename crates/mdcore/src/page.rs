@@ -240,4 +240,18 @@ mod tests {
         let content = html.find("id=\"mdview-content\"").expect("content container");
         assert!(banners < content, "banners must precede the swappable content");
     }
+
+    #[test]
+    fn zoom_affordances_are_embedded_in_the_page() {
+        let html = build_page(&doc(), "<p>hi</p>");
+        // CSS reached the page
+        assert!(html.contains(".mdview-zoomable"), "zoom CSS missing");
+        assert!(html.contains(".mdview-zoom-btn"), "zoom button CSS missing");
+        assert!(html.contains("mdview-lightbox"), "lightbox styles/markup missing");
+        // JS reached the page
+        assert!(html.contains("enhanceZoomables"), "zoom JS missing");
+        // Still no remote assets
+        assert!(!html.contains("<link"), "no external stylesheets");
+        assert!(!html.contains("src=\"http"), "no external scripts");
+    }
 }

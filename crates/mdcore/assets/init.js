@@ -18,8 +18,11 @@
     }
   }
 
+  // Always resolves (never rejects), and resolves synchronously-ish via a
+  // microtask even when mermaid is absent or throws, so callers can chain
+  // off it unconditionally without a try/catch of their own.
   function renderDiagrams() {
-    if (typeof mermaid === "undefined") return;
+    if (typeof mermaid === "undefined") return Promise.resolve();
     try {
       mermaid.initialize({
         startOnLoad: false,
@@ -28,16 +31,284 @@
           ? "dark"
           : "default",
       });
-      mermaid.run({ querySelector: "pre.mermaid" });
+      var result = mermaid.run({ querySelector: "pre.mermaid" });
+      if (result && typeof result.then === "function") {
+        return result.catch(function () {
+          /* leave the diagram source visible as text */
+        });
+      }
+      return Promise.resolve();
     } catch (err) {
       /* leave the diagram source visible as text */
+      return Promise.resolve();
     }
+  }
+
+  // ---- Click-to-zoom ---------------------------------------------------
+  //
+  // One overlay (#mdview-lightbox), created lazily and appended to
+  // document.body -- deliberately OUTSIDE #mdview-content, because live
+  // reload replaces that div's innerHTML and an overlay living inside it
+  // would be destroyed mid-use.
+
+  var MIN_SCALE = 0.25;
+  var MAX_SCALE = 8;
+
+  var zoomState = null; // { scale, x, y } while the overlay is open, else null
+  var dragState = null;
+  var savedScrollY = 0;
+  var savedBodyOverflow = "";
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function wrapZoomable(node, inline) {
+    if (!node || node.hasAttribute("data-mdview-zoom")) return;
+    node.setAttribute("data-mdview-zoom", "1");
+
+    var wrapper = document.createElement("span");
+    wrapper.className = inline
+      ? "mdview-zoomable mdview-zoomable-inline"
+      : "mdview-zoomable";
+    node.parentNode.insertBefore(wrapper, node);
+    wrapper.appendChild(node);
+
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mdview-zoom-btn";
+    btn.setAttribute("aria-label", "Zoom");
+    btn.textContent = "⤢"; // NE arrow and SW arrow: a compact "expand" glyph
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      openLightbox(node);
+    });
+    wrapper.appendChild(btn);
+  }
+
+  // Walks #mdview-content for Mermaid diagrams and images and wraps each in
+  // a zoomable affordance. Safe to call repeatedly: every processed node
+  // carries data-mdview-zoom, so a second pass (e.g. after a live-reload
+  // save re-runs mdviewRenderAll) is a no-op for anything already wrapped.
+  function enhanceZoomables() {
+    var content = document.getElementById("mdview-content");
+    if (!content) return;
+
+    var diagrams = content.querySelectorAll("pre.mermaid");
+    for (var i = 0; i < diagrams.length; i++) {
+      var pre = diagrams[i];
+      var svg = pre.querySelector("svg");
+      wrapZoomable(svg || pre, false);
+    }
+
+    var images = content.querySelectorAll("img");
+    for (var j = 0; j < images.length; j++) {
+      wrapZoomable(images[j], true);
+    }
+  }
+
+  function getLightbox() {
+    var existing = document.getElementById("mdview-lightbox");
+    if (existing) return existing;
+
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-lightbox";
+    overlay.hidden = true;
+
+    var stage = document.createElement("div");
+    stage.className = "mdview-lightbox-stage";
+
+    var inner = document.createElement("div");
+    inner.className = "mdview-lightbox-inner";
+    stage.appendChild(inner);
+
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "mdview-lightbox-close";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.textContent = "×"; // ×
+
+    var controls = document.createElement("div");
+    controls.className = "mdview-lightbox-controls";
+
+    var zoomOutBtn = document.createElement("button");
+    zoomOutBtn.type = "button";
+    zoomOutBtn.className = "mdview-lightbox-btn";
+    zoomOutBtn.setAttribute("aria-label", "Zoom out");
+    zoomOutBtn.textContent = "−"; // −
+
+    var resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "mdview-lightbox-btn";
+    resetBtn.setAttribute("aria-label", "Reset zoom");
+    resetBtn.textContent = "↺"; // ↺
+
+    var zoomInBtn = document.createElement("button");
+    zoomInBtn.type = "button";
+    zoomInBtn.className = "mdview-lightbox-btn";
+    zoomInBtn.setAttribute("aria-label", "Zoom in");
+    zoomInBtn.textContent = "+";
+
+    controls.appendChild(zoomOutBtn);
+    controls.appendChild(resetBtn);
+    controls.appendChild(zoomInBtn);
+
+    overlay.appendChild(stage);
+    overlay.appendChild(closeBtn);
+    overlay.appendChild(controls);
+    document.body.appendChild(overlay);
+
+    overlay._stage = stage;
+    overlay._inner = inner;
+
+    overlay.addEventListener("click", function (event) {
+      // Only a click landing on the backdrop itself dismisses -- not one
+      // that bubbles up from the stage, its content, or the controls.
+      if (event.target === overlay) closeLightbox();
+    });
+    closeBtn.addEventListener("click", closeLightbox);
+    zoomOutBtn.addEventListener("click", function () {
+      stepScale(0.8);
+    });
+    zoomInBtn.addEventListener("click", function () {
+      stepScale(1.25);
+    });
+    resetBtn.addEventListener("click", resetZoom);
+
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    stage.addEventListener("mousedown", onMouseDown);
+
+    return overlay;
+  }
+
+  function applyTransform() {
+    var overlay = document.getElementById("mdview-lightbox");
+    if (!overlay || !zoomState) return;
+    overlay._inner.style.transform =
+      "translate(" + zoomState.x + "px, " + zoomState.y + "px) scale(" + zoomState.scale + ")";
+  }
+
+  // Zooms about a point given in stage-local coordinates, keeping the
+  // content under that point stationary on screen -- shared by wheel/pinch
+  // and the +/- buttons (which zoom about the stage center).
+  function zoomAbout(cx, cy, factor) {
+    if (!zoomState) return;
+    var newScale = clamp(zoomState.scale * factor, MIN_SCALE, MAX_SCALE);
+    var ratio = newScale / zoomState.scale;
+    zoomState.x = cx - (cx - zoomState.x) * ratio;
+    zoomState.y = cy - (cy - zoomState.y) * ratio;
+    zoomState.scale = newScale;
+    applyTransform();
+  }
+
+  function stepScale(factor) {
+    var overlay = document.getElementById("mdview-lightbox");
+    if (!overlay || !zoomState) return;
+    var rect = overlay._stage.getBoundingClientRect();
+    zoomAbout(rect.width / 2, rect.height / 2, factor);
+  }
+
+  function resetZoom() {
+    if (!zoomState) return;
+    zoomState.scale = 1;
+    zoomState.x = 0;
+    zoomState.y = 0;
+    applyTransform();
+  }
+
+  // A macOS trackpad pinch arrives as a wheel event with ctrlKey true; both
+  // it and an ordinary wheel scroll are handled through this one path.
+  // preventDefault() keeps the page behind from scrolling and keeps the
+  // gesture from falling through to the app's own page-zoom.
+  function onWheel(event) {
+    if (!zoomState) return;
+    event.preventDefault();
+    var overlay = document.getElementById("mdview-lightbox");
+    var rect = overlay._stage.getBoundingClientRect();
+    var cx = event.clientX - rect.left;
+    var cy = event.clientY - rect.top;
+    var factor = Math.exp(-event.deltaY * 0.0015);
+    zoomAbout(cx, cy, factor);
+  }
+
+  function onMouseDown(event) {
+    if (!zoomState) return;
+    event.preventDefault();
+    dragState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startPanX: zoomState.x,
+      startPanY: zoomState.y,
+    };
+    var overlay = document.getElementById("mdview-lightbox");
+    overlay._stage.classList.add("mdview-dragging");
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  function onMouseMove(event) {
+    if (!dragState || !zoomState) return;
+    zoomState.x = dragState.startPanX + (event.clientX - dragState.startX);
+    zoomState.y = dragState.startPanY + (event.clientY - dragState.startY);
+    applyTransform();
+  }
+
+  function onMouseUp() {
+    dragState = null;
+    var overlay = document.getElementById("mdview-lightbox");
+    if (overlay) overlay._stage.classList.remove("mdview-dragging");
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  }
+
+  function onKeyDown(event) {
+    if (event.key === "Escape") closeLightbox();
+  }
+
+  function openLightbox(node) {
+    var overlay = getLightbox();
+
+    overlay._inner.innerHTML = "";
+    var clone = node.cloneNode(true);
+    clone.removeAttribute("data-mdview-zoom");
+    overlay._inner.appendChild(clone);
+
+    zoomState = { scale: 1, x: 0, y: 0 };
+    applyTransform();
+
+    savedScrollY = window.scrollY;
+    savedBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    overlay.hidden = false;
+    document.addEventListener("keydown", onKeyDown);
+  }
+
+  function closeLightbox() {
+    var overlay = document.getElementById("mdview-lightbox");
+    if (!overlay || overlay.hidden) return;
+
+    overlay.hidden = true;
+    overlay._inner.innerHTML = "";
+    zoomState = null;
+    dragState = null;
+
+    document.body.style.overflow = savedBodyOverflow;
+    window.scrollTo(0, savedScrollY);
+    document.removeEventListener("keydown", onKeyDown);
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
   }
 
   // Called on first load and again after every live-reload body swap.
   window.mdviewRenderAll = function () {
     renderMath();
-    renderDiagrams();
+    // mermaid.run() is asynchronous; renderDiagrams() always returns a
+    // promise (resolved immediately when mermaid is absent or throws) so
+    // enhanceZoomables() runs exactly once, after diagrams exist, and still
+    // runs -- covering images -- even when mermaid itself failed.
+    renderDiagrams().then(enhanceZoomables);
   };
 
   document.addEventListener("DOMContentLoaded", window.mdviewRenderAll);
