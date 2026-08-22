@@ -3,6 +3,13 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.5.0](https://github.com/dautroc/mdview/releases/tag/v0.5.0) — 2026-08-22
+
+### Fixes
+
+- The contextual toolbar now stays visible while scrolling and avoids
+  overlapping the sidebar controls in either sidebar state.
+
 ## [v0.4.0](https://github.com/dautroc/mdview/releases/tag/v0.4.0) — 2026-08-22
 
 ### What’s new
