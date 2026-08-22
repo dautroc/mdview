@@ -74,12 +74,27 @@
     node.parentNode.insertBefore(wrapper, node);
     wrapper.appendChild(node);
 
+    // Clicking the diagram/image itself opens the overlay -- except when the
+    // author wrapped it in a link (e.g. [![alt](img)](https://...)), in
+    // which case the click should follow the link instead. The zoom button
+    // (below) still works in that case via its own handler.
+    wrapper.addEventListener("click", function () {
+      var content = document.getElementById("mdview-content");
+      var link = wrapper.closest("a");
+      if (link && content && content.contains(link)) return;
+      openLightbox(node);
+    });
+
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mdview-zoom-btn";
     btn.setAttribute("aria-label", "Zoom");
     btn.textContent = "⤢"; // NE arrow and SW arrow: a compact "expand" glyph
     btn.addEventListener("click", function (event) {
+      // preventDefault() stops a wrapping <a> from navigating when this
+      // click bubbles to it; stopPropagation() stops it reaching the
+      // wrapper's own click handler above, which would otherwise open the
+      // overlay a second time (or reopen it immediately after this closes).
       event.preventDefault();
       event.stopPropagation();
       openLightbox(node);

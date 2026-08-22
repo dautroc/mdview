@@ -86,6 +86,7 @@ img { max-width: 100%; }
 /* Click-to-zoom affordances for Mermaid diagrams and images. */
 
 .mdview-zoomable {
+  cursor: zoom-in;
   display: block;
   position: relative;
 }
