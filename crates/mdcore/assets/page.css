@@ -252,12 +252,21 @@ img { max-width: 100%; }
   position: fixed;
   right: 1rem;
   top: 1rem;
-  z-index: 9;
+  /* Above #mdview-banners (10), which is a full-width sticky bar at top:0 and
+     would otherwise paint over this button. Below #mdview-theme's list (20). */
+  z-index: 11;
 }
 #mdview-sidebar-toggle:hover { background: var(--border); }
 #mdview-sidebar-toggle svg { display: block; width: 20px; height: 20px; }
 
-.mdview-sidebar-head { display: flex; gap: .25rem; justify-content: flex-end; padding: .5rem; }
+.mdview-sidebar-head {
+  display: flex; gap: .25rem; justify-content: flex-end;
+  padding: .5rem;
+  /* #mdview-sidebar-toggle is fixed at right:1rem and spans ~38px, so it
+     covers this header's right edge. Reserve that strip or the theme
+     picker sits underneath it and cannot be clicked. */
+  padding-right: 3.5rem;
+}
 .mdview-sidebar-head button,
 .mdview-tab {
   background: none; border: 1px solid transparent; border-radius: 6px;

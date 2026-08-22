@@ -518,6 +518,49 @@ mod tests {
         assert!(toggle < content || toggle > main_end, "toggle must not live inside #mdview-content");
     }
 
+    /// Reads the z-index of a rule block in page.css.
+    fn z_index_of(selector: &str) -> i32 {
+        let css = assets::PAGE_CSS;
+        let start = css.find(selector).unwrap_or_else(|| panic!("no rule for {selector}"));
+        let block = &css[start..];
+        let end = block.find('}').expect("unterminated rule");
+        let decl = block[..end]
+            .split("z-index:")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{selector} declares no z-index"));
+        decl.trim_start()
+            .trim_end_matches(|c: char| !c.is_ascii_digit() && c != '-')
+            .trim()
+            .trim_end_matches(';')
+            .parse()
+            .expect("z-index must be an integer")
+    }
+
+    #[test]
+    fn the_sidebar_toggle_paints_above_the_banner_bar() {
+        // #mdview-banners is a full-viewport-width sticky bar at top:0, and the
+        // toggle is fixed at top:1rem — they overlap. The toggle must win, or a
+        // live-reload banner hides the only control that opens the sidebar.
+        assert!(
+            z_index_of("#mdview-sidebar-toggle {") > z_index_of("#mdview-banners {"),
+            "the sidebar toggle must paint above the banner bar"
+        );
+    }
+
+    #[test]
+    fn the_sidebar_header_reserves_room_for_the_fixed_toggle() {
+        // The header's own controls (star, theme picker) sit flush right, exactly
+        // where the fixed toggle lands. Without reserved padding the theme picker
+        // is underneath it and unclickable.
+        let css = assets::PAGE_CSS;
+        let start = css.find(".mdview-sidebar-head {").expect("no sidebar-head rule");
+        let block = &css[start..start + css[start..].find('}').expect("unterminated rule")];
+        assert!(
+            block.contains("padding-right:"),
+            "sidebar header must reserve the toggle's footprint on the right"
+        );
+    }
+
     #[test]
     fn old_sidebar_button_ids_are_gone() {
         let html = build_page(&doc(), "", Theme::System);
