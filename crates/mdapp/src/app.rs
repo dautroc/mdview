@@ -197,6 +197,17 @@ impl AppDelegate {
         use crate::navigation::NavigationRequest;
         use objc2_app_kit::NSWorkspace;
 
+        // Every way of opening a document funnels through here, which makes
+        // this the one correct place to record history.
+        if let Some(path_str) = path.to_str() {
+            let history = crate::state::push_history(
+                &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
+                path_str,
+                50,
+            );
+            crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &history);
+        }
+
         let state = self.ivars();
 
         // Reuse the window the user is looking at rather than stacking a new

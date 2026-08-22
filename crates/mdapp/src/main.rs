@@ -1,4 +1,5 @@
 mod app;
+mod defaults;
 mod menu;
 mod navigation;
 mod state;
