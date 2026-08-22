@@ -1,11 +1,30 @@
 # MDView
 
-A read-only macOS Markdown viewer. Rust and AppKit, with WebKit used only as
-a paint surface.
+A read-only Markdown viewer for macOS. Rust and AppKit, with WebKit used only
+as a paint surface.
 
-Renders CommonMark plus GFM tables and task lists, syntax-highlighted code,
-images, LaTeX math, and Mermaid diagrams. Everything is embedded in the
-binary, so it works with no network access.
+![MDView showing a document with its outline in the sidebar](docs/screenshot.png)
+
+Point it at a file and read. There is no editor, no preview pane to keep in
+sync, and no server: every asset is embedded in the binary, so it renders the
+same with the network off.
+
+## What it renders
+
+CommonMark plus GFM tables and task lists, syntax-highlighted code, images,
+LaTeX math, and Mermaid diagrams.
+
+## What it does
+
+- **Outline** built from the document's headings, in a sidebar you can toggle.
+- **Bookmarks** for documents you come back to, kept across launches.
+- **Themes** — three light, three dark, or follow the system. Hovering a name
+  in the picker previews it on the document; only a click keeps it.
+- **Click to zoom** an image or a Mermaid diagram to fill the window.
+- **Live reload.** Save in your editor and the view updates, holding your
+  scroll position.
+- **One window.** Opening another document reuses the current window rather
+  than scattering windows across the desktop.
 
 ## Install
 
@@ -35,28 +54,43 @@ supporting casks that fail Gatekeeper on 1 September 2026, so a cask for an
 unnotarized app would break almost immediately. Notarizing needs a paid Apple
 Developer account; if that changes, a cask becomes worthwhile.
 
-## Build
-
-    make test
-    make install       # /Applications/MDView.app
-    make install-cli   # /usr/local/bin/mdview
-
 ## Use
 
-    mdview notes.md              # open a file
-    mdview --print-html notes.md # render to stdout
+```sh
+mdview notes.md               # open a file
+mdview --print-html notes.md  # render to stdout
+```
 
 Or double-click a `.md` file in Finder, drop one on the window or the Dock
 icon, or press ⌘O.
 
-The open document reloads automatically when an external editor saves it,
-keeping your scroll position.
+| Key | |
+| --- | --- |
+| ⌘O | Open a file |
+| ⌘R | Reload |
+| ⌥⌘S | Toggle the sidebar |
+| ⌘T | Next theme |
+| ⌘D | Bookmark this document |
+| ⌘= ⌘- ⌘0 | Zoom in, out, actual size |
+| ⌘W | Close the window |
+
+## Build
+
+```sh
+make test
+make install       # /Applications/MDView.app
+make install-cli   # /usr/local/bin/mdview
+```
+
+Requires a Rust toolchain and the macOS command line tools. Building the app
+needs no Swift toolchain; the icon is committed.
 
 ## Layout
 
 - `crates/mdcore` — Markdown to self-contained HTML. Pure safe Rust, no
-  AppKit, and where all the tests live.
-- `crates/mdapp` — the AppKit shell: windows, menus, file handling.
+  AppKit, and where most of the tests live.
+- `crates/mdapp` — the AppKit shell: windows, menus, file handling. The only
+  crate with `unsafe`.
 - `tools/shot.swift` — renders a generated page in a WKWebView and writes a
   PNG.
 - `tools/icon.swift` — draws the app icon. `bundle/MDView.icns` is committed,
