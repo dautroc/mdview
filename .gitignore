@@ -2,3 +2,6 @@
 **/*.rs.bk
 *.app
 .DS_Store
+
+# Superpowers agent scratch (reports, ledgers, review packages)
+.superpowers/
