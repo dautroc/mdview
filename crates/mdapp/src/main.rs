@@ -1,6 +1,7 @@
 mod app;
 mod menu;
 mod navigation;
+mod state;
 mod watcher;
 mod window;
 

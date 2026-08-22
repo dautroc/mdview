@@ -9,11 +9,13 @@ pub mod highlight;
 pub mod math;
 pub mod page;
 pub mod render;
+pub mod theme;
 
 use std::path::{Path, PathBuf};
 
 pub use document::{Document, DocumentError};
 pub use highlight::Highlighter;
+pub use theme::Theme;
 
 /// A document rendered and ready to hand to a web view.
 #[derive(Debug, Clone)]
