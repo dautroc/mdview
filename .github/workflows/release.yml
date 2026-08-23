@@ -89,6 +89,9 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Release notes need the full history and existing version tags.
+          fetch-depth: 0
 
       - name: Install both target architectures
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -100,6 +103,26 @@ jobs:
       - name: Build the DMG
         run: make dist
 
+      - name: Create release notes
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          previous_tag=$(git tag --merged HEAD --sort=-version:refname --list 'v*' \
+            | grep -Fxv "$tag" \
+            | head -n 1 || true)
+
+          if [ -n "$previous_tag" ]; then
+            range="$previous_tag..HEAD"
+          else
+            range="HEAD"
+          fi
+
+          git log "$range" \
+            --format="- [\`%h\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/%H) %s" \
+            > release-notes.md
+
       - name: Publish
         uses: softprops/action-gh-release@v3
         with:
@@ -108,26 +131,5 @@ jobs:
           tag_name: v${{ needs.check.outputs.version }}
           name: v${{ needs.check.outputs.version }}
           files: dist/*.dmg
-          generate_release_notes: true
           fail_on_unmatched_files: true
-          body: |
-            ## MDView v${{ needs.check.outputs.version }}
-
-            Feature highlights and the complete history are maintained in the
-            [MDView changelog](https://github.com/dautroc/mdview/blob/main/CHANGELOG.md).
-
-            Universal build for Apple silicon and Intel.
-
-            This app is not notarized, so macOS will refuse it on first launch.
-            Open **System Settings → Privacy & Security**, find MDView near the
-            bottom and choose **Open Anyway**. Or clear the quarantine flag:
-
-            ```sh
-            xattr -d -r com.apple.quarantine /Applications/MDView.app
-            ```
-
-            To get the `mdview` command:
-
-            ```sh
-            ln -sf /Applications/MDView.app/Contents/Resources/mdview /usr/local/bin/mdview
-            ```
+          body_path: release-notes.md
