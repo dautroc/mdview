@@ -289,8 +289,8 @@ mod contrast_tests {
     /// These assertions are the point of fix 8: the old fixed blend fractions
     /// measured at 2.16:1-2.62:1 for `--muted` (below even the 3:1 large-text
     /// floor) and 1.29:1-1.74:1 for `--border` (below the 3:1 non-text floor)
-    /// on real palettes. Run them over all six named themes' actual syntect
-    /// palettes, not synthetic colours.
+    /// on real palettes. Run them over every named theme's actual palette,
+    /// not synthetic colours.
     #[test]
     fn muted_and_border_meet_contrast_targets_on_every_real_palette() {
         use crate::theme::Theme;
@@ -342,6 +342,10 @@ mod contrast_tests {
                 );
             }
         }
-        assert_eq!(checked, 6, "expected to check all six named themes");
+        assert_eq!(
+            checked,
+            Theme::all().len() - 1,
+            "expected to check every named theme"
+        );
     }
 }
