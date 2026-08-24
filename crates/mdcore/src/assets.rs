@@ -6,3 +6,7 @@ pub const INIT_JS: &str = include_str!("../assets/init.js");
 pub const KATEX_CSS: &str = include_str!("../assets/katex.css");
 pub const KATEX_JS: &str = include_str!("../assets/katex.js");
 pub const MERMAID_JS: &str = include_str!("../assets/mermaid.js");
+
+/// Monokai Pro's palette is not one of syntect's defaults, so it ships as a
+/// tmTheme embedded like every other asset rather than read from disk.
+pub const MONOKAI_PRO_THEME: &str = include_str!("../assets/monokai-pro.tmTheme");

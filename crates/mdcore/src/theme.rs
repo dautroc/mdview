@@ -1,6 +1,7 @@
 /// Which appearance the page uses. `System` defers to the OS via the
-/// stylesheet's `prefers-color-scheme` query; every other variant pins one of
-/// syntect's built-in palettes, from which the page chrome is derived.
+/// stylesheet's `prefers-color-scheme` query; every other variant pins a
+/// palette -- one of syntect's built-ins, or one MDView bundles itself -- from
+/// which the page chrome is derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
     System,
@@ -10,6 +11,7 @@ pub enum Theme {
     SolarizedDark,
     Eighties,
     Mocha,
+    MonokaiPro,
 }
 
 impl Theme {
@@ -22,6 +24,7 @@ impl Theme {
             Theme::SolarizedDark,
             Theme::Eighties,
             Theme::Mocha,
+            Theme::MonokaiPro,
         ]
     }
 
@@ -34,6 +37,7 @@ impl Theme {
             Theme::SolarizedDark => "solarized-dark",
             Theme::Eighties => "eighties",
             Theme::Mocha => "mocha",
+            Theme::MonokaiPro => "monokai-pro",
         }
     }
 
@@ -56,11 +60,13 @@ impl Theme {
             Theme::SolarizedDark => "Solarized Dark",
             Theme::Eighties => "Eighties",
             Theme::Mocha => "Mocha",
+            Theme::MonokaiPro => "Monokai Pro",
         }
     }
 
-    /// The syntect built-in this theme draws its palette from. `None` for
-    /// System, which uses the light/dark pair the media query selects.
+    /// The syntect palette this theme draws from -- a built-in, or one of
+    /// MDView's bundled tmThemes. `None` for System, which uses the
+    /// light/dark pair the media query selects.
     pub fn syntect_name(&self) -> Option<&'static str> {
         match self {
             Theme::System => None,
@@ -70,6 +76,8 @@ impl Theme {
             Theme::SolarizedDark => Some("Solarized (dark)"),
             Theme::Eighties => Some("base16-eighties.dark"),
             Theme::Mocha => Some("base16-mocha.dark"),
+            // Not a syntect built-in; resolved from the bundled tmTheme.
+            Theme::MonokaiPro => Some("Monokai Pro"),
         }
     }
 
@@ -77,7 +85,9 @@ impl Theme {
         match self {
             Theme::System => None,
             Theme::GitHub | Theme::SolarizedLight | Theme::OceanLight => Some(false),
-            Theme::SolarizedDark | Theme::Eighties | Theme::Mocha => Some(true),
+            Theme::SolarizedDark | Theme::Eighties | Theme::Mocha | Theme::MonokaiPro => {
+                Some(true)
+            }
         }
     }
 }
@@ -124,21 +134,25 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_offers_system_plus_three_light_and_three_dark() {
+    fn the_picker_offers_system_plus_three_light_and_four_dark() {
         let all = Theme::all();
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 8);
         assert_eq!(all.iter().filter(|t| t.is_dark() == Some(false)).count(), 3);
-        assert_eq!(all.iter().filter(|t| t.is_dark() == Some(true)).count(), 3);
+        assert_eq!(all.iter().filter(|t| t.is_dark() == Some(true)).count(), 4);
     }
 
     #[test]
-    fn every_named_theme_resolves_to_a_real_syntect_palette() {
-        // A typo in a syntect theme name would otherwise surface as an
-        // unstyled page at runtime, with every test still green.
-        let set = syntect::highlighting::ThemeSet::load_defaults();
+    fn every_named_theme_resolves_to_a_real_palette() {
+        // A typo in a palette name would otherwise surface as an unstyled
+        // page at runtime, with every test still green. Resolve through the
+        // renderer's own path, not `ThemeSet::load_defaults` directly -- not
+        // every palette is a syntect built-in.
         for theme in Theme::all() {
             if let Some(name) = theme.syntect_name() {
-                assert!(set.themes.contains_key(name), "no syntect theme named {name}");
+                assert!(
+                    crate::highlight::palette_for(name).is_some(),
+                    "no palette named {name}"
+                );
             }
         }
     }

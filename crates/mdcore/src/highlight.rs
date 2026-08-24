@@ -1,4 +1,7 @@
-use syntect::highlighting::ThemeSet;
+use std::io::Cursor;
+use std::sync::OnceLock;
+
+use syntect::highlighting::{Theme, ThemeSet};
 use syntect::html::{css_for_theme_with_class_style, ClassStyle, ClassedHTMLGenerator};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
@@ -136,10 +139,44 @@ fn append_closures(target: &mut String, open_tags: &[String]) {
     }
 }
 
+/// syntect's built-in palettes. Parsing them costs a few milliseconds and
+/// `build_page` needs one per theme, so the set is parsed once per process.
+fn default_themes() -> &'static ThemeSet {
+    static DEFAULTS: OnceLock<ThemeSet> = OnceLock::new();
+    DEFAULTS.get_or_init(ThemeSet::load_defaults)
+}
+
+/// Palettes MDView ships itself, for themes syntect has no built-in for.
+/// A malformed asset yields an empty set rather than a panic; the tests below
+/// are what turn a broken tmTheme into a red build instead of an unstyled
+/// page at runtime.
+fn bundled_themes() -> &'static ThemeSet {
+    static BUNDLED: OnceLock<ThemeSet> = OnceLock::new();
+    BUNDLED.get_or_init(|| {
+        let mut set = ThemeSet::new();
+        for source in [crate::assets::MONOKAI_PRO_THEME] {
+            if let Ok(theme) = ThemeSet::load_from_reader(&mut Cursor::new(source)) {
+                // Keyed by the name the file declares, so an asset whose name
+                // drifts from `Theme::syntect_name` fails to resolve loudly.
+                set.themes.insert(theme.name.clone().unwrap_or_default(), theme);
+            }
+        }
+        set
+    })
+}
+
+/// Resolve a palette by name: syntect's defaults first, then MDView's own.
+fn theme_named(name: &str) -> Option<&'static Theme> {
+    default_themes()
+        .themes
+        .get(name)
+        .or_else(|| bundled_themes().themes.get(name))
+}
+
 /// CSS for the highlight classes, as `(light, dark)`. Both are emitted into
 /// every page; a `prefers-color-scheme` media query picks one at display time.
 pub fn theme_css() -> (String, String) {
-    let themes = ThemeSet::load_defaults();
+    let themes = default_themes();
     let light = css_for_theme_with_class_style(&themes.themes[LIGHT_THEME], CLASS_STYLE)
         .expect("bundled light theme must produce css");
     let dark = css_for_theme_with_class_style(&themes.themes[DARK_THEME], CLASS_STYLE)
@@ -150,8 +187,7 @@ pub fn theme_css() -> (String, String) {
 /// Class-based CSS for one syntect theme, plus its background and foreground
 /// so the page chrome can be derived from the same source.
 pub fn palette_for(name: &str) -> Option<(String, crate::chrome::Rgb, crate::chrome::Rgb)> {
-    let themes = ThemeSet::load_defaults();
-    let theme = themes.themes.get(name)?;
+    let theme = theme_named(name)?;
     let css = css_for_theme_with_class_style(theme, CLASS_STYLE).ok()?;
     let to_rgb = |c: syntect::highlighting::Color| crate::chrome::Rgb { r: c.r, g: c.g, b: c.b };
     Some((
@@ -235,6 +271,42 @@ mod tests {
     #[test]
     fn empty_markdown_has_no_diff_lines() {
         assert!(Highlighter::new().render_markdown_lines("").is_empty());
+    }
+
+    #[test]
+    fn the_bundled_tmtheme_parses_and_exposes_a_palette() {
+        // Without this, a malformed or renamed asset would ship as an
+        // unstyled page at runtime with the whole suite still green: the
+        // bundled set swallows a parse failure by staying empty.
+        let bundled = bundled_themes();
+        assert!(
+            bundled.themes.contains_key("Monokai Pro"),
+            "bundled tmTheme failed to parse or declares a different name; got {:?}",
+            bundled.themes.keys().collect::<Vec<_>>()
+        );
+
+        let (css, bg, fg) = palette_for("Monokai Pro").expect("bundled palette must resolve");
+        assert_eq!(bg, crate::chrome::Rgb { r: 0x2d, g: 0x2a, b: 0x2e });
+        assert_eq!(fg, crate::chrome::Rgb { r: 0xfc, g: 0xfc, b: 0xfa });
+        // A tmTheme with only bg/fg would satisfy the checks above while
+        // leaving code blocks background-swapped and otherwise uncoloured.
+        assert!(css.contains(".comment"), "comments must be coloured: {css}");
+        assert!(css.contains(".string"), "strings must be coloured: {css}");
+        assert!(css.contains(".keyword"), "keywords must be coloured: {css}");
+    }
+
+    #[test]
+    fn palette_for_still_resolves_a_syntect_builtin() {
+        // The bundled set is a fallback, not a replacement -- the defaults
+        // path has to keep working after it was introduced.
+        let (css, bg, fg) = palette_for("base16-mocha.dark").expect("built-in must still resolve");
+        assert!(!css.is_empty());
+        assert_ne!(bg, fg);
+    }
+
+    #[test]
+    fn an_unknown_palette_name_resolves_through_neither_set() {
+        assert!(palette_for("Tokyo Night").is_none());
     }
 
     #[test]

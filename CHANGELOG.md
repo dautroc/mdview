@@ -3,6 +3,17 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.6.0](https://github.com/dautroc/mdview/releases/tag/v0.6.0) — 2026-08-24
+
+### What’s new
+
+- **Monokai Pro theme:** a fourth dark appearance, sitting alongside the
+  existing seven in the theme picker. It previews on hover, persists across
+  launches like the others, and is selectable headlessly with
+  `--theme monokai-pro`. Its palette ships as a tmTheme embedded in the
+  binary rather than a syntect built-in, so the page background, window
+  chrome, and diff colours are still derived from the one palette.
+
 ## [v0.5.0](https://github.com/dautroc/mdview/releases/tag/v0.5.0) — 2026-08-22
 
 ### Fixes

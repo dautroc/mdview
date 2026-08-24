@@ -18,7 +18,7 @@ LaTeX math, and Mermaid diagrams.
 
 - **Outline** built from the document's headings, in a sidebar you can toggle.
 - **Bookmarks** for documents you come back to, kept across launches.
-- **Themes** — three light, three dark, or follow the system. Hovering a name
+- **Themes** — three light, four dark, or follow the system. Hovering a name
   in the picker previews it on the document; only a click keeps it.
 - **Click to zoom** an image or a Mermaid diagram to fill the window.
 - **Live reload.** Save in your editor and the view updates, holding your
