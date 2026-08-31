@@ -3,7 +3,7 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
-## Unreleased
+## [v0.8.0](https://github.com/dautroc/mdview/releases/tag/v0.8.0) — 2026-08-31
 
 ### What’s new
 
