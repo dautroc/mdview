@@ -102,16 +102,3 @@ offers once on first launch.
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |
 | ? | The list of all of them |
-
-Three modifier shortcuts survive, the ones whose muscle memory predates this
-app. Everything else would be a second binding to keep in sync with the first.
-
-| Key | |
-| --- | --- |
-| ⌘O | Open a file |
-| ⌘F | Find in this document |
-| ⌘R | Reload |
-
-The macOS standards are untouched — ⌘C, ⌘A, ⌘Q, ⌘W, ⌘M, ⌘H. The menu bar
-carries every command in full: View holds Theme, Outline, Bookmarks, Show Diff
-and Diff Layout, and Help holds the shortcut list.
