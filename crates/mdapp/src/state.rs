@@ -75,6 +75,23 @@ pub fn queue_sidebar_width_script(scripts: &mut Vec<String>, px: u32) {
     scripts.push(sidebar_width_script(px));
 }
 
+/// Scripts for the page's find bar. The page owns the search itself; the app
+/// only relays the standard macOS Find shortcuts into it. Each guards on the
+/// hook existing, because the error page has no init.js behind it.
+#[allow(dead_code)]
+pub fn open_find_script() -> &'static str {
+    "window.mdviewOpenFind && window.mdviewOpenFind();"
+}
+
+#[allow(dead_code)]
+pub fn find_step_script(forward: bool) -> &'static str {
+    if forward {
+        "window.mdviewFindNext && window.mdviewFindNext();"
+    } else {
+        "window.mdviewFindPrevious && window.mdviewFindPrevious();"
+    }
+}
+
 /// Put `path` at the front of `list`, promoting an existing entry rather than
 /// duplicating it, and truncate to `cap`.
 #[allow(dead_code)]
@@ -180,6 +197,23 @@ mod tests {
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn find_scripts_call_the_pages_own_hooks_and_are_guarded() {
+        assert!(open_find_script().contains("mdviewOpenFind"));
+        assert!(find_step_script(true).contains("mdviewFindNext"));
+        assert!(find_step_script(false).contains("mdviewFindPrevious"));
+        for script in [open_find_script(), find_step_script(true), find_step_script(false)] {
+            // The error page has no init.js behind it: an unguarded call would
+            // throw there on every press of the shortcut.
+            assert!(script.contains("&&"), "{script} must guard on the hook existing");
+        }
+    }
+
+    #[test]
+    fn find_next_and_previous_are_different_scripts() {
+        assert_ne!(find_step_script(true), find_step_script(false));
     }
 
     #[test]

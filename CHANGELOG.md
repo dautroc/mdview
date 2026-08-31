@@ -3,6 +3,17 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## Unreleased
+
+### What’s new
+
+- **Find in page:** ⌘F opens a find bar over the document, matching as you
+  type. Every match is highlighted, the current one is picked out in the
+  theme's accent colour, and ⌘G / ⇧⌘G (or return / shift-return in the field)
+  step through them with wraparound. Esc closes the bar and clears the
+  highlights. Search covers prose, tables, and code — including the diff view —
+  but not the interior of a rendered Mermaid diagram.
+
 ## [v0.7.0](https://github.com/dautroc/mdview/releases/tag/v0.7.0) — 2026-08-31
 
 ### What’s new

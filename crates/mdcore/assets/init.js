@@ -351,7 +351,256 @@
     // runs -- covering images -- even when mermaid itself failed.
     renderDiagrams().then(enhanceZoomables);
     renderSidebarBody();
+    refreshFind();
   };
+
+  // ---- Find in page --------------------------------------------------------
+  //
+  // Matches are wrapped in <mark> elements inside #mdview-content and unwrapped
+  // again on close, so a closed find bar leaves the document DOM exactly as it
+  // was. Live reload replaces #mdview-content wholesale, which throws the marks
+  // away with it -- mdviewRenderAll re-runs the search rather than trying to
+  // patch surviving marks back together.
+
+  // A cap, not a limit on what is findable: a one-character query over a large
+  // document would otherwise wrap tens of thousands of nodes for a count no one
+  // reads. Navigation still works over everything up to the cap.
+  var FIND_MATCH_LIMIT = 2000;
+  var findQuery = "";
+  var findMatches = [];
+  var findIndex = -1;
+
+  function findBarEl() { return document.getElementById("mdview-find"); }
+  function findInputEl() { return document.getElementById("mdview-find-input"); }
+
+  function findIsOpen() {
+    var bar = findBarEl();
+    return !!bar && !bar.hidden;
+  }
+
+  // Text worth searching: inside the document body only, and never inside an
+  // <svg> (a <mark> there renders nothing and corrupts a mermaid diagram) or
+  // inside KaTeX's hidden MathML copy, which repeats every formula's source and
+  // would count each match twice.
+  function collectFindTextNodes(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+        var el = node.parentNode;
+        while (el && el !== root) {
+          var tag = el.tagName ? el.tagName.toLowerCase() : "";
+          if (tag === "svg" || tag === "script" || tag === "style") {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (el.classList && el.classList.contains("katex-mathml")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          el = el.parentNode;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    var nodes = [];
+    var node;
+    while ((node = walker.nextNode())) nodes.push(node);
+    return nodes;
+  }
+
+  function clearFindHighlights() {
+    for (var i = 0; i < findMatches.length; i++) {
+      var mark = findMatches[i];
+      var parent = mark.parentNode;
+      if (!parent) continue;
+      parent.replaceChild(document.createTextNode(mark.textContent), mark);
+      // Re-join the split halves, or a later search would never see a match
+      // that straddles the seam left behind by this one.
+      parent.normalize();
+    }
+    findMatches = [];
+    findIndex = -1;
+  }
+
+  function highlightFindMatches(query) {
+    clearFindHighlights();
+    var content = document.getElementById("mdview-content");
+    if (!content || !query) return;
+    var needle = query.toLowerCase();
+    var nodes = collectFindTextNodes(content);
+    for (var i = 0; i < nodes.length && findMatches.length < FIND_MATCH_LIMIT; i++) {
+      var node = nodes[i];
+      var at = node.nodeValue.toLowerCase().indexOf(needle);
+      while (at >= 0 && findMatches.length < FIND_MATCH_LIMIT) {
+        // splitText leaves `hit` holding exactly the match and `node` holding
+        // the remainder, so the next indexOf runs against fresh offsets.
+        var hit = node.splitText(at);
+        node = hit.splitText(needle.length);
+        var mark = document.createElement("mark");
+        mark.className = "mdview-find-hit";
+        hit.parentNode.replaceChild(mark, hit);
+        mark.appendChild(hit);
+        findMatches.push(mark);
+        at = node.nodeValue.toLowerCase().indexOf(needle);
+      }
+    }
+  }
+
+  function updateFindCount() {
+    var label = document.getElementById("mdview-find-count");
+    var prev = document.getElementById("mdview-find-prev");
+    var next = document.getElementById("mdview-find-next");
+    var none = !findMatches.length;
+    if (prev) prev.disabled = none;
+    if (next) next.disabled = none;
+    if (!label) return;
+    if (!findQuery) {
+      label.textContent = "";
+    } else if (none) {
+      label.textContent = "No results";
+    } else {
+      label.textContent =
+        findIndex + 1 + " of " + findMatches.length +
+        (findMatches.length >= FIND_MATCH_LIMIT ? "+" : "");
+    }
+  }
+
+  function setFindIndex(next) {
+    if (!findMatches.length) {
+      findIndex = -1;
+      updateFindCount();
+      return;
+    }
+    var count = findMatches.length;
+    // Wrap in both directions: (-1 % n) is -1 in JS, not n - 1.
+    findIndex = ((next % count) + count) % count;
+    for (var i = 0; i < count; i++) {
+      if (i === findIndex) findMatches[i].classList.add("is-current");
+      else findMatches[i].classList.remove("is-current");
+    }
+    var current = findMatches[findIndex];
+    if (current.scrollIntoView) {
+      current.scrollIntoView({ block: "center", inline: "nearest" });
+    }
+    updateFindCount();
+  }
+
+  // `keepPosition` holds the user's place across a live reload; a fresh query
+  // always starts at the first match.
+  function runFind(query, keepPosition) {
+    var previous = findIndex;
+    findQuery = query || "";
+    highlightFindMatches(findQuery);
+    if (!findMatches.length) {
+      findIndex = -1;
+      updateFindCount();
+      return;
+    }
+    setFindIndex(keepPosition && previous >= 0 ? previous : 0);
+  }
+
+  function stepFind(delta) {
+    if (!findQuery) {
+      window.mdviewOpenFind();
+      return;
+    }
+    // ⌘G after the bar was closed re-runs the last query rather than doing
+    // nothing: the marks are gone, but the query is still what the user wants.
+    if (!findMatches.length) {
+      runFind(findQuery);
+      return;
+    }
+    setFindIndex(findIndex + delta);
+  }
+
+  window.mdviewOpenFind = function () {
+    var bar = findBarEl();
+    var input = findInputEl();
+    if (!bar || !input) return;
+    // Seed from the document selection, the way Find does across macOS. A
+    // selection inside the bar itself is the user's own query, not a seed.
+    var selection = "";
+    try {
+      selection = String(window.getSelection() || "").trim();
+    } catch (err) {
+      /* no selection API: fall through with the previous query */
+    }
+    if (selection && selection.length <= 200 && !bar.contains(document.activeElement)) {
+      input.value = selection;
+    }
+    bar.hidden = false;
+    input.focus();
+    input.select();
+    if (input.value !== findQuery || !findMatches.length) runFind(input.value);
+    else updateFindCount();
+  };
+
+  window.mdviewCloseFind = function () {
+    var bar = findBarEl();
+    if (!bar) return;
+    bar.hidden = true;
+    clearFindHighlights();
+    findQuery = "";
+    updateFindCount();
+    // Hand the keyboard back to the document, or the next arrow key would
+    // still be editing a field the user can no longer see.
+    var input = findInputEl();
+    if (input) input.blur();
+  };
+
+  window.mdviewFindNext = function () { stepFind(1); };
+  window.mdviewFindPrevious = function () { stepFind(-1); };
+
+  // Called after every body swap: the marks went out with the old innerHTML.
+  function refreshFind() {
+    if (!findIsOpen() || !findQuery) return;
+    findMatches = [];
+    runFind(findQuery, true);
+  }
+
+  function attachFindListeners() {
+    var input = findInputEl();
+    if (input) {
+      input.addEventListener("input", function () {
+        runFind(input.value);
+      });
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          stepFind(event.shiftKey ? -1 : 1);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          window.mdviewCloseFind();
+        }
+      });
+    }
+    var prev = document.getElementById("mdview-find-prev");
+    if (prev) prev.addEventListener("click", function () { stepFind(-1); });
+    var next = document.getElementById("mdview-find-next");
+    if (next) next.addEventListener("click", function () { stepFind(1); });
+    var close = document.getElementById("mdview-find-close");
+    if (close) close.addEventListener("click", function () { window.mdviewCloseFind(); });
+
+    // In the app the Edit > Find menu items own these shortcuts and AppKit
+    // never lets them reach the page. This is what makes find work in a plain
+    // browser, where `--print-html` output is opened with no menu bar at all.
+    document.addEventListener("keydown", function (event) {
+      if (!event.metaKey || event.ctrlKey || event.altKey) {
+        // Escape closes the bar, but not while the lightbox is open -- that
+        // overlay is on top and owns the key.
+        if (event.key === "Escape" && findIsOpen() && !zoomState) {
+          window.mdviewCloseFind();
+        }
+        return;
+      }
+      var key = (event.key || "").toLowerCase();
+      if (key === "f") {
+        event.preventDefault();
+        window.mdviewOpenFind();
+      } else if (key === "g") {
+        event.preventDefault();
+        stepFind(event.shiftKey ? -1 : 1);
+      }
+    });
+  }
 
   // ---- Sidebar state management -------------------------------------------
 
@@ -762,6 +1011,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     attachSidebarListeners();
     attachOptionsListeners();
+    attachFindListeners();
     window.mdviewRenderAll();
   });
 })();

@@ -21,6 +21,8 @@ LaTeX math, and Mermaid diagrams.
 - **Bookmarks** for documents you come back to, kept across launches.
 - **Themes** — three light, four dark, or follow the system. Hovering a name
   in the picker previews it on the document; only a click keeps it.
+- **Find in page** with ⌘F: every match is highlighted as you type, ⌘G and
+  ⇧⌘G step through them, and esc clears the highlights.
 - **Click to zoom** an image or a Mermaid diagram to fill the window.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
@@ -71,6 +73,8 @@ icon, or press ⌘O.
 | --- | --- |
 | ⌘O | Open a file |
 | ⌘R | Reload |
+| ⌘F | Find in this document |
+| ⌘G / ⇧⌘G | Next / previous match |
 | ⌥⌘S | Toggle the sidebar |
 | ⌥⌘F | Toggle fullwidth view |
 | ⌥⌘D | Toggle Git diff view |

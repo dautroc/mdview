@@ -11,6 +11,9 @@ const FULL_WIDTH_TITLE: &str = "Full Width";
 const FULL_WIDTH_KEY_EQUIVALENT: &str = "f";
 const DIFF_TITLE: &str = "Show Diff";
 const DIFF_KEY_EQUIVALENT: &str = "d";
+const FIND_TITLE: &str = "Find…";
+const FIND_KEY_EQUIVALENT: &str = "f";
+const FIND_NEXT_KEY_EQUIVALENT: &str = "g";
 
 pub(crate) fn full_width_menu_state(enabled: bool) -> NSControlStateValue {
     if enabled {
@@ -47,6 +50,12 @@ pub(crate) fn set_diff_layout_states(sender: &NSMenuItem, layout: mdcore::DiffLa
 
 fn full_width_modifier_mask() -> NSEventModifierFlags {
     NSEventModifierFlags::Command | NSEventModifierFlags::Option
+}
+
+/// ⇧⌘G. The shift is set on the mask rather than by giving the item an
+/// uppercase "G", so the item and Find Next differ only in their modifiers.
+fn find_previous_modifier_mask() -> NSEventModifierFlags {
+    NSEventModifierFlags::Command | NSEventModifierFlags::Shift
 }
 
 /// Build one menu item. `key` is the command-key equivalent ("" for none).
@@ -113,6 +122,29 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     let (edit_holder, edit_menu) = submenu(mtm, "Edit");
     edit_menu.addItem(&item(mtm, "Copy", sel!(copy:), "c"));
     edit_menu.addItem(&item(mtm, "Select All", sel!(selectAll:), "a"));
+    edit_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    // Find lives in its own submenu, where macOS puts it, and carries the
+    // shortcuts users press without looking: ⌘F, ⌘G, ⇧⌘G. The selectors are
+    // MDView's own rather than AppKit's `performFindPanelAction:` — that one
+    // drives NSTextFinder, which a WKWebView does not have; the search itself
+    // lives in the page.
+    let (find_holder, find_menu) = submenu(mtm, "Find");
+    find_menu.addItem(&item(mtm, FIND_TITLE, sel!(findInPage:), FIND_KEY_EQUIVALENT));
+    find_menu.addItem(&item(
+        mtm,
+        "Find Next",
+        sel!(findNextMatch:),
+        FIND_NEXT_KEY_EQUIVALENT,
+    ));
+    let find_previous = item(
+        mtm,
+        "Find Previous",
+        sel!(findPreviousMatch:),
+        FIND_NEXT_KEY_EQUIVALENT,
+    );
+    find_previous.setKeyEquivalentModifierMask(find_previous_modifier_mask());
+    find_menu.addItem(&find_previous);
+    edit_menu.addItem(&find_holder);
     menubar.addItem(&edit_holder);
 
     let (view_holder, view_menu) = submenu(mtm, "View");
@@ -203,6 +235,26 @@ mod tests {
     fn diff_menu_contract_uses_option_command_d() {
         assert_eq!(DIFF_TITLE, "Show Diff");
         assert_eq!(DIFF_KEY_EQUIVALENT, "d");
+    }
+
+    #[test]
+    fn find_menu_contract_uses_the_standard_find_shortcuts() {
+        assert_eq!(FIND_TITLE, "Find…");
+        assert_eq!(FIND_KEY_EQUIVALENT, "f");
+        assert_eq!(FIND_NEXT_KEY_EQUIVALENT, "g");
+        assert_eq!(
+            find_previous_modifier_mask(),
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+        );
+    }
+
+    /// ⌘F is Find; Full Width has to stay on ⌥⌘F or the two collide and only
+    /// one of them ever fires.
+    #[test]
+    fn find_and_full_width_do_not_share_a_shortcut() {
+        assert_eq!(FIND_KEY_EQUIVALENT, FULL_WIDTH_KEY_EQUIVALENT);
+        assert_ne!(full_width_modifier_mask(), NSEventModifierFlags::Command);
+        assert_ne!(full_width_modifier_mask(), find_previous_modifier_mask());
     }
 
     #[test]

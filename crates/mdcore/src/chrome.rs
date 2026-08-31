@@ -78,6 +78,10 @@ pub struct ChromeTokens {
     pub diff_del_fg: Rgb,
     pub diff_hunk_bg: Rgb,
     pub diff_hunk_fg: Rgb,
+    pub find_hit_bg: Rgb,
+    pub find_hit_fg: Rgb,
+    pub find_current_bg: Rgb,
+    pub find_current_fg: Rgb,
 }
 
 /// Derive every chrome token from a theme's background and foreground.
@@ -110,6 +114,12 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
     } else {
         Rgb { r: 0x09, g: 0x69, b: 0xda }
     };
+    // Find highlights are two surfaces, not one: every match is tinted with
+    // the warn hue, and the match the user is standing on takes the accent, so
+    // "which one am I on" is a hue change rather than a brightness change that
+    // a busy page can swallow.
+    let find_hit_bg = mix(bg, warn, if dark { 0.20 } else { 0.30 });
+    let find_current_bg = mix(bg, accent, if dark { 0.24 } else { 0.34 });
     let diff_add_bg = mix(bg, add, 0.18);
     let diff_del_bg = mix(bg, delete, 0.18);
     let diff_hunk_bg = mix(bg, hunk, 0.12);
@@ -133,6 +143,10 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         diff_del_fg: mix_to_contrast(diff_del_bg, fg, diff_del_bg, 4.5),
         diff_hunk_bg,
         diff_hunk_fg: mix_to_contrast(diff_hunk_bg, fg, diff_hunk_bg, 4.5),
+        find_hit_bg,
+        find_hit_fg: mix_to_contrast(find_hit_bg, fg, find_hit_bg, 4.5),
+        find_current_bg,
+        find_current_fg: mix_to_contrast(find_current_bg, fg, find_current_bg, 4.5),
     }
 }
 
@@ -142,7 +156,8 @@ impl ChromeTokens {
             "--bg:{};--fg:{};--muted:{};--border:{};--code-bg:{};--link:{};\
 --banner-bg:{};--banner-fg:{};--banner-border:{};\
 --diff-add-bg:{};--diff-add-fg:{};--diff-del-bg:{};--diff-del-fg:{};\
---diff-hunk-bg:{};--diff-hunk-fg:{};",
+--diff-hunk-bg:{};--diff-hunk-fg:{};\
+--find-hit-bg:{};--find-hit-fg:{};--find-current-bg:{};--find-current-fg:{};",
             self.bg.hex(),
             self.fg.hex(),
             self.muted.hex(),
@@ -158,6 +173,10 @@ impl ChromeTokens {
             self.diff_del_fg.hex(),
             self.diff_hunk_bg.hex(),
             self.diff_hunk_fg.hex(),
+            self.find_hit_bg.hex(),
+            self.find_hit_fg.hex(),
+            self.find_current_bg.hex(),
+            self.find_current_fg.hex(),
         )
     }
 }
@@ -215,6 +234,8 @@ mod tests {
             "--banner-bg", "--banner-fg", "--banner-border",
             "--diff-add-bg", "--diff-add-fg", "--diff-del-bg", "--diff-del-fg",
             "--diff-hunk-bg", "--diff-hunk-fg",
+            "--find-hit-bg", "--find-hit-fg",
+            "--find-current-bg", "--find-current-fg",
         ] {
             assert!(css.contains(name), "missing {name}");
         }
@@ -235,6 +256,21 @@ mod tests {
             assert!(contrast(t.diff_add_fg, t.diff_add_bg) >= 4.5);
             assert!(contrast(t.diff_del_fg, t.diff_del_bg) >= 4.5);
             assert!(contrast(t.diff_hunk_fg, t.diff_hunk_bg) >= 4.5);
+        }
+    }
+
+    #[test]
+    fn find_highlights_are_readable_and_distinct_from_each_other() {
+        for (bg, fg, dark) in [(LIGHT_BG, LIGHT_FG, false), (DARK_BG, DARK_FG, true)] {
+            let t = tokens(bg, fg, dark);
+            assert!(contrast(t.find_hit_fg, t.find_hit_bg) >= 4.5);
+            assert!(contrast(t.find_current_fg, t.find_current_bg) >= 4.5);
+            // The current match has to be tellable from the other matches, or
+            // stepping through them shows no movement.
+            assert_ne!(t.find_hit_bg, t.find_current_bg);
+            // Both have to be tellable from the page itself.
+            assert_ne!(t.find_hit_bg, t.bg);
+            assert_ne!(t.find_current_bg, t.bg);
         }
     }
 }

@@ -211,6 +211,21 @@ define_class!(
             }
         }
 
+        #[unsafe(method(findInPage:))]
+        fn find_in_page_action(&self, _sender: Option<&NSObject>) {
+            self.run_find_script(crate::state::open_find_script());
+        }
+
+        #[unsafe(method(findNextMatch:))]
+        fn find_next_action(&self, _sender: Option<&NSObject>) {
+            self.run_find_script(crate::state::find_step_script(true));
+        }
+
+        #[unsafe(method(findPreviousMatch:))]
+        fn find_previous_action(&self, _sender: Option<&NSObject>) {
+            self.run_find_script(crate::state::find_step_script(false));
+        }
+
         #[unsafe(method(toggleSidebar:))]
         fn toggle_sidebar_action(&self, _sender: Option<&NSObject>) {
             let current = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY).unwrap_or(true);
@@ -294,6 +309,18 @@ impl AppDelegate {
             window.set_full_width(enabled);
         }
         enabled
+    }
+
+    /// Drive the frontmost page's find bar. The web view is made first
+    /// responder first: the find field is inside the page, so a window whose
+    /// keyboard focus sits anywhere else would show the bar and then send the
+    /// user's typing somewhere they cannot see.
+    fn run_find_script(&self, script: &str) {
+        let Some(window) = self.frontmost_window() else { return };
+        window
+            .window
+            .makeFirstResponder(Some(&window.webview));
+        window.eval_script(script);
     }
 
     fn set_diff_layout(&self, layout: mdcore::DiffLayout, sender: Option<&NSMenuItem>) {

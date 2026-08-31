@@ -428,6 +428,78 @@ body.mdview-resizing #mdview-sidebar-resizer {
 #mdview-sidebar-toggle:hover { background: var(--border); }
 #mdview-sidebar-toggle svg { display: block; }
 
+/* The find bar overlays the top-LEFT of the document area: the toolbar, the
+   sidebar toggle, and the sidebar itself all live on the right, so this is the
+   one corner it can occupy without ever colliding with them. */
+#mdview-find {
+  align-items: center;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .18);
+  display: flex;
+  gap: .25rem;
+  left: .75rem;
+  padding: .3rem;
+  position: fixed;
+  top: .55rem;
+  /* Above the toolbar (12), below #mdview-theme's open list (20). */
+  z-index: 13;
+}
+#mdview-find[hidden] { display: none; }
+#mdview-find-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  font: inherit;
+  font-size: .875rem;
+  min-width: 0;
+  padding: .2rem .4rem;
+  width: 14rem;
+}
+#mdview-find-input:focus { outline: 2px solid var(--link); outline-offset: -1px; }
+#mdview-find-count {
+  color: var(--muted);
+  font-size: .8125rem;
+  min-width: 5.5rem;
+  text-align: center;
+  white-space: nowrap;
+}
+#mdview-find button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--fg);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  justify-content: center;
+  line-height: 1;
+  min-height: 1.7rem;
+  min-width: 1.7rem;
+  padding: .2rem;
+}
+#mdview-find button:hover { background: var(--border); }
+#mdview-find button:disabled { cursor: default; opacity: .45; }
+
+/* Match highlights. Both surfaces carry their own foreground, because the
+   document's own colour (a link, a heading, a syntax token) is not readable on
+   an arbitrary tint. */
+.mdview-find-hit {
+  background: var(--find-hit-bg);
+  border-radius: 2px;
+  color: var(--find-hit-fg);
+}
+.mdview-find-hit.is-current {
+  background: var(--find-current-bg);
+  color: var(--find-current-fg);
+  /* Hue alone separates the current match from the rest on a palette whose
+     accent and warn colours sit at a similar lightness; the ring does not. */
+  box-shadow: 0 0 0 2px var(--find-current-fg);
+}
+
 #mdview-toolbar {
   align-items: center;
   display: flex;
@@ -494,6 +566,8 @@ body.mdview-resizing #mdview-sidebar-resizer {
 
 @media (max-width: 700px) {
   #mdview-toolbar { right: 3rem; }
+  #mdview-find-input { width: 8rem; }
+  #mdview-find-count { min-width: 0; }
   :root[data-sidebar-open="1"] #mdview-toolbar { right: calc(var(--sidebar-width, 260px) + 3rem); }
   #mdview-contextual-controls > button,
   .mdview-layout-choice,

@@ -203,6 +203,13 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 </div>
 </div>
 </div>
+<div id="mdview-find" role="search" hidden>
+<input type="text" id="mdview-find-input" placeholder="Find" aria-label="Find in document" autocomplete="off" autocorrect="off" spellcheck="false">
+<span id="mdview-find-count" role="status" aria-live="polite"></span>
+<button type="button" id="mdview-find-prev" aria-label="Previous match" title="Previous match (⇧⌘G)"><span aria-hidden="true">↑</span></button>
+<button type="button" id="mdview-find-next" aria-label="Next match" title="Next match (⌘G)"><span aria-hidden="true">↓</span></button>
+<button type="button" id="mdview-find-close" aria-label="Close find bar" title="Close find bar (esc)"><span aria-hidden="true">✕</span></button>
+</div>
 <div id="mdview-content">{body}</div>
 </main>
 <div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
@@ -284,6 +291,22 @@ mod tests {
         assert!(html.contains("id=\"mdview-options-toggle\""));
         assert!(html.contains("id=\"mdview-fullwidth-toggle\""));
         assert!(!html.contains("onclick="));
+    }
+
+    #[test]
+    fn page_emits_the_find_bar_hidden_with_its_controls() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        assert!(html.contains("id=\"mdview-find\" role=\"search\" hidden"));
+        assert!(html.contains("id=\"mdview-find-input\""));
+        assert!(html.contains("id=\"mdview-find-count\""));
+        assert!(html.contains("id=\"mdview-find-prev\""));
+        assert!(html.contains("id=\"mdview-find-next\""));
+        assert!(html.contains("id=\"mdview-find-close\""));
+        // The bar sits outside #mdview-content: a live reload replaces that
+        // div wholesale and would take the bar (and the field's focus) with it.
+        let bar = html.find("id=\"mdview-find\"").unwrap();
+        let content = html.find("id=\"mdview-content\"").unwrap();
+        assert!(bar < content);
     }
 
     #[test]
