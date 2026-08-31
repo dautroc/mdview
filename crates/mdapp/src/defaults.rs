@@ -16,6 +16,8 @@ pub const SIDEBAR_TAB_KEY: &str = "MDViewSidebarTab";
 pub const FULL_WIDTH_KEY: &str = "MDViewFullWidth";
 #[allow(dead_code)]
 pub const DIFF_LAYOUT_KEY: &str = "MDViewDiffLayout";
+#[allow(dead_code)]
+pub const SIDEBAR_WIDTH_KEY: &str = "MDViewSidebarWidth";
 
 fn defaults() -> objc2::rc::Retained<NSUserDefaults> {
     NSUserDefaults::standardUserDefaults()
@@ -70,4 +72,19 @@ pub fn get_bool_opt(key: &str) -> Option<bool> {
 pub fn set_bool(key: &str, value: bool) {
     let key = NSString::from_str(key);
     defaults().setBool_forKey(value, &key);
+}
+
+#[allow(dead_code)]
+pub fn get_int_opt(key: &str) -> Option<i64> {
+    let key = NSString::from_str(key);
+    let defaults = defaults();
+    defaults
+        .objectForKey(&key)
+        .map(|_| defaults.integerForKey(&key) as i64)
+}
+
+#[allow(dead_code)]
+pub fn set_int(key: &str, value: i64) {
+    let key = NSString::from_str(key);
+    defaults().setInteger_forKey(value as isize, &key);
 }

@@ -290,6 +290,12 @@ impl DocumentWindow {
                     mdcore::escape::js_string_literal(&sidebar_tab)
                 );
                 self.pending_scripts.borrow_mut().push(sidebar_script);
+                if let Some(raw) = crate::defaults::get_int_opt(crate::defaults::SIDEBAR_WIDTH_KEY) {
+                    let width = crate::state::resolve_sidebar_width(Some(raw));
+                    self.pending_scripts
+                        .borrow_mut()
+                        .push(crate::state::sidebar_width_script(width));
+                }
                 let full_width = crate::state::resolve_full_width(crate::defaults::get_bool_opt(
                     crate::defaults::FULL_WIDTH_KEY,
                 ));

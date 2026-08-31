@@ -16,7 +16,8 @@ LaTeX math, and Mermaid diagrams.
 
 ## What it does
 
-- **Outline** built from the document's headings, in a sidebar you can toggle.
+- **Outline** built from the document's headings, in a sidebar you can toggle
+  and drag to resize; the width is remembered across launches.
 - **Bookmarks** for documents you come back to, kept across launches.
 - **Themes** — three light, four dark, or follow the system. Hovering a name
   in the picker previews it on the document; only a click keeps it.

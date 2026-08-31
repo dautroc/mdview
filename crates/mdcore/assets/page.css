@@ -364,7 +364,7 @@ img { max-width: 100%; }
   /* There is no global border-box reset, so height:100vh plus the padding
      below would make this box taller than the viewport. */
   box-sizing: border-box;
-  flex: 0 0 260px;
+  flex: 0 0 var(--sidebar-width, 260px);
   height: 100vh;
   overflow-y: auto;
   position: sticky;
@@ -374,6 +374,38 @@ img { max-width: 100%; }
   padding-top: 0;
 }
 #mdview-sidebar[hidden] { display: none; }
+
+#mdview-sidebar-resizer {
+  align-self: stretch;
+  background: transparent;
+  border: 0;
+  cursor: col-resize;
+  flex: 0 0 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  padding: 0;
+  position: relative;
+  touch-action: none;
+  z-index: 5;
+}
+#mdview-sidebar-resizer[hidden] { display: none; }
+#mdview-sidebar-resizer:hover,
+#mdview-sidebar-resizer:focus-visible {
+  background: var(--border);
+  opacity: 0.6;
+}
+#mdview-sidebar-resizer:focus-visible {
+  outline: 2px solid var(--accent, var(--link));
+  outline-offset: 1px;
+}
+body.mdview-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.mdview-resizing #mdview-sidebar-resizer {
+  background: var(--border);
+  opacity: 0.6;
+}
 
 #mdview-sidebar-toggle {
   align-items: center;
@@ -405,7 +437,7 @@ img { max-width: 100%; }
   top: .55rem;
   z-index: 12;
 }
-:root[data-sidebar-open="1"] #mdview-toolbar { right: calc(260px + 3.25rem); }
+:root[data-sidebar-open="1"] #mdview-toolbar { right: calc(var(--sidebar-width, 260px) + 3.25rem); }
 #mdview-contextual-controls,
 #mdview-diff-layout-controls,
 #mdview-options { align-items: center; display: flex; gap: .2rem; }
@@ -462,7 +494,7 @@ img { max-width: 100%; }
 
 @media (max-width: 700px) {
   #mdview-toolbar { right: 3rem; }
-  :root[data-sidebar-open="1"] #mdview-toolbar { right: calc(260px + 3rem); }
+  :root[data-sidebar-open="1"] #mdview-toolbar { right: calc(var(--sidebar-width, 260px) + 3rem); }
   #mdview-contextual-controls > button,
   .mdview-layout-choice,
   #mdview-options-toggle { padding-left: .3rem; padding-right: .3rem; min-width: 1.8rem; }

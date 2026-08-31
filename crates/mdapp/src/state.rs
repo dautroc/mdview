@@ -43,6 +43,38 @@ pub fn queue_full_width_script(scripts: &mut Vec<String>, enabled: bool) {
     scripts.push(full_width_script(enabled).to_string());
 }
 
+pub const SIDEBAR_WIDTH_DEFAULT: u32 = 260;
+pub const SIDEBAR_WIDTH_MIN: u32 = 160;
+pub const SIDEBAR_WIDTH_MAX: u32 = 600;
+
+#[allow(dead_code)]
+pub fn clamp_sidebar_width(px: u32) -> u32 {
+    px.clamp(SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
+}
+
+#[allow(dead_code)]
+pub fn resolve_sidebar_width(stored: Option<i64>) -> u32 {
+    match stored {
+        Some(v) if v > 0 => clamp_sidebar_width(v as u32),
+        _ => SIDEBAR_WIDTH_DEFAULT,
+    }
+}
+
+#[allow(dead_code)]
+pub fn sidebar_width_script(px: u32) -> String {
+    format!(
+        "window.mdviewSetSidebarWidth && window.mdviewSetSidebarWidth({});",
+        clamp_sidebar_width(px)
+    )
+}
+
+#[allow(dead_code)]
+pub fn queue_sidebar_width_script(scripts: &mut Vec<String>, px: u32) {
+    let needle = "window.mdviewSetSidebarWidth";
+    scripts.retain(|s| !s.contains(needle));
+    scripts.push(sidebar_width_script(px));
+}
+
 /// Put `path` at the front of `list`, promoting an existing entry rather than
 /// duplicating it, and truncate to `cap`.
 #[allow(dead_code)]
@@ -84,6 +116,7 @@ pub enum Message {
     ToggleFullWidth,
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
+    SetSidebarWidth(u32),
 }
 
 /// Parse a bridge message. Returns `None` for anything unrecognised or
@@ -131,6 +164,10 @@ pub fn parse_message(raw: &str) -> Option<Message> {
                 open: open == "1",
                 tab: tab.to_string(),
             })
+        }
+        "setSidebarWidth" => {
+            let px = rest.parse::<u32>().ok()?;
+            Some(Message::SetSidebarWidth(px))
         }
         _ => None,
     }

@@ -560,6 +560,10 @@ impl AppDelegate {
                 crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);
                 crate::defaults::set_string(crate::defaults::SIDEBAR_TAB_KEY, &tab);
             }
+            Message::SetSidebarWidth(px) => {
+                let clamped = crate::state::clamp_sidebar_width(px);
+                crate::defaults::set_int(crate::defaults::SIDEBAR_WIDTH_KEY, clamped as i64);
+            }
         }
     }
 

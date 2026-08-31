@@ -205,6 +205,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 </div>
 <div id="mdview-content">{body}</div>
 </main>
+<div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
 <aside id="mdview-sidebar" hidden>
 <header class="mdview-sidebar-head">
 <nav class="mdview-tabs" role="tablist">

@@ -366,12 +366,36 @@
 
   var sidebarTab = "outline";
   var bookmarks = [];
+  var SIDEBAR_WIDTH_MIN = 160;
+  var SIDEBAR_WIDTH_MAX = 600;
+  var SIDEBAR_WIDTH_DEFAULT = 260;
+  var sidebarWidth = SIDEBAR_WIDTH_DEFAULT;
+  var sidebarResizeState = null;
+
+  function clampSidebarWidth(px) {
+    return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, px));
+  }
+
+  function applySidebarWidth(px) {
+    var w = clampSidebarWidth(px);
+    sidebarWidth = w;
+    document.documentElement.style.setProperty("--sidebar-width", w + "px");
+    return w;
+  }
+
+  window.mdviewSetSidebarWidth = function (px) {
+    var n = Number(px);
+    if (!isFinite(n)) return;
+    applySidebarWidth(n);
+  };
 
   function setSidebar(open, tab) {
     var sidebar = document.getElementById("mdview-sidebar");
     if (!sidebar) return;
     sidebarTab = tab || sidebarTab;
     sidebar.hidden = !open;
+    var resizer = document.getElementById("mdview-sidebar-resizer");
+    if (resizer) resizer.hidden = !open;
     document.documentElement.setAttribute("data-sidebar-open", open ? "1" : "0");
     var toggle = document.getElementById("mdview-sidebar-toggle");
     if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
@@ -384,6 +408,46 @@
     }
     renderSidebarBody();
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
+  }
+
+  function onSidebarResizerPointerDown(event) {
+    var sidebar = document.getElementById("mdview-sidebar");
+    var resizer = document.getElementById("mdview-sidebar-resizer");
+    if (!sidebar || !resizer || sidebar.hidden) return;
+    if (event.button != null && event.button !== 0) return;
+    event.preventDefault();
+    var rect = sidebar.getBoundingClientRect();
+    sidebarResizeState = {
+      startX: event.clientX,
+      startWidth: rect.width || sidebarWidth,
+    };
+    document.body.classList.add("mdview-resizing");
+    document.addEventListener("mousemove", onSidebarResizerPointerMove);
+    document.addEventListener("mouseup", onSidebarResizerPointerUp);
+    document.addEventListener("pointermove", onSidebarResizerPointerMove);
+    document.addEventListener("pointerup", onSidebarResizerPointerUp);
+  }
+
+  function onSidebarResizerPointerMove(event) {
+    if (!sidebarResizeState) return;
+    var dx = sidebarResizeState.startX - event.clientX;
+    var next = clampSidebarWidth(sidebarResizeState.startWidth + dx);
+    document.documentElement.style.setProperty("--sidebar-width", next + "px");
+    sidebarWidth = next;
+  }
+
+  function onSidebarResizerPointerUp(event) {
+    if (!sidebarResizeState) return;
+    var dx = sidebarResizeState.startX - event.clientX;
+    var next = clampSidebarWidth(sidebarResizeState.startWidth + dx);
+    document.removeEventListener("mousemove", onSidebarResizerPointerMove);
+    document.removeEventListener("mouseup", onSidebarResizerPointerUp);
+    document.removeEventListener("pointermove", onSidebarResizerPointerMove);
+    document.removeEventListener("pointerup", onSidebarResizerPointerUp);
+    document.body.classList.remove("mdview-resizing");
+    sidebarResizeState = null;
+    applySidebarWidth(next);
+    postToHost("setSidebarWidth:" + next);
   }
 
   window.mdviewSetBookmarks = function (items, starred) {
@@ -618,6 +682,22 @@
   }
 
   function attachSidebarListeners() {
+    var resizerEl = document.getElementById("mdview-sidebar-resizer");
+    if (resizerEl) {
+      resizerEl.addEventListener("mousedown", onSidebarResizerPointerDown);
+      resizerEl.addEventListener("pointerdown", onSidebarResizerPointerDown);
+      resizerEl.addEventListener("keydown", function (event) {
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          var step = event.key === "ArrowLeft" ? 20 : -20;
+          var next = clampSidebarWidth(sidebarWidth + step);
+          applySidebarWidth(next);
+          postToHost("setSidebarWidth:" + next);
+        }
+      });
+      if (!resizerEl.hasAttribute("tabindex")) resizerEl.setAttribute("tabindex", "0");
+    }
+
     var toggle = document.getElementById("mdview-sidebar-toggle");
     if (toggle) {
       toggle.addEventListener("click", function () {
