@@ -3,6 +3,16 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.7.0](https://github.com/dautroc/mdview/releases/tag/v0.7.0) — 2026-08-31
+
+### What’s new
+
+- **Resizable sidebar:** drag the divider between the document and the sidebar
+  to set its width, or focus the divider and nudge it with the arrow keys. The
+  width is clamped to 160–600px, remembered across launches, and re-applied on
+  navigation and live reload. The toolbar keeps clear of the sidebar at any
+  width.
+
 ## [v0.6.0](https://github.com/dautroc/mdview/releases/tag/v0.6.0) — 2026-08-24
 
 ### What’s new
