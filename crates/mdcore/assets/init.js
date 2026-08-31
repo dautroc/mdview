@@ -1062,6 +1062,24 @@
     if (sidebar) setSidebar(sidebar.hidden, sidebarTab);
   }
 
+  // o and B name a tab rather than toggling blindly: pressing o while the
+  // panel is showing bookmarks switches to the outline, and only a second
+  // press -- when the outline is already what you are looking at -- closes it.
+  function showSidebarTab(tab) {
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (!sidebar) return;
+    setSidebar(!(!sidebar.hidden && sidebarTab === tab), tab);
+  }
+
+  function toggleDiffKey() {
+    // Same condition the toolbar's own button is disabled under: a file with
+    // no Git diff to show has nothing to toggle to. Leaving Diff is always
+    // allowed, or an unavailable diff would be a one-way door.
+    var inDiff = document.documentElement.getAttribute("data-view") === "diff";
+    if (!inDiff && !window.mdviewDiffAvailable) return;
+    postToHost("toggleDiff");
+  }
+
   function toggleFullWidthKey() {
     // Outside the app there is no host to round-trip through, so flip the
     // attribute directly; the options menu follows it via its observer.
@@ -1180,10 +1198,19 @@
       ],
     },
     {
-      title: "View",
+      title: "Sidebar",
       items: [
         { keys: ["s"], hint: "s", label: "Toggle the sidebar", run: toggleSidebarKey },
+        { keys: ["o"], hint: "o", label: "Outline", run: function () { showSidebarTab("outline"); } },
+        { keys: ["B"], hint: "B", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
+        { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["t"], hint: "t", label: "Theme picker", run: toggleThemePicker },
+      ],
+    },
+    {
+      title: "View",
+      items: [
+        { keys: ["D"], hint: "D", label: "Diff and back to Markdown", run: toggleDiffKey },
         { keys: ["w"], hint: "w", label: "Toggle full width", run: toggleFullWidthKey },
         { keys: ["r"], hint: "r", label: "Reload the document", run: reloadKey },
         { keys: ["+", "="], hint: "+", label: "Zoom in", run: function () { postToHost("zoomIn"); } },

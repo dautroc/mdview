@@ -99,7 +99,10 @@ read-only viewer is expecting your typing. Press **?** for the full list.
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
 | s | Toggle the sidebar |
+| o / B | Outline / bookmarks in the sidebar |
+| m | Bookmark this document |
 | t | Theme picker |
+| D | Diff, and back to Markdown |
 | w | Toggle fullwidth view |
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |
