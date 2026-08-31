@@ -91,7 +91,7 @@ read-only viewer is expecting your typing. Press **?** for the full list.
 | --- | --- |
 | j / k | Down / up a line |
 | d / u | Half a page down / up |
-| f / b, space | A page down / up |
+| space / ⇧space | A page down / up |
 | gg / G | Top / bottom of the document |
 | ] / [ | Next / previous heading |
 | } / { | Next / previous top-level heading |
@@ -100,7 +100,7 @@ read-only viewer is expecting your typing. Press **?** for the full list.
 | n / N | Next / previous match (enter / ⇧enter too) |
 | s | Toggle the sidebar |
 | o / B | Outline / bookmarks in the sidebar |
-| m | Bookmark this document |
+| b | Bookmark this document |
 | t | Theme picker |
 | D | Diff, and back to Markdown |
 | w | Toggle fullwidth view |

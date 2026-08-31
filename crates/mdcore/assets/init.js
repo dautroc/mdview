@@ -1172,8 +1172,8 @@
         { keys: ["k"], hint: "k", label: "Up a line", run: function () { scrollLines(-SCROLL_LINE); } },
         { keys: ["d"], hint: "d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
         { keys: ["u"], hint: "u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
-        { keys: ["f", " "], hint: "f  space", label: "A page down", run: function () { scrollLines(pageStep()); } },
-        { keys: ["b"], hint: "b  ⇧space", label: "A page up", run: function () { scrollLines(-pageStep()); } },
+        { keys: [" "], hint: "space", label: "A page down", run: function () { scrollLines(pageStep()); } },
+        { keys: ["Shift+Space"], hint: "⇧space", label: "A page up", run: function () { scrollLines(-pageStep()); } },
         { keys: [], hint: "g g", label: "Top of the document", run: null },
         { keys: ["G"], hint: "G", label: "Bottom of the document", run: function () { scrollToY(maxScrollY()); } },
       ],
@@ -1203,7 +1203,7 @@
         { keys: ["s"], hint: "s", label: "Toggle the sidebar", run: toggleSidebarKey },
         { keys: ["o"], hint: "o", label: "Outline", run: function () { showSidebarTab("outline"); } },
         { keys: ["B"], hint: "B", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
-        { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
+        { keys: ["b"], hint: "b", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["t"], hint: "t", label: "Theme picker", run: toggleThemePicker },
       ],
     },
@@ -1382,8 +1382,10 @@
 
     var key = event.key;
     // ⇧space pages back, the way it does in every pager, and ⇧enter steps the
-    // search back. Both arrive under the unshifted key with shiftKey set.
-    if (key === " " && event.shiftKey) key = "b";
+    // search back. Both arrive under the unshifted key with shiftKey set, so
+    // the shift is read here. "Shift+Space" is a name no event.key can take,
+    // which is what keeps it clear of b -- the bookmark key.
+    if (key === " " && event.shiftKey) key = "Shift+Space";
     if (key === "Enter" && event.shiftKey) key = "N";
 
     if (key === "g") {
