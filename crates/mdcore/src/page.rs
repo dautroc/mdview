@@ -459,7 +459,7 @@ mod tests {
             "\"j\"", "\"k\"", "\"d\"", "\"u\"", "\" \"", "\"Shift+Space\"", "\"G\"",
             "\"]\"", "\"[\"", "\"}\"", "\"{\"",
             "\"/\"", "\"n\"", "\"N\"",
-            "\"s\"", "\"o\"", "\"B\"", "\"b\"", "\"t\"",
+            "\"s\"", "\"o\"", "\"b\"", "\"m\"", "\"t\"",
             "\"D\"", "\"w\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
         ] {
             let needle = format!("keys: [{}", key);
@@ -472,7 +472,7 @@ mod tests {
         // "gg" is a chord, so it is dispatched by hand rather than from the
         // table; it still has to be documented there.
         assert!(assets::INIT_JS.contains("hint: \"g g\""));
-        // b bookmarks the document, so it must not also be paging: the two
+        // b opens the bookmarks list, so it must not also be paging: the two
         // would fight and only whichever the table lists last would run.
         assert!(
             !assets::INIT_JS.contains("keys: [\"f\""),

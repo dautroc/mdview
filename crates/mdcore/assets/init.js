@@ -1202,8 +1202,8 @@
       items: [
         { keys: ["s"], hint: "s", label: "Toggle the sidebar", run: toggleSidebarKey },
         { keys: ["o"], hint: "o", label: "Outline", run: function () { showSidebarTab("outline"); } },
-        { keys: ["B"], hint: "B", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
-        { keys: ["b"], hint: "b", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
+        { keys: ["b"], hint: "b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
+        { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["t"], hint: "t", label: "Theme picker", run: toggleThemePicker },
       ],
     },
@@ -1384,7 +1384,7 @@
     // ⇧space pages back, the way it does in every pager, and ⇧enter steps the
     // search back. Both arrive under the unshifted key with shiftKey set, so
     // the shift is read here. "Shift+Space" is a name no event.key can take,
-    // which is what keeps it clear of b -- the bookmark key.
+    // which is what keeps it clear of b -- the bookmarks key.
     if (key === " " && event.shiftKey) key = "Shift+Space";
     if (key === "Enter" && event.shiftKey) key = "N";
 
