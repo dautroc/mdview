@@ -443,6 +443,37 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_shortcuts_are_embedded_in_the_page() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        assert!(html.contains("#mdview-shortcuts"), "cheat sheet CSS missing");
+        assert!(html.contains("mdviewToggleShortcuts"), "cheat sheet hook missing");
+        assert!(html.contains("onDocumentKeyDown"), "key dispatcher missing");
+    }
+
+    /// Every binding lives in init.js's one SHORTCUTS table, which feeds both
+    /// the dispatcher and the `?` sheet. Losing an entry silently drops the
+    /// key AND its documentation, with nothing else to notice.
+    #[test]
+    fn every_advertised_single_key_binding_is_still_bound() {
+        for key in [
+            "\"j\"", "\"k\"", "\"d\"", "\"u\"", "\"f\"", "\" \"", "\"b\"", "\"G\"",
+            "\"]\"", "\"[\"", "\"}\"", "\"{\"",
+            "\"/\"", "\"n\"", "\"N\"",
+            "\"s\"", "\"t\"", "\"w\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
+        ] {
+            let needle = format!("keys: [{}", key);
+            let alt = format!(", {}]", key);
+            assert!(
+                assets::INIT_JS.contains(&needle) || assets::INIT_JS.contains(&alt),
+                "no binding for {key} in the SHORTCUTS table"
+            );
+        }
+        // "gg" is a chord, so it is dispatched by hand rather than from the
+        // table; it still has to be documented there.
+        assert!(assets::INIT_JS.contains("hint: \"g g\""));
+    }
+
+    #[test]
     fn system_pins_no_theme_and_keeps_the_media_query() {
         let html = build_page(&doc(), "", Theme::System);
         assert!(!html.contains("<html data-theme="), "System must not pin a theme");

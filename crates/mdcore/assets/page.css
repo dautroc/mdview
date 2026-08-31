@@ -659,3 +659,97 @@ body.mdview-resizing #mdview-sidebar-resizer {
 #mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
 #mdview-sidebar-body a:hover { color: var(--link); }
 .mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }
+
+/* The ? cheat sheet. Above the lightbox's own z-index is deliberate: the two
+   are never open together, but if a stale state ever let them be, the sheet
+   is the one the user is trying to read. */
+#mdview-shortcuts {
+  align-items: center;
+  background: rgba(0, 0, 0, .6);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1100;
+}
+#mdview-shortcuts[hidden] { display: none; }
+.mdview-shortcuts-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 35%);
+  color: var(--fg);
+  max-height: 84vh;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.5rem;
+  /* A width, not a max-width: the panel has to be wide enough to hold two
+     columns of groups, and a content-sized box collapses to one. */
+  width: min(48rem, 92vw);
+}
+.mdview-shortcuts-panel header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: .75rem;
+}
+.mdview-shortcuts-panel h2 { border: 0; font-size: 1.05rem; margin: 0; padding: 0; }
+.mdview-shortcuts-close {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  height: 28px;
+  line-height: 1;
+  width: 28px;
+}
+.mdview-shortcuts-close:hover { border-color: var(--border); color: var(--fg); }
+/* Multi-column rather than a grid, so the groups FLOW: a grid puts them on a
+   fixed row each, and one short group beside a long one leaves a hole that
+   pushes the last group off the bottom. Columns pack them and drop to one
+   when the window is too narrow for two. */
+.mdview-shortcuts-groups {
+  column-gap: 2rem;
+  columns: 15rem 2;
+}
+.mdview-shortcuts-groups section {
+  -webkit-column-break-inside: avoid;
+  break-inside: avoid;
+}
+.mdview-shortcuts-groups h3 {
+  border: 0;
+  color: var(--muted);
+  font-size: .75rem;
+  letter-spacing: .04em;
+  margin: .75rem 0 .35rem;
+  padding: 0;
+  text-transform: uppercase;
+}
+/* A fixed keys column rather than max-content: each group is its own grid, so
+   sizing to content would give every group a different column width and the
+   labels would step in and out down the sheet. 6.5rem clears the widest hint
+   ("b  ⇧space"). */
+.mdview-shortcuts-groups dl {
+  align-items: baseline;
+  display: grid;
+  gap: .3rem .5rem;
+  grid-template-columns: 6.5rem 1fr;
+  margin: 0;
+}
+.mdview-shortcuts-groups dt { display: flex; gap: .25rem; margin: 0; }
+.mdview-shortcuts-groups dd { color: var(--fg); font-size: .875rem; margin: 0; }
+.mdview-shortcuts-groups kbd {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .8125rem;
+  line-height: 1.4;
+  padding: .05rem .35rem;
+  white-space: nowrap;
+}

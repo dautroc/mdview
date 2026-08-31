@@ -185,45 +185,46 @@ define_class!(
 
         #[unsafe(method(reloadDocument:))]
         fn reload_document_action(&self, _sender: Option<&NSObject>) {
-            if let Some(window) = self.frontmost_window() {
-                window.reload(&self.ivars().highlighter);
-                // Same hazard as the theme-change reload: the fresh page's
-                // star and bookmark list start empty, so a bookmarked
-                // document would read as unbookmarked until this runs.
-                self.push_bookmarks_to_pages();
-            }
+            // The reload itself carries the same hazard as the theme-change
+            // reload -- the fresh page's star and bookmark list start empty,
+            // so a bookmarked document would read as unbookmarked until they
+            // are pushed again. `handle_message` does both.
+            self.handle_message(crate::state::Message::ReloadDocument);
         }
 
         #[unsafe(method(zoomIn:))]
         fn zoom_in_action(&self, _sender: Option<&NSObject>) {
-            self.adjust_zoom(1.1);
+            self.handle_message(crate::state::Message::ZoomIn);
         }
 
         #[unsafe(method(zoomOut:))]
         fn zoom_out_action(&self, _sender: Option<&NSObject>) {
-            self.adjust_zoom(1.0 / 1.1);
+            self.handle_message(crate::state::Message::ZoomOut);
         }
 
         #[unsafe(method(zoomActual:))]
         fn zoom_actual_action(&self, _sender: Option<&NSObject>) {
-            if let Some(window) = self.frontmost_window() {
-                unsafe { window.webview.setPageZoom(1.0) };
-            }
+            self.handle_message(crate::state::Message::ZoomReset);
+        }
+
+        #[unsafe(method(showShortcuts:))]
+        fn show_shortcuts_action(&self, _sender: Option<&NSObject>) {
+            self.run_page_script(crate::state::shortcuts_script());
         }
 
         #[unsafe(method(findInPage:))]
         fn find_in_page_action(&self, _sender: Option<&NSObject>) {
-            self.run_find_script(crate::state::open_find_script());
+            self.run_page_script(crate::state::open_find_script());
         }
 
         #[unsafe(method(findNextMatch:))]
         fn find_next_action(&self, _sender: Option<&NSObject>) {
-            self.run_find_script(crate::state::find_step_script(true));
+            self.run_page_script(crate::state::find_step_script(true));
         }
 
         #[unsafe(method(findPreviousMatch:))]
         fn find_previous_action(&self, _sender: Option<&NSObject>) {
-            self.run_find_script(crate::state::find_step_script(false));
+            self.run_page_script(crate::state::find_step_script(false));
         }
 
         #[unsafe(method(toggleSidebar:))]
@@ -301,6 +302,9 @@ define_class!(
     }
 );
 
+/// One press of Zoom In multiplies the page zoom by this; Zoom Out divides.
+const ZOOM_STEP: f64 = 1.1;
+
 impl AppDelegate {
     fn toggle_full_width_native(&self) -> bool {
         let enabled = crate::state::next_full_width(crate::defaults::get_bool_opt(crate::defaults::FULL_WIDTH_KEY));
@@ -311,11 +315,12 @@ impl AppDelegate {
         enabled
     }
 
-    /// Drive the frontmost page's find bar. The web view is made first
-    /// responder first: the find field is inside the page, so a window whose
-    /// keyboard focus sits anywhere else would show the bar and then send the
-    /// user's typing somewhere they cannot see.
-    fn run_find_script(&self, script: &str) {
+    /// Run a script against the frontmost page's own UI -- the find bar, the
+    /// keyboard cheat sheet. The web view is made first responder first:
+    /// both of those live inside the page, so a window whose keyboard focus
+    /// sits anywhere else would show them and then send the user's typing (or
+    /// their esc) somewhere they cannot see.
+    fn run_page_script(&self, script: &str) {
         let Some(window) = self.frontmost_window() else { return };
         window
             .window
@@ -590,6 +595,21 @@ impl AppDelegate {
             Message::SetSidebarWidth(px) => {
                 let clamped = crate::state::clamp_sidebar_width(px);
                 crate::defaults::set_int(crate::defaults::SIDEBAR_WIDTH_KEY, clamped as i64);
+            }
+            // These four go through the same paths as their menu items, so the
+            // page's `r`, `+`, `-` and `0` cannot drift from ⌘R and ⌘=/⌘-/⌘0.
+            Message::ReloadDocument => {
+                if let Some(window) = self.frontmost_window() {
+                    window.reload(&self.ivars().highlighter);
+                    self.push_bookmarks_to_pages();
+                }
+            }
+            Message::ZoomIn => self.adjust_zoom(ZOOM_STEP),
+            Message::ZoomOut => self.adjust_zoom(1.0 / ZOOM_STEP),
+            Message::ZoomReset => {
+                if let Some(window) = self.frontmost_window() {
+                    unsafe { window.webview.setPageZoom(1.0) };
+                }
             }
         }
     }

@@ -303,8 +303,51 @@
     document.removeEventListener("mouseup", onMouseUp);
   }
 
+  // Pan by a whole nudge rather than a pixel: the arrow keys are for moving
+  // around a zoomed-in diagram, not for fine positioning (that is the drag).
+  var LIGHTBOX_PAN = 60;
+
+  function panBy(dx, dy) {
+    if (!zoomState) return;
+    zoomState.x += dx;
+    zoomState.y += dy;
+    applyTransform();
+  }
+
   function onKeyDown(event) {
-    if (event.key === "Escape") closeLightbox();
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case "Escape":
+        closeLightbox();
+        return;
+      // "=" as well as "+": zoom in is the unshifted key on a US layout.
+      case "+":
+      case "=":
+        stepScale(1.25);
+        break;
+      case "-":
+        stepScale(0.8);
+        break;
+      case "0":
+        resetZoom();
+        break;
+      // An arrow moves the VIEW, so the content travels the other way.
+      case "ArrowLeft":
+        panBy(LIGHTBOX_PAN, 0);
+        break;
+      case "ArrowRight":
+        panBy(-LIGHTBOX_PAN, 0);
+        break;
+      case "ArrowUp":
+        panBy(0, LIGHTBOX_PAN);
+        break;
+      case "ArrowDown":
+        panBy(0, -LIGHTBOX_PAN);
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
   }
 
   function openLightbox(node) {
@@ -566,6 +609,11 @@
         if (event.key === "Enter") {
           event.preventDefault();
           stepFind(event.shiftKey ? -1 : 1);
+          // Hand the keyboard back to the document, the way /pattern<CR> does
+          // in a pager: n and N then STEP through the matches instead of being
+          // typed into the box. The bar stays up with its highlights, and / or
+          // ⌘F brings the field back with the query selected for editing.
+          input.blur();
         } else if (event.key === "Escape") {
           event.preventDefault();
           window.mdviewCloseFind();
@@ -604,12 +652,15 @@
 
   // ---- Sidebar state management -------------------------------------------
 
+  // Returns false when there is no host listening -- running outside the app
+  // (e.g. --print-html output opened in a browser). The page still works; the
+  // callers that have a purely local equivalent fall back to it.
   function postToHost(text) {
     try {
       window.webkit.messageHandlers.mdview.postMessage(text);
+      return true;
     } catch (err) {
-      /* running outside the app (e.g. --print-html output opened in a
-         browser): the page still works, it just cannot persist. */
+      return false;
     }
   }
 
@@ -891,6 +942,446 @@
     }
   }
 
+  // ---- Keyboard shortcuts -------------------------------------------------
+  //
+  // Single-key, vim-flavoured bindings. They are safe here because the page
+  // has exactly one text field (the find input) and no editing at all, so an
+  // unmodified letter can never be something the user meant to type.
+  //
+  // ONE table drives both the dispatcher and the `?` cheat sheet. A binding
+  // that exists but is undocumented is therefore not expressible -- which is
+  // the whole reason the table exists, since a single-key shortcut leaves no
+  // trace in the menu bar to discover it by.
+
+  var SCROLL_LINE = 60;
+  // Two lines of overlap between pages, so nothing is stepped over unread.
+  var PAGE_OVERLAP = 2 * SCROLL_LINE;
+  // A "gg" is two presses of g within this window; a lone g does nothing.
+  var G_CHORD_MS = 700;
+  // How long a heading jump stays chainable. A second press inside the window
+  // steps from the heading the last jump was HEADING FOR, not from wherever
+  // the smooth scroll has reached -- without this, "]]]" pressed quickly reads
+  // an intermediate position three times and lands one heading along.
+  var HEADING_CHAIN_MS = 700;
+  // Breathing room above a heading the jump lands on.
+  var HEADING_MARGIN = 12;
+  // A heading nearer the top than this is the one you are standing on rather
+  // than one to jump to. It must exceed HEADING_MARGIN, or the heading a jump
+  // just landed on would read as "next" again and the second press would stall.
+  var HEADING_EPSILON = HEADING_MARGIN + 4;
+
+  var pendingG = 0;           // timestamp of an unconsumed "g"
+  var lastHeadingJump = null; // { el, at } -- what the in-flight jump aimed at
+
+  function maxScrollY() {
+    var doc = document.documentElement;
+    return Math.max(0, (doc.scrollHeight || 0) - window.innerHeight);
+  }
+
+  // Instant, deliberately. Smooth scrolling on a held j queues one animation
+  // per repeat and they fight each other; line-at-a-time motion has to track
+  // the key exactly.
+  function scrollLines(px) {
+    window.scrollBy(0, px);
+  }
+
+  // Smooth, deliberately: a jump across the document is the one case where
+  // the animation tells the reader which way they travelled.
+  function scrollToY(y) {
+    var target = Math.min(maxScrollY(), Math.max(0, y));
+    try {
+      window.scrollTo({ top: target, behavior: "smooth" });
+    } catch (err) {
+      window.scrollTo(0, target);
+    }
+  }
+
+  function halfPage() {
+    return Math.max(SCROLL_LINE, Math.round(window.innerHeight / 2));
+  }
+
+  function pageStep() {
+    return Math.max(SCROLL_LINE, window.innerHeight - PAGE_OVERLAP);
+  }
+
+  function headingList(topLevelOnly) {
+    var content = document.getElementById("mdview-content");
+    if (!content) return [];
+    var all = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var out = [];
+    for (var i = 0; i < all.length; i++) {
+      var level = parseInt(all[i].tagName.substring(1), 10);
+      if (!topLevelOnly || level <= 2) out.push(all[i]);
+    }
+    return out;
+  }
+
+  function jumpHeading(delta, topLevelOnly) {
+    var list = headingList(topLevelOnly);
+    if (!list.length) return;
+
+    var target = null;
+    var chained = -1;
+    if (lastHeadingJump && Date.now() - lastHeadingJump.at < HEADING_CHAIN_MS) {
+      chained = list.indexOf(lastHeadingJump.el);
+    }
+    if (chained >= 0) {
+      target = list[chained + delta] || null;
+    } else if (delta > 0) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].getBoundingClientRect().top > HEADING_EPSILON) {
+          target = list[i];
+          break;
+        }
+      }
+    } else {
+      for (var j = list.length - 1; j >= 0; j--) {
+        if (list[j].getBoundingClientRect().top < -HEADING_EPSILON) {
+          target = list[j];
+          break;
+        }
+      }
+    }
+    if (!target) return;
+    lastHeadingJump = { el: target, at: Date.now() };
+    // scrollY + rect.top is an absolute document offset, so it stays correct
+    // even when read while a previous smooth scroll is still animating.
+    scrollToY(window.scrollY + target.getBoundingClientRect().top - HEADING_MARGIN);
+  }
+
+  // n, N and enter step the search. With no live query they do nothing, rather
+  // than opening the bar the way ⌘G does: enter in particular gets pressed for
+  // all sorts of reasons and should not summon a search box.
+  function stepFindKey(delta) {
+    if (!findQuery) return;
+    stepFind(delta);
+  }
+
+  function toggleSidebarKey() {
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (sidebar) setSidebar(sidebar.hidden, sidebarTab);
+  }
+
+  function toggleFullWidthKey() {
+    // Outside the app there is no host to round-trip through, so flip the
+    // attribute directly; the options menu follows it via its observer.
+    if (postToHost("toggleFullWidth")) return;
+    var root = document.documentElement;
+    if (root.getAttribute("data-fullwidth") === "1") root.removeAttribute("data-fullwidth");
+    else root.setAttribute("data-fullwidth", "1");
+  }
+
+  function reloadKey() {
+    if (!postToHost("reloadDocument")) window.location.reload();
+  }
+
+  function themeItems() {
+    return document.querySelectorAll(".mdview-theme-item");
+  }
+
+  // Closing has to take the focus with it. A theme button inside a closed
+  // <details> is still focused and still activates on space or Enter, so the
+  // next keypress would commit a theme the user can no longer see -- the same
+  // hazard mdviewCloseFind blurs its input for.
+  function closeThemePicker(picker) {
+    picker.open = false;
+    var focused = document.activeElement;
+    if (focused && focused.blur && picker.contains(focused)) focused.blur();
+  }
+
+  function toggleThemePicker() {
+    // The picker lives in the sidebar header, so it cannot be reached at all
+    // while the sidebar is closed.
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (sidebar && sidebar.hidden) setSidebar(true, sidebarTab);
+    var picker = document.getElementById("mdview-theme");
+    if (!picker) return;
+    if (picker.open) {
+      closeThemePicker(picker);
+      return;
+    }
+    picker.open = true;
+    var items = themeItems();
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].getAttribute("aria-checked") === "true") {
+        items[i].focus();
+        return;
+      }
+    }
+    if (items.length) items[0].focus();
+  }
+
+  // Arrow keys inside the open picker, mirroring what hover already does:
+  // moving previews, only Enter (the button's own default) commits, and esc
+  // reverts. Returns true when the key belonged to the picker.
+  function handleThemePickerKey(event) {
+    var picker = document.getElementById("mdview-theme");
+    if (!picker || !picker.open) return false;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      applyTheme(savedTheme, savedDark);
+      closeThemePicker(picker);
+      return true;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return false;
+    var items = themeItems();
+    if (!items.length) return false;
+    event.preventDefault();
+    var index = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] === document.activeElement) index = i;
+    }
+    var step = event.key === "ArrowDown" ? 1 : -1;
+    var next = index < 0
+      ? (step > 0 ? 0 : items.length - 1)
+      : (index + step + items.length) % items.length;
+    items[next].focus();
+    applyTheme(
+      items[next].getAttribute("data-theme-id"),
+      items[next].getAttribute("data-theme-dark")
+    );
+    return true;
+  }
+
+  // `run: null` documents a key that something else already implements (the
+  // find bar's own esc, the lightbox's keys): it reaches the cheat sheet but
+  // never the dispatcher.
+  var SHORTCUTS = [
+    {
+      title: "Moving",
+      items: [
+        { keys: ["j"], hint: "j", label: "Down a line", run: function () { scrollLines(SCROLL_LINE); } },
+        { keys: ["k"], hint: "k", label: "Up a line", run: function () { scrollLines(-SCROLL_LINE); } },
+        { keys: ["d"], hint: "d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
+        { keys: ["u"], hint: "u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
+        { keys: ["f", " "], hint: "f  space", label: "A page down", run: function () { scrollLines(pageStep()); } },
+        { keys: ["b"], hint: "b  ⇧space", label: "A page up", run: function () { scrollLines(-pageStep()); } },
+        { keys: [], hint: "g g", label: "Top of the document", run: null },
+        { keys: ["G"], hint: "G", label: "Bottom of the document", run: function () { scrollToY(maxScrollY()); } },
+      ],
+    },
+    {
+      title: "Sections",
+      items: [
+        { keys: ["]"], hint: "]", label: "Next heading", run: function () { jumpHeading(1, false); } },
+        { keys: ["["], hint: "[", label: "Previous heading", run: function () { jumpHeading(-1, false); } },
+        { keys: ["}"], hint: "}", label: "Next top-level heading", run: function () { jumpHeading(1, true); } },
+        { keys: ["{"], hint: "{", label: "Previous top-level heading", run: function () { jumpHeading(-1, true); } },
+      ],
+    },
+    {
+      title: "Finding",
+      items: [
+        { keys: ["/"], hint: "/", label: "Find in the document", run: function () { window.mdviewOpenFind(); } },
+        { keys: [], hint: "enter", label: "Search, and back to the document", run: null },
+        { keys: ["n", "Enter"], hint: "n  enter", label: "Next match", run: function () { stepFindKey(1); } },
+        { keys: ["N"], hint: "N  ⇧enter", label: "Previous match", run: function () { stepFindKey(-1); } },
+        { keys: [], hint: "esc", label: "Clear the search", run: null },
+      ],
+    },
+    {
+      title: "View",
+      items: [
+        { keys: ["s"], hint: "s", label: "Toggle the sidebar", run: toggleSidebarKey },
+        { keys: ["t"], hint: "t", label: "Theme picker", run: toggleThemePicker },
+        { keys: ["w"], hint: "w", label: "Toggle full width", run: toggleFullWidthKey },
+        { keys: ["r"], hint: "r", label: "Reload the document", run: reloadKey },
+        { keys: ["+", "="], hint: "+", label: "Zoom in", run: function () { postToHost("zoomIn"); } },
+        { keys: ["-"], hint: "−", label: "Zoom out", run: function () { postToHost("zoomOut"); } },
+        { keys: ["0"], hint: "0", label: "Actual size", run: function () { postToHost("zoomReset"); } },
+        { keys: ["?"], hint: "?", label: "This list", run: function () { toggleShortcuts(); } },
+      ],
+    },
+    {
+      title: "Zoomed image or diagram",
+      items: [
+        { keys: [], hint: "click", label: "Open it filling the window", run: null },
+        { keys: [], hint: "+  −  0", label: "Zoom in, out, reset", run: null },
+        { keys: [], hint: "↑ ↓ ← →", label: "Pan", run: null },
+        { keys: [], hint: "esc", label: "Close", run: null },
+      ],
+    },
+  ];
+
+  var keyMap = null;
+
+  function shortcutFor(key) {
+    if (!keyMap) {
+      keyMap = {};
+      for (var g = 0; g < SHORTCUTS.length; g++) {
+        var items = SHORTCUTS[g].items;
+        for (var i = 0; i < items.length; i++) {
+          if (!items[i].run) continue;
+          for (var k = 0; k < items[i].keys.length; k++) {
+            keyMap[items[i].keys[k]] = items[i];
+          }
+        }
+      }
+    }
+    // hasOwnProperty, not a truth test: a key like "constructor" would
+    // otherwise find something on Object.prototype and be "bound".
+    return Object.prototype.hasOwnProperty.call(keyMap, key) ? keyMap[key] : null;
+  }
+
+  // ---- The ? cheat sheet ---------------------------------------------------
+  //
+  // Built from SHORTCUTS and appended to document.body, outside
+  // #mdview-content, for the same reason the lightbox is: live reload replaces
+  // that div's innerHTML and would destroy an overlay living inside it.
+
+  function buildShortcutsOverlay() {
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-shortcuts";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Keyboard shortcuts");
+
+    var panel = document.createElement("div");
+    panel.className = "mdview-shortcuts-panel";
+
+    var head = document.createElement("header");
+    var heading = document.createElement("h2");
+    heading.textContent = "Keyboard shortcuts";
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "mdview-shortcuts-close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    head.appendChild(heading);
+    head.appendChild(close);
+    panel.appendChild(head);
+
+    var groups = document.createElement("div");
+    groups.className = "mdview-shortcuts-groups";
+    for (var g = 0; g < SHORTCUTS.length; g++) {
+      var section = document.createElement("section");
+      var title = document.createElement("h3");
+      title.textContent = SHORTCUTS[g].title;
+      section.appendChild(title);
+      var list = document.createElement("dl");
+      for (var i = 0; i < SHORTCUTS[g].items.length; i++) {
+        var entry = SHORTCUTS[g].items[i];
+        var dt = document.createElement("dt");
+        var parts = entry.hint.split("  ");
+        for (var p = 0; p < parts.length; p++) {
+          var kbd = document.createElement("kbd");
+          kbd.textContent = parts[p];
+          dt.appendChild(kbd);
+        }
+        var dd = document.createElement("dd");
+        dd.textContent = entry.label;
+        list.appendChild(dt);
+        list.appendChild(dd);
+      }
+      section.appendChild(list);
+      groups.appendChild(section);
+    }
+    panel.appendChild(groups);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", function (event) {
+      // Only the backdrop dismisses, not a click that bubbles out of the panel.
+      if (event.target === overlay) closeShortcuts();
+    });
+    close.addEventListener("click", closeShortcuts);
+    return overlay;
+  }
+
+  function shortcutsAreOpen() {
+    var overlay = document.getElementById("mdview-shortcuts");
+    return !!overlay && !overlay.hidden;
+  }
+
+  function closeShortcuts() {
+    var overlay = document.getElementById("mdview-shortcuts");
+    if (overlay) overlay.hidden = true;
+  }
+
+  function toggleShortcuts() {
+    if (shortcutsAreOpen()) {
+      closeShortcuts();
+      return;
+    }
+    var overlay = document.getElementById("mdview-shortcuts") || buildShortcutsOverlay();
+    overlay.hidden = false;
+  }
+
+  // The Help menu's item, and anything else on the native side, come through
+  // here rather than synthesising a keypress.
+  window.mdviewToggleShortcuts = function () {
+    toggleShortcuts();
+  };
+
+  function isTextEntry(node) {
+    if (!node || !node.tagName) return false;
+    var tag = node.tagName.toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return true;
+    return !!node.isContentEditable;
+  }
+
+  // A focused button, link or disclosure activates on space and on enter.
+  // Paging the document or stepping the search instead would make a theme in
+  // the picker unreachable by keyboard.
+  function activatesOnKey(node, key) {
+    if (key !== " " && key !== "Enter") return false;
+    if (!node || !node.tagName) return false;
+    var tag = node.tagName.toLowerCase();
+    return tag === "button" || tag === "a" || tag === "summary";
+  }
+
+  function onDocumentKeyDown(event) {
+    // Modified keys belong to the menu bar (⌘F, ⌥⌘S, …) and to the browser.
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // The lightbox is modal and owns the keyboard while it is up; its own
+    // listener handles those keys.
+    if (zoomState) return;
+
+    if (shortcutsAreOpen()) {
+      if (event.key === "Escape" || event.key === "?") {
+        event.preventDefault();
+        closeShortcuts();
+      }
+      // Nothing else reaches the document while the sheet is up.
+      return;
+    }
+
+    // The find field is the one place in this page where a letter is a letter.
+    if (isTextEntry(event.target) || isTextEntry(document.activeElement)) return;
+    if (handleThemePickerKey(event)) return;
+
+    if (activatesOnKey(document.activeElement, event.key)) return;
+
+    var key = event.key;
+    // ⇧space pages back, the way it does in every pager, and ⇧enter steps the
+    // search back. Both arrive under the unshifted key with shiftKey set.
+    if (key === " " && event.shiftKey) key = "b";
+    if (key === "Enter" && event.shiftKey) key = "N";
+
+    if (key === "g") {
+      event.preventDefault();
+      if (pendingG && Date.now() - pendingG < G_CHORD_MS) {
+        pendingG = 0;
+        scrollToY(0);
+      } else {
+        pendingG = Date.now();
+      }
+      return;
+    }
+    // Any other key ends a half-typed chord: "gj" must not scroll to the top.
+    pendingG = 0;
+
+    var action = shortcutFor(key);
+    if (!action) return;
+    event.preventDefault();
+    action.run();
+  }
+
+  function attachKeyListeners() {
+    document.addEventListener("keydown", onDocumentKeyDown);
+  }
+
   // ---- Sidebar event listeners (attach once at DOMContentLoaded) ----------
   //
   // The sidebar markup is OUTSIDE #mdview-content and is therefore not
@@ -1012,6 +1503,7 @@
     attachSidebarListeners();
     attachOptionsListeners();
     attachFindListeners();
+    attachKeyListeners();
     window.mdviewRenderAll();
   });
 })();

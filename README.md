@@ -23,6 +23,8 @@ LaTeX math, and Mermaid diagrams.
   in the picker previews it on the document; only a click keeps it.
 - **Find in page** with ⌘F: every match is highlighted as you type, ⌘G and
   ⇧⌘G step through them, and esc clears the highlights.
+- **Keyboard navigation** in the vim idiom — `j`/`k` by the line, `d`/`u` by
+  the half page, `]`/`[` between headings, `/` to search. `?` lists the lot.
 - **Click to zoom** an image or a Mermaid diagram to fill the window.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
@@ -80,3 +82,25 @@ icon, or press ⌘O.
 | ⌥⌘D | Toggle Git diff view |
 | ⌘D | Bookmark this document |
 | ⌘W | Close the window |
+| ⇧⌘/ | Keyboard shortcuts |
+
+There are single-key bindings as well, vim-flavoured, since nothing in a
+read-only viewer is expecting your typing. Press **?** for the full list.
+
+| Key | |
+| --- | --- |
+| j / k | Down / up a line |
+| d / u | Half a page down / up |
+| f / b, space | A page down / up |
+| gg / G | Top / bottom of the document |
+| ] / [ | Next / previous heading |
+| } / { | Next / previous top-level heading |
+| / | Find in this document |
+| enter | Search, and hand the keyboard back to the document |
+| n / N | Next / previous match (enter / ⇧enter too) |
+| s | Toggle the sidebar |
+| t | Theme picker |
+| w | Toggle fullwidth view |
+| r | Reload |
+| + / − / 0 | Zoom in / out / actual size |
+| ? | The list of all of them |

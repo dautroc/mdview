@@ -14,6 +14,8 @@ const DIFF_KEY_EQUIVALENT: &str = "d";
 const FIND_TITLE: &str = "Find…";
 const FIND_KEY_EQUIVALENT: &str = "f";
 const FIND_NEXT_KEY_EQUIVALENT: &str = "g";
+const SHORTCUTS_TITLE: &str = "Keyboard Shortcuts";
+const SHORTCUTS_KEY_EQUIVALENT: &str = "/";
 
 pub(crate) fn full_width_menu_state(enabled: bool) -> NSControlStateValue {
     if enabled {
@@ -55,6 +57,13 @@ fn full_width_modifier_mask() -> NSEventModifierFlags {
 /// ⇧⌘G. The shift is set on the mask rather than by giving the item an
 /// uppercase "G", so the item and Find Next differ only in their modifiers.
 fn find_previous_modifier_mask() -> NSEventModifierFlags {
+    NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+}
+
+/// ⇧⌘/ — which is to say ⌘?, the key the sheet itself is bound to in the page.
+/// Same reasoning as Find Previous: the shift lives on the mask, so the key
+/// equivalent stays the unshifted "/".
+fn shortcuts_modifier_mask() -> NSEventModifierFlags {
     NSEventModifierFlags::Command | NSEventModifierFlags::Shift
 }
 
@@ -198,10 +207,19 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     window_menu.addItem(&item(mtm, "Minimize", sel!(performMiniaturize:), "m"));
     menubar.addItem(&window_holder);
 
-    // Empty is enough: registering it as the help menu via `setHelpMenu` is
-    // what makes AppKit populate the standard Help-menu search field, and
-    // MDView has no help book of its own to add items for.
+    // MDView has no help book, so the only item here is the one thing a user
+    // cannot otherwise discover: the page's single-key shortcuts, which leave
+    // no trace in the menu bar. Registering the menu via `setHelpMenu` is
+    // still what makes AppKit add the standard Help search field.
     let (help_holder, help_menu) = submenu(mtm, "Help");
+    let shortcuts_item = item(
+        mtm,
+        SHORTCUTS_TITLE,
+        sel!(showShortcuts:),
+        SHORTCUTS_KEY_EQUIVALENT,
+    );
+    shortcuts_item.setKeyEquivalentModifierMask(shortcuts_modifier_mask());
+    help_menu.addItem(&shortcuts_item);
     menubar.addItem(&help_holder);
 
     app.setMainMenu(Some(&menubar));
@@ -255,6 +273,18 @@ mod tests {
         assert_eq!(FIND_KEY_EQUIVALENT, FULL_WIDTH_KEY_EQUIVALENT);
         assert_ne!(full_width_modifier_mask(), NSEventModifierFlags::Command);
         assert_ne!(full_width_modifier_mask(), find_previous_modifier_mask());
+    }
+
+    #[test]
+    fn shortcuts_menu_contract_uses_command_question_mark() {
+        assert_eq!(SHORTCUTS_TITLE, "Keyboard Shortcuts");
+        // "?" is the shifted "/", so the item carries "/" plus a shift on the
+        // mask; an item keyed on "?" itself would need ⇧⌘? to fire.
+        assert_eq!(SHORTCUTS_KEY_EQUIVALENT, "/");
+        assert_eq!(
+            shortcuts_modifier_mask(),
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+        );
     }
 
     #[test]

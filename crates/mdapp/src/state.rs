@@ -92,6 +92,14 @@ pub fn find_step_script(forward: bool) -> &'static str {
     }
 }
 
+/// The page owns the keyboard cheat sheet, the same way it owns the find bar;
+/// the Help menu item only asks for it. Guarded for the error page, which has
+/// no init.js behind it.
+#[allow(dead_code)]
+pub fn shortcuts_script() -> &'static str {
+    "window.mdviewToggleShortcuts && window.mdviewToggleShortcuts();"
+}
+
 /// Put `path` at the front of `list`, promoting an existing entry rather than
 /// duplicating it, and truncate to `cap`.
 #[allow(dead_code)]
@@ -134,6 +142,12 @@ pub enum Message {
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
     SetSidebarWidth(u32),
+    /// The page's single-key shortcuts for actions only the host can perform:
+    /// reloading from disk, and page zoom, which lives on the WKWebView.
+    ReloadDocument,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 /// Parse a bridge message. Returns `None` for anything unrecognised or
@@ -148,6 +162,18 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     if raw == "toggleFullWidth" {
         return Some(Message::ToggleFullWidth);
+    }
+    if raw == "reloadDocument" {
+        return Some(Message::ReloadDocument);
+    }
+    if raw == "zoomIn" {
+        return Some(Message::ZoomIn);
+    }
+    if raw == "zoomOut" {
+        return Some(Message::ZoomOut);
+    }
+    if raw == "zoomReset" {
+        return Some(Message::ZoomReset);
     }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
@@ -197,6 +223,44 @@ mod tests {
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Every `postToHost("…")` in the page has to be a message this parser
+    /// accepts. Nothing else catches a typo on either side: an unparsed
+    /// message is dropped in silence, so the key would simply do nothing.
+    #[test]
+    fn every_message_the_page_sends_is_one_the_bridge_understands() {
+        let js = mdcore::assets::INIT_JS;
+        let mut seen = 0;
+        let mut rest = js;
+        while let Some(at) = rest.find("postToHost(\"") {
+            rest = &rest[at + "postToHost(\"".len()..];
+            let Some(end) = rest.find('"') else { break };
+            let literal = &rest[..end];
+            seen += 1;
+            // The ones built by concatenation ("setTheme:" + id) carry their
+            // payload at runtime; give the parser a representative one.
+            let sample = match literal {
+                "setTheme:" => "setTheme:mocha:0".to_string(),
+                "setSidebar:" => "setSidebar:1:outline".to_string(),
+                "setSidebarWidth:" => "setSidebarWidth:260".to_string(),
+                "setDiffLayout:" => "setDiffLayout:split".to_string(),
+                "openPath:" => "openPath:/tmp/x.md".to_string(),
+                other => other.to_string(),
+            };
+            assert!(
+                parse_message(&sample).is_some(),
+                "the page sends {literal:?}, which the bridge drops"
+            );
+        }
+        assert!(seen >= 8, "expected to find the page's messages, saw {seen}");
+    }
+
+    #[test]
+    fn the_cheat_sheet_script_calls_the_pages_own_hook_and_is_guarded() {
+        assert!(shortcuts_script().contains("mdviewToggleShortcuts"));
+        // Same hazard as the find scripts: the error page has no init.js.
+        assert!(shortcuts_script().contains("&&"));
     }
 
     #[test]
@@ -270,6 +334,10 @@ mod tests {
             Some(Message::SetDiffLayout(DiffLayout::Split))
         );
         assert_eq!(parse_message("toggleFullWidth"), Some(Message::ToggleFullWidth));
+        assert_eq!(parse_message("reloadDocument"), Some(Message::ReloadDocument));
+        assert_eq!(parse_message("zoomIn"), Some(Message::ZoomIn));
+        assert_eq!(parse_message("zoomOut"), Some(Message::ZoomOut));
+        assert_eq!(parse_message("zoomReset"), Some(Message::ZoomReset));
         assert_eq!(
             parse_message("setSidebar:1:bookmarks"),
             Some(Message::SetSidebar { open: true, tab: "bookmarks".into() })

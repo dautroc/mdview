@@ -91,6 +91,24 @@ mod bundle_version_tests {
     }
 
     #[test]
+    fn readme_lists_the_cheat_sheet_shortcut() {
+        let readme = include_str!("../../../README.md");
+        assert!(readme.contains("| ⇧⌘/ | Keyboard shortcuts |"));
+        assert!(readme.contains("| ? | The list of all of them |"));
+    }
+
+    /// The Help item and the page's own `?` have to reach the same sheet, or
+    /// the menu would advertise something the page does not have.
+    #[test]
+    fn the_cheat_sheet_is_wired_from_the_help_menu_into_the_page() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(showShortcuts:)"));
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(showShortcuts:))]"));
+        assert!(app.contains("crate::state::shortcuts_script()"));
+    }
+
+    #[test]
     fn fullwidth_native_action_is_wired_from_menu_through_reload() {
         let menu = include_str!("menu.rs");
         assert!(
