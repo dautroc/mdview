@@ -25,8 +25,8 @@ LaTeX math, and Mermaid diagrams.
 - **Themes** — three light, four dark, or follow the system. `t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
-- **Find in page** with ⌘F: every match is highlighted as you type, ⌘G and
-  ⇧⌘G step through them, and esc clears the highlights.
+- **Find in page** with `/` or ⌘F: every match is highlighted as you type,
+  `n` and `N` step through them, and esc clears the highlights.
 - **Keyboard navigation** in the vim idiom — `j`/`k` by the line, `d`/`u` by
   the half page, `]`/`[` between headings, `/` to search. `?` lists the lot.
 - **Click to zoom** an image or a Mermaid diagram to fill the window, or press
@@ -76,24 +76,9 @@ mdview --print-html notes.md  # render to stdout
 Or double-click a `.md` file in Finder, drop one on the window or the Dock
 icon, or press ⌘O.
 
-| Key | |
-| --- | --- |
-| ⌘O | Open a file |
-| ⌘R | Reload |
-| ⌘F | Find in this document |
-| ⌘G / ⇧⌘G | Next / previous match |
-| ⌥⌘S | Toggle the sidebar |
-| ⌥⌘F | Toggle fullwidth view |
-| ⌥⌘D | Toggle Git diff view |
-| ⌘D | Bookmark this document |
-| ⌘W | Close the window |
-| ⇧⌘/ | Keyboard shortcuts |
-
-View also carries Theme, Outline, Bookmarks, Show Diff and Diff Layout, which
-is where to find them without the keyboard.
-
-There are single-key bindings as well, vim-flavoured, since nothing in a
-read-only viewer is expecting your typing. Press **?** for the full list.
+Everything is a single key, vim-flavoured, since nothing in a read-only viewer
+is expecting your typing. Press **?** for the full list, which the app also
+offers once on first launch.
 
 | Key | |
 | --- | --- |
@@ -117,3 +102,16 @@ read-only viewer is expecting your typing. Press **?** for the full list.
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |
 | ? | The list of all of them |
+
+Three modifier shortcuts survive, the ones whose muscle memory predates this
+app. Everything else would be a second binding to keep in sync with the first.
+
+| Key | |
+| --- | --- |
+| ⌘O | Open a file |
+| ⌘F | Find in this document |
+| ⌘R | Reload |
+
+The macOS standards are untouched — ⌘C, ⌘A, ⌘Q, ⌘W, ⌘M, ⌘H. The menu bar
+carries every command in full: View holds Theme, Outline, Bookmarks, Show Diff
+and Diff Layout, and Help holds the shortcut list.

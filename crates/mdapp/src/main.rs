@@ -84,10 +84,18 @@ mod bundle_version_tests {
         );
     }
 
+    /// The README documents the shortcut policy, so it has to move with it:
+    /// three modifier shortcuts, and no others advertised.
     #[test]
-    fn readme_lists_the_fullwidth_shortcut() {
+    fn readme_lists_only_the_three_surviving_modifier_shortcuts() {
         let readme = include_str!("../../../README.md");
-        assert!(readme.contains("| ⌥⌘F | Toggle fullwidth view |"));
+        for row in ["| ⌘O | Open a file |", "| ⌘F | Find in this document |", "| ⌘R | Reload |"] {
+            assert!(readme.contains(row), "README should list {row}");
+        }
+        for gone in ["⌥⌘F", "⌥⌘S", "⌥⌘D", "⌘G", "⇧⌘/", "| ⌘D |"] {
+            assert!(!readme.contains(gone), "README still advertises {gone}");
+        }
+        assert!(readme.contains("| w | Toggle fullwidth view |"));
     }
 
     /// Themes have no other native home now that the in-page picker is a
@@ -141,7 +149,6 @@ mod bundle_version_tests {
     #[test]
     fn readme_lists_the_cheat_sheet_shortcut() {
         let readme = include_str!("../../../README.md");
-        assert!(readme.contains("| ⇧⌘/ | Keyboard shortcuts |"));
         assert!(readme.contains("| ? | The list of all of them |"));
         // The picker is gone; t opens a palette.
         assert!(readme.contains("| t | Themes |"));
@@ -166,7 +173,12 @@ mod bundle_version_tests {
             menu.contains("sel!(toggleFullWidth:)"),
             "View item must target the native action"
         );
-        assert!(menu.contains("NSEventModifierFlags::Command | NSEventModifierFlags::Option"));
+        // Full Width has no key equivalent any more -- `w` in the page is the
+        // only binding, so there is nothing here to keep in sync with it.
+        // Scoped to the menu it builds: the tests below mention the setter.
+        let install = &menu[menu.find("pub fn install(").expect("install")
+            ..menu.find("#[cfg(test)]").expect("tests")];
+        assert!(!install.contains("setKeyEquivalentModifierMask"));
         let app = include_str!("app.rs");
         assert!(app.contains("#[unsafe(method(toggleFullWidth:))]"));
         assert!(app.contains("set_bool(crate::defaults::FULL_WIDTH_KEY, enabled)"));
