@@ -90,11 +90,62 @@ mod bundle_version_tests {
         assert!(readme.contains("| ⌥⌘F | Toggle fullwidth view |"));
     }
 
+    /// Themes have no other native home now that the in-page picker is a
+    /// palette the keyboard opens, so this wiring is the only way a mouse
+    /// reaches them.
+    #[test]
+    fn the_theme_submenu_is_wired_from_the_menu_into_set_theme() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(selectTheme:)"));
+        assert!(
+            menu.contains("setRepresentedObject"),
+            "each item must carry its own theme, not an index into a list"
+        );
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(selectTheme:))]"));
+        assert!(
+            app.contains("Message::SetTheme"),
+            "the menu must go through the same path the page does"
+        );
+        // Stamped at draw time, so a theme changed from the palette cannot
+        // leave the menu showing a stale checkmark.
+        assert!(app.contains("theme_menu_state"));
+    }
+
+    #[test]
+    fn the_sidebar_tabs_are_reachable_without_the_keyboard() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(showOutline:)"));
+        assert!(menu.contains("sel!(showBookmarks:)"));
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(showOutline:))]"));
+        assert!(app.contains("#[unsafe(method(showBookmarks:))]"));
+        assert!(app.contains("mdviewShowSidebarTab"));
+    }
+
+    /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
+    /// evaluating it directly would run against a page that does not exist yet.
+    #[test]
+    fn the_first_run_hint_is_queued_rather_than_evaluated() {
+        let app = include_str!("app.rs");
+        let start = app
+            .find("fn maybe_queue_shortcuts_hint")
+            .expect("the hint must have a single funnel");
+        let end = start + app[start..].find("\n    /// Open the sidebar").expect("end of fn");
+        let body = &app[start..end];
+        assert!(body.contains("pending_scripts"));
+        assert!(!body.contains("eval_script"), "drain_pending_banners owns the readiness check");
+        assert!(body.contains("SHORTCUTS_HINT_SHOWN_KEY"));
+    }
+
     #[test]
     fn readme_lists_the_cheat_sheet_shortcut() {
         let readme = include_str!("../../../README.md");
         assert!(readme.contains("| ⇧⌘/ | Keyboard shortcuts |"));
         assert!(readme.contains("| ? | The list of all of them |"));
+        // The picker is gone; t opens a palette.
+        assert!(readme.contains("| t | Themes |"));
+        assert!(!readme.contains("Theme picker"));
     }
 
     /// The Help item and the page's own `?` have to reach the same sheet, or

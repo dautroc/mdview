@@ -39,6 +39,20 @@ define_class!(
     unsafe impl NSMenuItemValidation for AppDelegate {
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            // The theme is a global preference, so it is stamped and enabled
+            // ABOVE the window check: an app with every window closed must
+            // still be able to change its theme. Stamping here rather than at
+            // click time is also what keeps the checkmark honest when the
+            // change came from the page's own palette instead of this menu.
+            if item.action() == Some(objc2::sel!(selectTheme:)) {
+                let active = crate::state::resolve_theme(
+                    crate::defaults::get_string(crate::defaults::THEME_KEY).as_deref(),
+                );
+                let selected = crate::menu::item_theme_wire(item).as_deref()
+                    == Some(active.as_wire());
+                item.setState(crate::menu::theme_menu_state(selected));
+                return true.into();
+            }
             let Some(window) = self.frontmost_window() else {
                 return false.into();
             };
@@ -212,6 +226,33 @@ define_class!(
             self.run_page_script(crate::state::shortcuts_script());
         }
 
+        /// Deliberately not `setTheme:`: Objective-C would read that as the KVC
+        /// setter for a `theme` property and hand it an NSMenuItem. `openRecent:`
+        /// sets the verb-style precedent, and carries its data the same way.
+        #[unsafe(method(selectTheme:))]
+        fn select_theme_action(&self, sender: Option<&NSMenuItem>) {
+            let Some(sender) = sender else { return };
+            let Some(object) = sender.representedObject() else { return };
+            let Ok(wire) = object.downcast::<NSString>() else { return };
+            // Theme::from_wire maps anything unrecognised to System, so this
+            // cannot fail. The message is the same one the page's palette
+            // sends, minus a scroll offset Rust has no way to read.
+            self.handle_message(crate::state::Message::SetTheme(
+                mdcore::Theme::from_wire(&wire.to_string()),
+                None,
+            ));
+        }
+
+        #[unsafe(method(showOutline:))]
+        fn show_outline_action(&self, _sender: Option<&NSObject>) {
+            self.show_sidebar_tab("outline");
+        }
+
+        #[unsafe(method(showBookmarks:))]
+        fn show_bookmarks_action(&self, _sender: Option<&NSObject>) {
+            self.show_sidebar_tab("bookmarks");
+        }
+
         #[unsafe(method(findInPage:))]
         fn find_in_page_action(&self, _sender: Option<&NSObject>) {
             self.run_page_script(crate::state::open_find_script());
@@ -313,6 +354,44 @@ impl AppDelegate {
             window.set_full_width(enabled);
         }
         enabled
+    }
+
+    /// Nudge a first-time user once, ever: with no buttons on the page there is
+    /// nothing else to notice, so this is all that stands between them and an
+    /// apparently inert window.
+    ///
+    /// The flag is burned here rather than when the page confirms it displayed
+    /// the hint. A window closed before the queue drains loses the hint, which
+    /// is a better failure than one that keeps coming back.
+    fn maybe_queue_shortcuts_hint(&self, window: &DocumentWindow) {
+        if !crate::state::should_show_shortcuts_hint(crate::defaults::get_bool_opt(
+            crate::defaults::SHORTCUTS_HINT_SHOWN_KEY,
+        )) {
+            return;
+        }
+        crate::defaults::set_bool(crate::defaults::SHORTCUTS_HINT_SHOWN_KEY, true);
+        // Queued, never evaluated directly: loadHTMLString is asynchronous, so
+        // a script run now would hit the previous document or none at all.
+        // drain_pending_banners owns the one readiness check.
+        window
+            .pending_scripts
+            .borrow_mut()
+            .push(crate::state::shortcuts_hint_script().to_string());
+    }
+
+    /// Open the sidebar on one tab. The menu items SHOW a tab rather than
+    /// toggling it, unlike the page's own o and b keys: picking "Outline" from
+    /// a menu and having the panel shut is not what anyone means by it.
+    fn show_sidebar_tab(&self, tab: &str) {
+        crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, true);
+        crate::defaults::set_string(crate::defaults::SIDEBAR_TAB_KEY, tab);
+        let script = format!(
+            "window.mdviewShowSidebarTab && window.mdviewShowSidebarTab({});",
+            mdcore::escape::js_string_literal(tab)
+        );
+        for window in self.ivars().windows.borrow().iter() {
+            window.eval_script(&script);
+        }
     }
 
     /// Run a script against the frontmost page's own UI -- the find bar, the
@@ -471,6 +550,7 @@ impl AppDelegate {
             // wrong way.
             self.push_bookmarks_to_pages();
             self.rebuild_recent_menu();
+            self.maybe_queue_shortcuts_hint(&existing);
             return;
         }
 
@@ -502,6 +582,9 @@ impl AppDelegate {
         state.windows.borrow_mut().push(window);
         self.push_bookmarks_to_pages();
         self.rebuild_recent_menu();
+        if let Some(window) = self.frontmost_window() {
+            self.maybe_queue_shortcuts_hint(&window);
+        }
     }
 
     /// The window the user is looking at, or None when every window is closed.

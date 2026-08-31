@@ -69,27 +69,28 @@ style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; font-src data:;"
 /// headings only added rows to scan past. Each item also carries the theme's
 /// darkness, which the wire value alone does not reveal, so a hover preview
 /// can stamp `data-dark` without a round trip to Rust.
-fn build_theme_picker(selected: Theme) -> String {
-    let mut html = String::from("<details id=\"mdview-theme\"><summary aria-label=\"Theme\" title=\"Theme\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"8\" cy=\"8\" r=\"6.25\"/><path d=\"M8 1.75a6.25 6.25 0 0 1 0 12.5z\" fill=\"currentColor\" stroke=\"none\"/></svg></summary>\n<div class=\"mdview-theme-list\" role=\"menu\">\n");
-
+/// The theme list, as data for the page's palette to build itself from.
+///
+/// This used to be the picker's markup. It is emitted as a plain array because
+/// only Rust knows the list, the labels, and each theme's darkness -- a wire
+/// value like "mocha" does not say whether it is dark, and `Theme::is_dark` is
+/// the only thing that does.
+fn build_theme_catalogue() -> String {
+    let mut entries = Vec::new();
     for theme in Theme::all() {
-        let theme = *theme;
         let dark = match theme.is_dark() {
             Some(true) => "1",
             Some(false) => "0",
             None => "",
         };
-        html.push_str(&format!(
-            "<button type=\"button\" class=\"mdview-theme-item\" role=\"menuitemradio\" aria-checked=\"{}\" data-theme-id=\"{}\" data-theme-dark=\"{}\">{}</button>\n",
-            theme == selected,
-            theme.as_wire(),
-            dark,
-            theme.label()
+        entries.push(format!(
+            "{{id:{},label:{},dark:{}}}",
+            crate::escape::js_string_literal(theme.as_wire()),
+            crate::escape::js_string_literal(theme.label()),
+            crate::escape::js_string_literal(dark),
         ));
     }
-
-    html.push_str("</div></details>");
-    html
+    format!("[{}]", entries.join(","))
 }
 
 /// Assemble a complete, self-contained HTML document around rendered body HTML.
@@ -169,7 +170,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         _ => ("not all", "not all"),
     };
 
-    let theme_picker = build_theme_picker(theme);
+    let theme_catalogue = build_theme_catalogue();
 
     format!(
         r#"<!DOCTYPE html>
@@ -188,46 +189,21 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <div id="mdview-banners"></div>
 <div id="mdview-layout">
 <main id="mdview-main">
-<div id="mdview-toolbar" role="toolbar" aria-label="Document view controls">
-<div id="mdview-contextual-controls">
-<button type="button" id="mdview-view-toggle" aria-label="Toggle Git diff view" title="Toggle Git diff view" aria-pressed="false"><span aria-hidden="true">⇄</span></button>
-<div id="mdview-diff-layout-controls" role="group" aria-label="Diff layout" hidden>
-<button type="button" class="mdview-layout-choice" data-layout="unified" aria-label="Use unified diff layout" title="Unified diff layout" aria-pressed="false"><span aria-hidden="true">≡</span></button>
-<button type="button" class="mdview-layout-choice" data-layout="split" aria-label="Use split diff layout" title="Split diff layout" aria-pressed="false"><span aria-hidden="true">◫</span></button>
-</div>
-</div>
-<div id="mdview-options">
-<button type="button" id="mdview-options-toggle" aria-label="More document options" title="More document options" aria-expanded="false"><span aria-hidden="true">⋯</span></button>
-<div id="mdview-options-menu" hidden role="menu">
-<button type="button" id="mdview-fullwidth-toggle" role="menuitem">Full Width</button>
-</div>
-</div>
-</div>
 <div id="mdview-find" role="search" hidden>
 <input type="text" id="mdview-find-input" placeholder="Find" aria-label="Find in document" autocomplete="off" autocorrect="off" spellcheck="false">
 <span id="mdview-find-count" role="status" aria-live="polite"></span>
-<button type="button" id="mdview-find-prev" aria-label="Previous match" title="Previous match (⇧⌘G)"><span aria-hidden="true">↑</span></button>
-<button type="button" id="mdview-find-next" aria-label="Next match" title="Next match (⌘G)"><span aria-hidden="true">↓</span></button>
-<button type="button" id="mdview-find-close" aria-label="Close find bar" title="Close find bar (esc)"><span aria-hidden="true">✕</span></button>
 </div>
 <div id="mdview-content">{body}</div>
 </main>
 <div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
 <aside id="mdview-sidebar" hidden>
 <header class="mdview-sidebar-head">
-<nav class="mdview-tabs" role="tablist">
-<button type="button" class="mdview-tab" role="tab" aria-controls="mdview-sidebar-body" data-tab="outline" aria-label="Outline" title="Outline"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="3" x2="8" y2="3"/><line x1="2" y1="8" x2="12" y2="8"/><line x1="2" y1="13" x2="14" y2="13"/></svg></button>
-<button type="button" class="mdview-tab" role="tab" aria-controls="mdview-sidebar-body" data-tab="bookmarks" aria-label="Bookmarks" title="Bookmarks"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10v9.5L8 9l-5 2.5V2z"/></svg></button>
-</nav>
-<div class="mdview-sidebar-actions">
-<button type="button" id="mdview-star" aria-label="Bookmark this document" title="Bookmark this document" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.9l1.88 3.8 4.2.61-3.04 2.96.72 4.18L8 11.48l-3.76 1.97.72-4.18L1.92 6.31l4.2-.61z"/></svg></button>
-{theme_picker}
-</div>
+<h2 id="mdview-sidebar-title">Outline</h2>
 </header>
 <div id="mdview-sidebar-body" role="tabpanel"></div>
 </aside>
-<button type="button" id="mdview-sidebar-toggle" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="18" y2="4"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="2" y1="16" x2="18" y2="16"/></svg></button>
 </div>
+<script nonce="{nonce}">window.mdviewThemes={theme_catalogue};</script>
 <script nonce="{nonce}">{katex_js}</script>
 <script nonce="{nonce}">{mermaid_js}</script>
 <script nonce="{nonce}">{init_js}</script>
@@ -250,7 +226,7 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         light_css = light_css,
         dark_css = dark_css,
         body = body_html,
-        theme_picker = theme_picker,
+        theme_catalogue = theme_catalogue,
         katex_js = assets::KATEX_JS,
         mermaid_js = assets::MERMAID_JS,
         init_js = assets::INIT_JS,
@@ -280,28 +256,15 @@ mod tests {
     }
 
     #[test]
-    fn page_emits_contextual_document_toolbar_controls() {
-        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
-        assert!(html.contains("id=\"mdview-toolbar\""));
-        assert!(html.contains("id=\"mdview-view-toggle\""));
-        assert!(html.contains("aria-label=\"Toggle Git diff view\""));
-        assert!(html.contains("id=\"mdview-diff-layout-controls\""));
-        assert!(html.contains("data-layout=\"unified\""));
-        assert!(html.contains("data-layout=\"split\""));
-        assert!(html.contains("id=\"mdview-options-toggle\""));
-        assert!(html.contains("id=\"mdview-fullwidth-toggle\""));
-        assert!(!html.contains("onclick="));
-    }
-
-    #[test]
-    fn page_emits_the_find_bar_hidden_with_its_controls() {
+    fn page_emits_the_find_bar_hidden_with_its_field() {
         let html = build_page(&doc(), "<p>hi</p>", Theme::System);
         assert!(html.contains("id=\"mdview-find\" role=\"search\" hidden"));
         assert!(html.contains("id=\"mdview-find-input\""));
         assert!(html.contains("id=\"mdview-find-count\""));
-        assert!(html.contains("id=\"mdview-find-prev\""));
-        assert!(html.contains("id=\"mdview-find-next\""));
-        assert!(html.contains("id=\"mdview-find-close\""));
+        // Stepping and closing are n, N and esc; the bar has no buttons.
+        assert!(!html.contains("id=\"mdview-find-prev\""));
+        assert!(!html.contains("id=\"mdview-find-next\""));
+        assert!(!html.contains("id=\"mdview-find-close\""));
         // The bar sits outside #mdview-content: a live reload replaces that
         // div wholesale and would take the bar (and the field's focus) with it.
         let bar = html.find("id=\"mdview-find\"").unwrap();
@@ -345,11 +308,12 @@ mod tests {
             .trim_end_matches('\'');
         assert!(!nonce.is_empty());
 
-        let tag = format!("<script nonce=\"{nonce}\">");
-        let occurrences = html.matches(&tag).count();
+        let tags = html.matches("<script").count();
+        let nonced = html.matches(&format!("<script nonce=\"{nonce}\">")).count();
+        assert!(tags > 0, "the page should bundle scripts at all");
         assert_eq!(
-            occurrences, 3,
-            "expected all three bundled <script> tags to carry the CSP nonce, got {occurrences}: {html}"
+            nonced, tags,
+            "every bundled <script> must carry the CSP nonce, or it is dead under the policy"
         );
     }
 
@@ -433,13 +397,35 @@ mod tests {
         let html = build_page(&doc(), "<p>hi</p>", Theme::System);
         // CSS reached the page
         assert!(html.contains(".mdview-zoomable"), "zoom CSS missing");
-        assert!(html.contains(".mdview-zoom-btn"), "zoom button CSS missing");
+        // The badge is gone; a cursor is the affordance now, so it can be there
+        // for a mouse without putting a control on the page.
+        assert!(!html.contains(".mdview-zoom-btn"), "the zoom badge should be gone");
+        assert!(html.contains("cursor: zoom-in"), "zoomables must still say they are clickable");
         assert!(html.contains("mdview-lightbox"), "lightbox styles/markup missing");
         // JS reached the page
         assert!(html.contains("enhanceZoomables"), "zoom JS missing");
         // Still no remote assets
         assert!(!html.contains("<link"), "no external stylesheets");
         assert!(!html.contains("src=\"http"), "no external scripts");
+    }
+
+    /// The point of the whole thing. Every control the page used to draw has a
+    /// key and, where a mouse needs one, a menu item; what is left has to stay
+    /// left, and one assertion is a cheaper guard than the thirteen markup
+    /// tests it replaced.
+    ///
+    /// The lightbox, the cheat sheet and the theme palette do have buttons, but
+    /// JS builds them on demand, so they cannot appear here.
+    #[test]
+    fn the_emitted_page_contains_no_buttons() {
+        for theme in Theme::all() {
+            let html = build_page(&doc(), "<p>hi</p>", *theme);
+            assert!(
+                !html.contains("<button"),
+                "{} emits chrome: the page must draw no buttons",
+                theme.label()
+            );
+        }
     }
 
     #[test]
@@ -460,7 +446,7 @@ mod tests {
             "\"]\"", "\"[\"", "\"}\"", "\"{\"",
             "\"/\"", "\"n\"", "\"N\"",
             "\"s\"", "\"o\"", "\"b\"", "\"m\"", "\"t\"",
-            "\"D\"", "\"w\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
+            "\"D\"", "\"l\"", "\"z\"", "\"w\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
         ] {
             let needle = format!("keys: [{}", key);
             let alt = format!(", {}]", key);
@@ -539,25 +525,6 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_marks_only_the_selected_theme_as_checked() {
-        let html = build_page(&doc(), "", Theme::Mocha);
-        let occurrences = html.matches("aria-checked=\"true\"").count();
-        assert_eq!(occurrences, 1, "expected exactly one item marked checked, saw {occurrences}");
-
-        let idx = html.find("aria-checked=\"true\"").expect("a checked item");
-        let tag_start = html[..idx].rfind("<button").expect("enclosing button tag");
-        let tag_end = html[idx..].find('>').map(|i| idx + i).expect("tag close");
-        let tag = &html[tag_start..tag_end];
-        assert!(
-            tag.contains("data-theme-id=\"mocha\""),
-            "the checked item must be the selected theme, got: {tag}"
-        );
-
-        assert!(html.contains("role=\"menu\""), "picker list must be a menu");
-        assert!(html.contains("role=\"menuitemradio\""), "picker items must be menuitemradio");
-    }
-
-    #[test]
     fn each_named_theme_emits_a_distinct_page() {
         let mut seen = std::collections::HashSet::new();
         for theme in Theme::all().iter().filter(|t| **t != Theme::System) {
@@ -570,15 +537,19 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_lists_every_theme_by_label() {
+    fn the_catalogue_lists_every_theme_by_label() {
         let html = build_page(&doc(), "", Theme::System);
         for theme in Theme::all() {
             assert!(
-                html.contains(&format!("data-theme-id=\"{}\"", theme.as_wire())),
-                "picker missing {}",
+                html.contains(&format!("id:\"{}\"", theme.as_wire())),
+                "catalogue missing {}",
                 theme.label()
             );
-            assert!(html.contains(theme.label()), "picker missing label {}", theme.label());
+            assert!(
+                html.contains(&format!("label:\"{}\"", theme.label())),
+                "catalogue missing label {}",
+                theme.label()
+            );
         }
     }
 
@@ -605,75 +576,13 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_exposes_the_contract_later_tasks_fill_in() {
-        let html = build_page(&doc(), "", Theme::System);
-        assert!(html.contains("id=\"mdview-sidebar-body\""));
-        assert!(html.contains("data-tab=\"outline\""));
-        assert!(html.contains("data-tab=\"bookmarks\""));
-    }
-
-    #[test]
-    fn the_sidebar_toggle_survives_a_hidden_sidebar() {
+    fn the_sidebar_names_the_panel_it_is_showing() {
         let html = build_page(&doc(), "<p>hi</p>", Theme::System);
-        let toggle = html.find("id=\"mdview-sidebar-toggle\"").expect("toggle missing");
-        let aside_end = html.find("</aside>").expect("aside must close");
-        let content = html.find("id=\"mdview-content\"").expect("content missing");
-        let main_end = html.find("</main>").expect("main must close");
-        // Outside the aside, or hiding the sidebar hides its own toggle.
-        assert!(toggle > aside_end, "toggle must not live inside the sidebar");
-        // Outside the swapped content, or a live-reload save destroys it.
-        assert!(toggle < content || toggle > main_end, "toggle must not live inside #mdview-content");
-    }
-
-    /// Reads the z-index of a rule block in page.css.
-    fn z_index_of(selector: &str) -> i32 {
-        let css = assets::PAGE_CSS;
-        let start = css.find(selector).unwrap_or_else(|| panic!("no rule for {selector}"));
-        let block = &css[start..];
-        let end = block.find('}').expect("unterminated rule");
-        let decl = block[..end]
-            .split("z-index:")
-            .nth(1)
-            .unwrap_or_else(|| panic!("{selector} declares no z-index"));
-        decl.trim_start()
-            .trim_end_matches(|c: char| !c.is_ascii_digit() && c != '-')
-            .trim()
-            .trim_end_matches(';')
-            .parse()
-            .expect("z-index must be an integer")
-    }
-
-    #[test]
-    fn the_sidebar_toggle_paints_above_the_banner_bar() {
-        // #mdview-banners is a full-viewport-width sticky bar at top:0, and the
-        // toggle is fixed at top:1rem — they overlap. The toggle must win, or a
-        // live-reload banner hides the only control that opens the sidebar.
-        assert!(
-            z_index_of("#mdview-sidebar-toggle {") > z_index_of("#mdview-banners {"),
-            "the sidebar toggle must paint above the banner bar"
-        );
-    }
-
-    #[test]
-    fn the_sidebar_reserves_room_for_the_fixed_toggle() {
-        // The header's controls (tabs, star, theme picker) would otherwise sit
-        // under the toggle, which is fixed at top-right and paints above them.
-        // The panel clears it vertically so the toolbar can span the full width.
-        let css = assets::PAGE_CSS;
-        let head = css.find(".mdview-sidebar-head {").expect("no sidebar-head rule");
-        let head_block = &css[head..head + css[head..].find('}').expect("unterminated rule")];
-        assert!(
-            head_block.contains("padding-right:"),
-            "the toolbar must reserve the fixed toggle's slot at the end of its row"
-        );
-        let start = css.find("#mdview-sidebar {").expect("no sidebar rule");
-        let block = &css[start..start + css[start..].find('}').expect("unterminated rule")];
-        // That padding is added to height:100vh unless the box is border-box,
-        // which would push the panel past the bottom of the viewport.
-        assert!(
-            !block.contains("height: 100vh") || block.contains("box-sizing: border-box"),
-            "a 100vh sidebar with padding must be border-box"
-        );
+        // The tabs are gone, so this heading is the only thing distinguishing
+        // the outline from the bookmarks. init.js rewrites its text.
+        assert!(html.contains("id=\"mdview-sidebar-title\""));
+        assert!(html.contains("id=\"mdview-sidebar-body\""));
+        assert!(!html.contains("class=\"mdview-tab\""));
     }
 
     #[test]
@@ -706,22 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_picker_is_a_flat_list_of_names() {
-        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
-        for label in ["Light", "Dark"] {
-            assert!(
-                !html.contains(&format!(">{label}</div>")),
-                "the picker must not group names under a {label} heading"
-            );
-        }
-        assert_eq!(
-            html.matches("class=\"mdview-theme-item\"").count(),
-            Theme::all().len(),
-            "every theme must still be listed"
-        );
-    }
-
-    #[test]
     fn every_theme_ships_its_own_chrome_and_highlight_sheet() {
         // A hover preview is only an attribute flip if the CSS for the theme
         // being previewed is already on the page.
@@ -739,108 +632,13 @@ mod tests {
                 "{wire} must ship its own highlight sheet"
             );
             assert!(
-                html.contains(&format!("data-theme-id=\"{wire}\" data-theme-dark=\"")),
-                "{wire} must expose its darkness to the preview"
+                html.contains(&format!("id:\"{wire}\"")),
+                "{wire} must reach the palette's catalogue"
             );
         }
         // Only the active theme's sheet is live; the rest wait behind `not all`.
         assert!(html.contains("id=\"mdview-hl-mocha\" media=\"all\""));
         assert!(html.contains("id=\"mdview-hl-github\" media=\"not all\""));
-    }
-
-    #[test]
-    fn the_theme_menu_bridges_the_gap_below_its_trigger() {
-        // The menu is offset below the trigger. Whatever that offset is, the
-        // band it opens up must belong to the menu, or the pointer leaves
-        // #mdview-theme crossing it and mouseleave closes the menu before it
-        // can be reached. Both sides are pinned to one variable so a change to
-        // the offset cannot silently reopen the dead band.
-        let css = assets::PAGE_CSS;
-        assert!(
-            css.contains("--menu-gap:"),
-            "the trigger-to-menu distance must be a single named value"
-        );
-        assert!(
-            css.contains("top: calc(100% + var(--menu-gap))"),
-            "the menu must take its offset from --menu-gap"
-        );
-        let bridge = css
-            .find(".mdview-theme-list::before")
-            .expect("the menu must bridge the gap below its trigger");
-        let block = &css[bridge..bridge + css[bridge..].find('}').expect("unterminated rule")];
-        assert!(
-            block.contains("height: var(--menu-gap)"),
-            "the bridge must be exactly as tall as the gap it covers"
-        );
-        assert!(
-            block.contains("top: calc(-1 * var(--menu-gap))"),
-            "the bridge must sit in the gap, not below it"
-        );
-    }
-
-    #[test]
-    fn the_theme_picker_hides_its_disclosure_triangle_when_closed() {
-        // Scoping the marker rule to [open] left a stray triangle on the closed
-        // picker, which is the state it is in almost all of the time.
-        let css = assets::PAGE_CSS;
-        let marker = css
-            .find("summary::-webkit-details-marker")
-            .expect("no marker rule");
-        let line_start = css[..marker].rfind('\n').map_or(0, |i| i + 1);
-        assert!(
-            !css[line_start..marker].contains("[open]"),
-            "the disclosure triangle must be hidden in both states"
-        );
-    }
-
-    #[test]
-    fn old_sidebar_button_ids_are_gone() {
-        let html = build_page(&doc(), "", Theme::System);
-        assert!(
-            !html.contains("id=\"mdview-sidebar-open\""),
-            "mdview-sidebar-open should be replaced by mdview-sidebar-toggle"
-        );
-        assert!(
-            !html.contains("id=\"mdview-sidebar-close\""),
-            "mdview-sidebar-close should be replaced by mdview-sidebar-toggle"
-        );
-    }
-
-    #[test]
-    fn sidebar_tabs_have_icon_markup() {
-        let html = build_page(&doc(), "", Theme::System);
-        // Count SVG elements that serve as icons
-        let svg_count = html.matches("<svg").count();
-        assert!(
-            svg_count >= 2,
-            "tabs should have SVG icons for outline and bookmarks, got {svg_count} svgs"
-        );
-    }
-
-    #[test]
-    fn sidebar_toggle_has_aria_expanded() {
-        let html = build_page(&doc(), "", Theme::System);
-        let toggle_start = html
-            .find("id=\"mdview-sidebar-toggle\"")
-            .expect("toggle missing");
-        let toggle_end = html[toggle_start..].find('>').expect("tag close") + toggle_start;
-        let toggle_tag = &html[toggle_start..=toggle_end];
-        assert!(
-            toggle_tag.contains("aria-expanded"),
-            "toggle must have aria-expanded attribute, got: {toggle_tag}"
-        );
-    }
-
-    #[test]
-    fn sidebar_tabs_have_accessible_labels() {
-        let html = build_page(&doc(), "", Theme::System);
-        assert!(html.contains("aria-label=\"Outline\""), "outline tab needs aria-label");
-        assert!(
-            html.contains("aria-label=\"Bookmarks\""),
-            "bookmarks tab needs aria-label"
-        );
-        assert!(html.contains("title=\"Outline\""), "outline tab needs title");
-        assert!(html.contains("title=\"Bookmarks\""), "bookmarks tab needs title");
     }
 
     #[test]

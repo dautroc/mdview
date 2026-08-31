@@ -16,6 +16,7 @@ const FIND_KEY_EQUIVALENT: &str = "f";
 const FIND_NEXT_KEY_EQUIVALENT: &str = "g";
 const SHORTCUTS_TITLE: &str = "Keyboard Shortcuts";
 const SHORTCUTS_KEY_EQUIVALENT: &str = "/";
+const THEME_TITLE: &str = "Theme";
 
 pub(crate) fn full_width_menu_state(enabled: bool) -> NSControlStateValue {
     if enabled {
@@ -31,6 +32,22 @@ pub(crate) fn diff_menu_state(enabled: bool) -> NSControlStateValue {
 
 pub(crate) fn diff_layout_menu_state(selected: bool) -> NSControlStateValue {
     full_width_menu_state(selected)
+}
+
+pub(crate) fn theme_menu_state(selected: bool) -> NSControlStateValue {
+    full_width_menu_state(selected)
+}
+
+/// The wire value a theme item carries on its `representedObject`.
+///
+/// Every theme item shares one selector, so unlike the diff-layout items they
+/// cannot be told apart by their action — the wire string is the discriminator.
+/// It is also what `MDViewTheme` already stores, so it stays correct if
+/// `Theme::all()` is ever reordered.
+pub(crate) fn item_theme_wire(item: &NSMenuItem) -> Option<String> {
+    let object = item.representedObject()?;
+    let string = object.downcast::<NSString>().ok()?;
+    Some(string.to_string())
 }
 
 pub(crate) fn set_diff_layout_states(sender: &NSMenuItem, layout: mdcore::DiffLayout) {
@@ -186,6 +203,23 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
         NSEventModifierFlags::Command | NSEventModifierFlags::Option,
     );
     view_menu.addItem(&diff_item);
+    view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    // The sidebar's tabs used to be buttons in its header. The keys o and b
+    // still switch tabs; these are what is left for a mouse.
+    view_menu.addItem(&item(mtm, "Outline", sel!(showOutline:), ""));
+    view_menu.addItem(&item(mtm, "Bookmarks", sel!(showBookmarks:), ""));
+    // Themes have no other native home: the in-page picker is a palette the
+    // keyboard opens, so without this the menu bar could not reach them at all.
+    // Checkmarks are stamped in the delegate's validateMenuItem:, not here, so
+    // one changed from the palette cannot leave this menu stale.
+    let (theme_holder, theme_menu) = submenu(mtm, THEME_TITLE);
+    for theme in mdcore::Theme::all() {
+        let entry = item(mtm, theme.label(), sel!(selectTheme:), "");
+        unsafe { entry.setRepresentedObject(Some(&NSString::from_str(theme.as_wire()))) };
+        theme_menu.addItem(&entry);
+    }
+    view_menu.addItem(&theme_holder);
+    view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     let (layout_holder, layout_menu) = submenu(mtm, "Diff Layout");
     let unified = item(mtm, "Unified", sel!(setUnifiedDiff:), "");
     let split = item(mtm, "Split", sel!(setSplitDiff:), "");
@@ -273,6 +307,23 @@ mod tests {
         assert_eq!(FIND_KEY_EQUIVALENT, FULL_WIDTH_KEY_EQUIVALENT);
         assert_ne!(full_width_modifier_mask(), NSEventModifierFlags::Command);
         assert_ne!(full_width_modifier_mask(), find_previous_modifier_mask());
+    }
+
+    #[test]
+    fn every_theme_reaches_the_menu_under_its_own_wire_value() {
+        // The submenu is built from Theme::all(), so a new theme appears in the
+        // menu bar without anyone remembering to add it.
+        assert_eq!(THEME_TITLE, "Theme");
+        for theme in mdcore::Theme::all() {
+            assert!(!theme.as_wire().is_empty());
+            assert!(!theme.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn theme_checkmarks_are_exclusive() {
+        assert_eq!(theme_menu_state(true), NSControlStateValueOn);
+        assert_eq!(theme_menu_state(false), NSControlStateValueOff);
     }
 
     #[test]

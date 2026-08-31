@@ -100,32 +100,16 @@
     node.parentNode.insertBefore(wrapper, node);
     wrapper.appendChild(node);
 
-    // Clicking the diagram/image itself opens the overlay -- except when the
-    // author wrapped it in a link (e.g. [![alt](img)](https://...)), in
-    // which case the click should follow the link instead. The zoom button
-    // (below) still works in that case via its own handler.
+    // Clicking the diagram/image opens the overlay -- except when the author
+    // wrapped it in a link (e.g. [![alt](img)](https://...)), where the click
+    // should follow the link instead. `z` is what reaches the overlay in that
+    // case, now that the badge that used to is gone.
     wrapper.addEventListener("click", function () {
       var content = document.getElementById("mdview-content");
       var link = wrapper.closest("a");
       if (link && content && content.contains(link)) return;
       openLightbox(node);
     });
-
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "mdview-zoom-btn";
-    btn.setAttribute("aria-label", "Zoom");
-    btn.textContent = "⤢"; // NE arrow and SW arrow: a compact "expand" glyph
-    btn.addEventListener("click", function (event) {
-      // preventDefault() stops a wrapping <a> from navigating when this
-      // click bubbles to it; stopPropagation() stops it reaching the
-      // wrapper's own click handler above, which would otherwise open the
-      // overlay a second time (or reopen it immediately after this closes).
-      event.preventDefault();
-      event.stopPropagation();
-      openLightbox(node);
-    });
-    wrapper.appendChild(btn);
   }
 
   // Walks #mdview-content for Mermaid diagrams and images and wraps each in
@@ -489,12 +473,8 @@
 
   function updateFindCount() {
     var label = document.getElementById("mdview-find-count");
-    var prev = document.getElementById("mdview-find-prev");
-    var next = document.getElementById("mdview-find-next");
-    var none = !findMatches.length;
-    if (prev) prev.disabled = none;
-    if (next) next.disabled = none;
     if (!label) return;
+    var none = !findMatches.length;
     if (!findQuery) {
       label.textContent = "";
     } else if (none) {
@@ -620,13 +600,6 @@
         }
       });
     }
-    var prev = document.getElementById("mdview-find-prev");
-    if (prev) prev.addEventListener("click", function () { stepFind(-1); });
-    var next = document.getElementById("mdview-find-next");
-    if (next) next.addEventListener("click", function () { stepFind(1); });
-    var close = document.getElementById("mdview-find-close");
-    if (close) close.addEventListener("click", function () { window.mdviewCloseFind(); });
-
     // In the app the Edit > Find menu items own these shortcuts and AppKit
     // never lets them reach the page. This is what makes find work in a plain
     // browser, where `--print-html` output is opened with no menu bar at all.
@@ -697,15 +670,10 @@
     var resizer = document.getElementById("mdview-sidebar-resizer");
     if (resizer) resizer.hidden = !open;
     document.documentElement.setAttribute("data-sidebar-open", open ? "1" : "0");
-    var toggle = document.getElementById("mdview-sidebar-toggle");
-    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
-    var tabs = document.querySelectorAll(".mdview-tab");
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].setAttribute(
-        "aria-selected",
-        tabs[i].getAttribute("data-tab") === sidebarTab ? "true" : "false"
-      );
-    }
+    // With the tabs gone, this heading is the only thing saying which of the
+    // two panels you are looking at.
+    var title = document.getElementById("mdview-sidebar-title");
+    if (title) title.textContent = sidebarTab === "bookmarks" ? "Bookmarks" : "Outline";
     renderSidebarBody();
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
   }
@@ -750,18 +718,21 @@
     postToHost("setSidebarWidth:" + next);
   }
 
+  // The star button was the whole feedback for bookmarking. With it gone,
+  // pressing m with the sidebar shut would be a keypress into the void, so the
+  // change is reported instead. The first call is the page being told what it
+  // loaded with, which is not news.
+  var bookmarksKnown = false;
+  var currentIsBookmarked = false;
+
   window.mdviewSetBookmarks = function (items, starred) {
     bookmarks = items || [];
-    var star = document.getElementById("mdview-star");
-    if (star) {
-      // aria-pressed drives the fill in CSS; never write textContent here,
-      // which would replace the inline SVG with a bare glyph.
-      star.setAttribute("aria-pressed", starred ? "true" : "false");
-      star.setAttribute(
-        "aria-label",
-        starred ? "Remove bookmark" : "Bookmark this document"
-      );
+    var next = !!starred;
+    if (bookmarksKnown && next !== currentIsBookmarked) {
+      showNote(next ? "Bookmarked" : "Bookmark removed");
     }
+    currentIsBookmarked = next;
+    bookmarksKnown = true;
     if (sidebarTab === "bookmarks") renderSidebarBody();
   };
 
@@ -862,41 +833,9 @@
   window.mdviewSetSidebar = setSidebar;
 
   // ---- Document options ---------------------------------------------------
-  function syncOptions() {
-    var root = document.documentElement;
-    var diff = root.getAttribute("data-view") === "diff";
-    var menu = document.getElementById("mdview-options-menu");
-    var viewToggle = document.getElementById("mdview-view-toggle");
-    var layoutControls = document.getElementById("mdview-diff-layout-controls");
-    var fullWidthToggle = document.getElementById("mdview-fullwidth-toggle");
-    if (viewToggle) {
-      viewToggle.textContent = diff ? "Show Markdown" : "Show Diff";
-      viewToggle.setAttribute("aria-pressed", diff ? "true" : "false");
-      viewToggle.disabled = !diff && !window.mdviewDiffAvailable;
-    }
-    if (layoutControls) layoutControls.hidden = !diff;
-    var layout = root.getAttribute("data-diff-layout") || "unified";
-    var choices = document.querySelectorAll(".mdview-layout-choice");
-    for (var i = 0; i < choices.length; i++) {
-      var selected = choices[i].getAttribute("data-layout") === layout;
-      choices[i].setAttribute("data-selected", selected ? "true" : "false");
-      choices[i].setAttribute("aria-pressed", selected ? "true" : "false");
-    }
-    if (fullWidthToggle) {
-      var full = root.getAttribute("data-fullwidth") === "1";
-      fullWidthToggle.textContent = full ? "Exit Full Width" : "Full Width";
-      fullWidthToggle.setAttribute("aria-pressed", full ? "true" : "false");
-    }
-    if (menu && !diff) {
-      // Keep the menu open when switching back to Markdown; the user can see
-      // the available controls without an extra click.
-    }
-  }
-
   window.mdviewDiffAvailable = false;
   window.mdviewSetDiffAvailability = function (available) {
     window.mdviewDiffAvailable = !!available;
-    syncOptions();
   };
   window.mdviewSetViewState = function (view, layout, fullWidth, available) {
     var root = document.documentElement;
@@ -906,41 +845,264 @@
     if (fullWidth) root.setAttribute("data-fullwidth", "1");
     else root.removeAttribute("data-fullwidth");
     if (typeof available === "boolean") window.mdviewDiffAvailable = available;
-    syncOptions();
   };
 
-  function attachOptionsListeners() {
-    var toggle = document.getElementById("mdview-options-toggle");
-    var menu = document.getElementById("mdview-options-menu");
-    if (!toggle || !menu) return;
-    toggle.addEventListener("click", function (event) {
-      event.stopPropagation();
-      menu.hidden = !menu.hidden;
-      toggle.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
-    });
-    var viewToggle = document.getElementById("mdview-view-toggle");
-    if (viewToggle) viewToggle.addEventListener("click", function () { postToHost("toggleDiff"); });
-    var choices = document.querySelectorAll(".mdview-layout-choice");
-    for (var i = 0; i < choices.length; i++) {
-      (function (choice) {
-        choice.addEventListener("click", function () {
-          postToHost("setDiffLayout:" + choice.getAttribute("data-layout"));
+  // ---- Theme palette --------------------------------------------------------
+  //
+  // Replaces the picker that used to live in the sidebar header. Appended to
+  // document.body, outside #mdview-content, for the reason the lightbox and the
+  // cheat sheet are: live reload replaces that div's innerHTML and would take
+  // an overlay living inside it with it.
+  //
+  // The reason it exists rather than deferring to View > Theme in the menu bar:
+  // a native menu cannot show you a theme before you commit to it, and seeing
+  // the document in a palette is the whole point of choosing one.
+
+  var themeRows = [];      // every row, in menu order
+  var themeMatches = [];   // the rows currently passing the filter
+  var themeIndex = -1;     // which of themeMatches is highlighted
+
+  function themePaletteEl() {
+    return document.getElementById("mdview-theme-palette");
+  }
+
+  function themePaletteInput() {
+    return document.getElementById("mdview-theme-search");
+  }
+
+  function themePaletteIsOpen() {
+    var el = themePaletteEl();
+    return !!el && !el.hidden;
+  }
+
+  // The themes come from the page itself: Rust emits a chrome block per theme,
+  // so the list can be read back off the stylesheet rather than duplicated in
+  // JS and left to drift.
+  function themeCatalogue() {
+    if (window.mdviewThemes && window.mdviewThemes.length) return window.mdviewThemes;
+    return [];
+  }
+
+  function buildThemePalette() {
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-theme-palette";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Theme");
+
+    var panel = document.createElement("div");
+    panel.className = "mdview-palette-panel";
+
+    var input = document.createElement("input");
+    input.type = "text";
+    input.id = "mdview-theme-search";
+    input.className = "mdview-palette-search";
+    input.placeholder = "Theme";
+    input.setAttribute("aria-label", "Search themes");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    panel.appendChild(input);
+
+    var list = document.createElement("div");
+    list.className = "mdview-palette-list";
+    list.id = "mdview-theme-list";
+    list.setAttribute("role", "listbox");
+    panel.appendChild(list);
+
+    var empty = document.createElement("p");
+    empty.className = "mdview-palette-empty";
+    empty.id = "mdview-theme-empty";
+    empty.textContent = "No themes match.";
+    empty.hidden = true;
+    panel.appendChild(empty);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    themeRows = [];
+    var catalogue = themeCatalogue();
+    for (var i = 0; i < catalogue.length; i++) {
+      (function (entry) {
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "mdview-palette-row";
+        row.setAttribute("role", "option");
+        row.setAttribute("data-theme-id", entry.id);
+        row.setAttribute("data-theme-dark", entry.dark);
+        row.textContent = entry.label;   // textContent, never innerHTML
+        // Hover previews and a click commits, the same two gestures the old
+        // picker had.
+        row.addEventListener("mouseenter", function () {
+          highlightTheme(themeMatches.indexOf(row));
         });
-      })(choices[i]);
+        row.addEventListener("click", function () {
+          commitTheme(row);
+        });
+        list.appendChild(row);
+        themeRows.push(row);
+      })(catalogue[i]);
     }
-    var fullWidthToggle = document.getElementById("mdview-fullwidth-toggle");
-    if (fullWidthToggle) fullWidthToggle.addEventListener("click", function () { postToHost("toggleFullWidth"); });
-    document.addEventListener("click", function (event) {
-      if (!menu.hidden && !menu.contains(event.target) && event.target !== toggle) {
-        menu.hidden = true;
-        toggle.setAttribute("aria-expanded", "false");
-      }
+
+    overlay.addEventListener("click", function (event) {
+      // Only the backdrop dismisses, not a click bubbling out of the panel.
+      if (event.target === overlay) closeThemePalette(true);
     });
-    syncOptions();
-    if (typeof MutationObserver !== "undefined") {
-      new MutationObserver(syncOptions).observe(document.documentElement, { attributes: true, attributeFilter: ["data-view", "data-diff-layout", "data-fullwidth"] });
+    input.addEventListener("input", function () {
+      filterThemes(input.value);
+    });
+    return overlay;
+  }
+
+  function highlightTheme(index) {
+    if (!themeMatches.length) {
+      themeIndex = -1;
+      return;
+    }
+    var count = themeMatches.length;
+    themeIndex = ((index % count) + count) % count;
+    for (var i = 0; i < themeRows.length; i++) {
+      themeRows[i].classList.remove("is-current");
+      themeRows[i].setAttribute("aria-selected", "false");
+    }
+    var row = themeMatches[themeIndex];
+    row.classList.add("is-current");
+    row.setAttribute("aria-selected", "true");
+    if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+    // Moving the highlight previews, exactly as hovering the old picker did.
+    // This is the thing the native menu cannot do.
+    applyTheme(row.getAttribute("data-theme-id"), row.getAttribute("data-theme-dark"));
+  }
+
+  function filterThemes(query) {
+    var needle = (query || "").toLowerCase().trim();
+    themeMatches = [];
+    for (var i = 0; i < themeRows.length; i++) {
+      var hit = !needle || themeRows[i].textContent.toLowerCase().indexOf(needle) >= 0;
+      themeRows[i].hidden = !hit;
+      if (hit) themeMatches.push(themeRows[i]);
+    }
+    var empty = document.getElementById("mdview-theme-empty");
+    if (empty) empty.hidden = themeMatches.length > 0;
+    // A narrowed list starts at its first match; leaving the highlight where it
+    // was would preview a theme no longer on screen.
+    if (themeMatches.length) highlightTheme(0);
+    else {
+      themeIndex = -1;
+      // Nothing matches, so nothing is being previewed: put the page back.
+      applyTheme(savedTheme, savedDark);
     }
   }
+
+  function commitTheme(row) {
+    if (!row) return;
+    var themeId = row.getAttribute("data-theme-id");
+    if (!themeId) return;
+    // Adopt it as the theme to revert to, so closing the palette cannot snap
+    // back to the old one while the reload is still in flight.
+    savedTheme = themeId;
+    savedDark = row.getAttribute("data-theme-dark");
+    closeThemePalette(false);
+    postToHost("setTheme:" + themeId + ":" + Math.round(window.scrollY));
+  }
+
+  function closeThemePalette(revert) {
+    var overlay = themePaletteEl();
+    if (!overlay) return;
+    // esc puts back whatever the previewing was standing on top of; enter has
+    // already adopted its choice as `savedTheme`, so the same call is a no-op.
+    if (revert) applyTheme(savedTheme, savedDark);
+    overlay.hidden = true;
+    var input = themePaletteInput();
+    if (input) input.blur();
+  }
+
+  function openThemePalette() {
+    var overlay = themePaletteEl() || buildThemePalette();
+    overlay.hidden = false;
+    var input = themePaletteInput();
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    filterThemes("");
+    // Start on the theme in use, not the top of the list, so the palette opens
+    // showing you where you already are.
+    for (var i = 0; i < themeMatches.length; i++) {
+      if (themeMatches[i].getAttribute("data-theme-id") === savedTheme) {
+        highlightTheme(i);
+        return;
+      }
+    }
+  }
+
+  function toggleThemePalette() {
+    if (themePaletteIsOpen()) closeThemePalette(true);
+    else openThemePalette();
+  }
+
+  // Driven from the document handler rather than from the search field, so it
+  // works wherever the focus actually is -- a row clicked with the mouse takes
+  // focus off the input, and the arrows have to keep steering the list.
+  function onThemePaletteKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        closeThemePalette(true);
+        break;
+      case "Enter":
+        event.preventDefault();
+        commitTheme(themeMatches[themeIndex]);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        highlightTheme(themeIndex + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        highlightTheme(themeIndex - 1);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // ---- The first-run hint ---------------------------------------------------
+  //
+  // Shown once ever, queued by the app. Its own element rather than a banner:
+  // banners are drawn from the warn palette and say something is wrong, and
+  // giving them a fade would put every real warning at risk of vanishing.
+
+  var HINT_LINGER_MS = 6000;
+
+  function dismissHint() {
+    var hint = document.getElementById("mdview-hint");
+    if (!hint) return;
+    hint.classList.add("is-leaving");
+    // Let the fade finish before the node goes, or it would blink out.
+    setTimeout(function () {
+      if (hint.parentNode) hint.parentNode.removeChild(hint);
+    }, 400);
+  }
+
+  window.mdviewShowShortcutsHint = function () {
+    if (document.getElementById("mdview-hint")) return;
+    var hint = document.createElement("div");
+    hint.id = "mdview-hint";
+    hint.setAttribute("role", "status");
+    hint.textContent = "Press ? for keyboard shortcuts";
+    document.body.appendChild(hint);
+    // Two frames, so the element is laid out before the transition starts;
+    // adding the class in the same frame would skip the fade in.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        hint.classList.add("is-visible");
+      });
+    });
+    setTimeout(dismissHint, HINT_LINGER_MS);
+  };
 
   // ---- Keyboard shortcuts -------------------------------------------------
   //
@@ -1071,6 +1233,44 @@
     setSidebar(!(!sidebar.hidden && sidebarTab === tab), tab);
   }
 
+  // The menu bar's View > Outline / Bookmarks land here. They SHOW a tab rather
+  // than toggling it, unlike the o and b keys: picking "Outline" from a menu and
+  // having the panel shut is not what anyone means by it.
+  window.mdviewShowSidebarTab = function (tab) {
+    setSidebar(true, tab === "bookmarks" ? "bookmarks" : "outline");
+  };
+
+  function cycleDiffLayout() {
+    var root = document.documentElement;
+    // Only meaningful in the diff view: a Markdown render has no unified and
+    // split form to choose between.
+    if (root.getAttribute("data-view") !== "diff") return;
+    var next = root.getAttribute("data-diff-layout") === "split" ? "unified" : "split";
+    postToHost("setDiffLayout:" + next);
+  }
+
+  // Opens whichever zoomable sits nearest the middle of the viewport, which is
+  // the one being read. Without it the lightbox would be mouse-only to open.
+  function zoomNearest() {
+    var content = document.getElementById("mdview-content");
+    if (!content) return;
+    var nodes = content.querySelectorAll("[data-mdview-zoom]");
+    var middle = window.innerHeight / 2;
+    var best = null;
+    var bestDistance = Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+      var rect = nodes[i].getBoundingClientRect();
+      // Skip anything with no box at all -- a diagram that failed to render.
+      if (!rect.width && !rect.height) continue;
+      var distance = Math.abs(rect.top + rect.height / 2 - middle);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = nodes[i];
+      }
+    }
+    if (best) openLightbox(best);
+  }
+
   function toggleDiffKey() {
     // Same condition the toolbar's own button is disabled under: a file with
     // no Git diff to show has nothing to toggle to. Leaving Diff is always
@@ -1093,74 +1293,13 @@
     if (!postToHost("reloadDocument")) window.location.reload();
   }
 
-  function themeItems() {
-    return document.querySelectorAll(".mdview-theme-item");
-  }
-
   // Closing has to take the focus with it. A theme button inside a closed
   // <details> is still focused and still activates on space or Enter, so the
   // next keypress would commit a theme the user can no longer see -- the same
   // hazard mdviewCloseFind blurs its input for.
-  function closeThemePicker(picker) {
-    picker.open = false;
-    var focused = document.activeElement;
-    if (focused && focused.blur && picker.contains(focused)) focused.blur();
-  }
-
-  function toggleThemePicker() {
-    // The picker lives in the sidebar header, so it cannot be reached at all
-    // while the sidebar is closed.
-    var sidebar = document.getElementById("mdview-sidebar");
-    if (sidebar && sidebar.hidden) setSidebar(true, sidebarTab);
-    var picker = document.getElementById("mdview-theme");
-    if (!picker) return;
-    if (picker.open) {
-      closeThemePicker(picker);
-      return;
-    }
-    picker.open = true;
-    var items = themeItems();
-    for (var i = 0; i < items.length; i++) {
-      if (items[i].getAttribute("aria-checked") === "true") {
-        items[i].focus();
-        return;
-      }
-    }
-    if (items.length) items[0].focus();
-  }
-
   // Arrow keys inside the open picker, mirroring what hover already does:
   // moving previews, only Enter (the button's own default) commits, and esc
   // reverts. Returns true when the key belonged to the picker.
-  function handleThemePickerKey(event) {
-    var picker = document.getElementById("mdview-theme");
-    if (!picker || !picker.open) return false;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      applyTheme(savedTheme, savedDark);
-      closeThemePicker(picker);
-      return true;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return false;
-    var items = themeItems();
-    if (!items.length) return false;
-    event.preventDefault();
-    var index = -1;
-    for (var i = 0; i < items.length; i++) {
-      if (items[i] === document.activeElement) index = i;
-    }
-    var step = event.key === "ArrowDown" ? 1 : -1;
-    var next = index < 0
-      ? (step > 0 ? 0 : items.length - 1)
-      : (index + step + items.length) % items.length;
-    items[next].focus();
-    applyTheme(
-      items[next].getAttribute("data-theme-id"),
-      items[next].getAttribute("data-theme-dark")
-    );
-    return true;
-  }
-
   // `run: null` documents a key that something else already implements (the
   // find bar's own esc, the lightbox's keys): it reaches the cheat sheet but
   // never the dispatcher.
@@ -1204,13 +1343,15 @@
         { keys: ["o"], hint: "o", label: "Outline", run: function () { showSidebarTab("outline"); } },
         { keys: ["b"], hint: "b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
-        { keys: ["t"], hint: "t", label: "Theme picker", run: toggleThemePicker },
+        { keys: ["t"], hint: "t", label: "Themes", run: toggleThemePalette },
       ],
     },
     {
       title: "View",
       items: [
         { keys: ["D"], hint: "D", label: "Diff and back to Markdown", run: toggleDiffKey },
+        { keys: ["l"], hint: "l", label: "Diff layout, unified or split", run: cycleDiffLayout },
+        { keys: ["z"], hint: "z", label: "Zoom the nearest image", run: zoomNearest },
         { keys: ["w"], hint: "w", label: "Toggle full width", run: toggleFullWidthKey },
         { keys: ["r"], hint: "r", label: "Reload the document", run: reloadKey },
         { keys: ["+", "="], hint: "+", label: "Zoom in", run: function () { postToHost("zoomIn"); } },
@@ -1220,9 +1361,18 @@
       ],
     },
     {
+      title: "Themes",
+      items: [
+        { keys: [], hint: "type", label: "Filter the list", run: null },
+        { keys: [], hint: "\u2191 \u2193", label: "Move, previewing as you go", run: null },
+        { keys: [], hint: "enter", label: "Keep it", run: null },
+        { keys: [], hint: "esc", label: "Put the old one back", run: null },
+      ],
+    },
+    {
       title: "Zoomed image or diagram",
       items: [
-        { keys: [], hint: "click", label: "Open it filling the window", run: null },
+        { keys: [], hint: "click  z", label: "Open it filling the window", run: null },
         { keys: [], hint: "+  −  0", label: "Zoom in, out, reset", run: null },
         { keys: [], hint: "↑ ↓ ← →", label: "Pan", run: null },
         { keys: [], hint: "esc", label: "Close", run: null },
@@ -1359,6 +1509,9 @@
   }
 
   function onDocumentKeyDown(event) {
+    // Any key at all means the hint has been read, or at least overtaken.
+    // Above the modifier check on purpose, so ⌘-anything dismisses it too.
+    dismissHint();
     // Modified keys belong to the menu bar (⌘F, ⌥⌘S, …) and to the browser.
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     // The lightbox is modal and owns the keyboard while it is up; its own
@@ -1374,9 +1527,15 @@
       return;
     }
 
-    // The find field is the one place in this page where a letter is a letter.
+    // The palette is modal and owns the keyboard while it is up.
+    if (themePaletteIsOpen()) {
+      onThemePaletteKey(event);
+      return;
+    }
+
+    // The find field and the palette's search box are the only places in this
+    // page where a letter is a letter.
     if (isTextEntry(event.target) || isTextEntry(document.activeElement)) return;
-    if (handleThemePickerKey(event)) return;
 
     if (activatesOnKey(document.activeElement, event.key)) return;
 
@@ -1452,85 +1611,23 @@
 
   function attachSidebarListeners() {
     var resizerEl = document.getElementById("mdview-sidebar-resizer");
-    if (resizerEl) {
-      resizerEl.addEventListener("mousedown", onSidebarResizerPointerDown);
-      resizerEl.addEventListener("pointerdown", onSidebarResizerPointerDown);
-      resizerEl.addEventListener("keydown", function (event) {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-          event.preventDefault();
-          var step = event.key === "ArrowLeft" ? 20 : -20;
-          var next = clampSidebarWidth(sidebarWidth + step);
-          applySidebarWidth(next);
-          postToHost("setSidebarWidth:" + next);
-        }
-      });
-      if (!resizerEl.hasAttribute("tabindex")) resizerEl.setAttribute("tabindex", "0");
-    }
-
-    var toggle = document.getElementById("mdview-sidebar-toggle");
-    if (toggle) {
-      toggle.addEventListener("click", function () {
-        var sidebar = document.getElementById("mdview-sidebar");
-        if (sidebar) setSidebar(sidebar.hidden, sidebarTab);
-      });
-    }
-
-    var starBtn = document.getElementById("mdview-star");
-    if (starBtn) {
-      starBtn.addEventListener("click", function () {
-        postToHost("toggleBookmark");
-      });
-    }
-
-    var tabs = document.querySelectorAll(".mdview-tab");
-    for (var i = 0; i < tabs.length; i++) {
-      // Bind the button itself: the tabs hold an <svg>, so event.target is the
-      // icon (or a line inside it) and carries no data-tab.
-      (function (button) {
-        button.addEventListener("click", function () {
-          var tab = button.getAttribute("data-tab");
-          if (tab) setSidebar(true, tab);
-        });
-      })(tabs[i]);
-    }
-
-    var picker = document.getElementById("mdview-theme");
-    var themeItems = document.querySelectorAll(".mdview-theme-item");
-    for (var j = 0; j < themeItems.length; j++) {
-      (function (item) {
-        // Hovering previews; only a click commits. The preview is a local
-        // attribute flip, so it costs nothing and needs no round trip.
-        item.addEventListener("mouseenter", function () {
-          applyTheme(
-            item.getAttribute("data-theme-id"),
-            item.getAttribute("data-theme-dark")
-          );
-        });
-        item.addEventListener("click", function () {
-          var themeId = item.getAttribute("data-theme-id");
-          if (themeId) {
-            // Adopt it as the theme to revert to, so the pending reload does
-            // not race the picker closing and snap back to the old one.
-            savedTheme = themeId;
-            savedDark = item.getAttribute("data-theme-dark");
-            if (picker) picker.open = false;
-            postToHost("setTheme:" + themeId + ":" + Math.round(window.scrollY));
-          }
-        });
-      })(themeItems[j]);
-    }
-
-    if (picker) {
-      picker.addEventListener("mouseleave", function () {
-        applyTheme(savedTheme, savedDark);
-        picker.open = false;
-      });
-    }
+    if (!resizerEl) return;
+    resizerEl.addEventListener("mousedown", onSidebarResizerPointerDown);
+    resizerEl.addEventListener("pointerdown", onSidebarResizerPointerDown);
+    resizerEl.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        var step = event.key === "ArrowLeft" ? 20 : -20;
+        var next = clampSidebarWidth(sidebarWidth + step);
+        applySidebarWidth(next);
+        postToHost("setSidebarWidth:" + next);
+      }
+    });
+    if (!resizerEl.hasAttribute("tabindex")) resizerEl.setAttribute("tabindex", "0");
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     attachSidebarListeners();
-    attachOptionsListeners();
     attachFindListeners();
     attachKeyListeners();
     window.mdviewRenderAll();

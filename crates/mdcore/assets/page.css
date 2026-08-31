@@ -106,37 +106,6 @@ img { max-width: 100%; }
   display: inline-block;
 }
 
-.mdview-zoom-btn {
-  align-items: center;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  cursor: pointer;
-  display: flex;
-  font-size: 14px;
-  height: 28px;
-  justify-content: center;
-  line-height: 1;
-  opacity: 0;
-  padding: 0;
-  position: absolute;
-  right: 6px;
-  top: 6px;
-  transition: opacity .12s ease-in-out;
-  width: 28px;
-  z-index: 2;
-}
-
-.mdview-zoomable:hover .mdview-zoom-btn,
-.mdview-zoom-btn:focus-visible {
-  opacity: 1;
-}
-
-.mdview-zoom-btn:hover {
-  background: var(--code-bg);
-}
-
 #mdview-lightbox {
   align-items: center;
   background: rgba(0, 0, 0, .6);
@@ -407,30 +376,8 @@ body.mdview-resizing #mdview-sidebar-resizer {
   opacity: 0.6;
 }
 
-#mdview-sidebar-toggle {
-  align-items: center;
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  cursor: pointer;
-  display: flex;
-  font: inherit;
-  line-height: 1;
-  padding: .35rem;
-  position: fixed;
-  right: .75rem;
-  top: .55rem;
-  /* Above #mdview-banners (10), which is a full-width sticky bar at top:0 and
-     would otherwise paint over this button. Below #mdview-theme's list (20). */
-  z-index: 11;
-}
-#mdview-sidebar-toggle:hover { background: var(--border); }
-#mdview-sidebar-toggle svg { display: block; }
-
-/* The find bar overlays the top-LEFT of the document area: the toolbar, the
-   sidebar toggle, and the sidebar itself all live on the right, so this is the
-   one corner it can occupy without ever colliding with them. */
+/* Top-LEFT: the sidebar is the only chrome left and it lives on the right, so
+   this corner is the one the bar can occupy without ever colliding with it. */
 #mdview-find {
   align-items: center;
   background: var(--code-bg);
@@ -466,24 +413,6 @@ body.mdview-resizing #mdview-sidebar-resizer {
   text-align: center;
   white-space: nowrap;
 }
-#mdview-find button {
-  align-items: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--fg);
-  cursor: pointer;
-  display: flex;
-  font: inherit;
-  justify-content: center;
-  line-height: 1;
-  min-height: 1.7rem;
-  min-width: 1.7rem;
-  padding: .2rem;
-}
-#mdview-find button:hover { background: var(--border); }
-#mdview-find button:disabled { cursor: default; opacity: .45; }
-
 /* Match highlights. Both surfaces carry their own foreground, because the
    document's own colour (a link, a heading, a syntax token) is not readable on
    an arbitrary tint. */
@@ -500,78 +429,9 @@ body.mdview-resizing #mdview-sidebar-resizer {
   box-shadow: 0 0 0 2px var(--find-current-fg);
 }
 
-#mdview-toolbar {
-  align-items: center;
-  display: flex;
-  gap: .25rem;
-  position: fixed;
-  right: 3.25rem;
-  top: .55rem;
-  z-index: 12;
-}
-:root[data-sidebar-open="1"] #mdview-toolbar { right: calc(var(--sidebar-width, 260px) + 3.25rem); }
-#mdview-contextual-controls,
-#mdview-diff-layout-controls,
-#mdview-options { align-items: center; display: flex; gap: .2rem; }
-#mdview-contextual-controls > button,
-#mdview-layout-choice,
-.mdview-layout-choice,
-#mdview-options-toggle {
-  align-items: center;
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  cursor: pointer;
-  display: flex;
-  font: inherit;
-  line-height: 1;
-  padding: .35rem;
-  justify-content: center;
-  min-width: 2rem;
-  min-height: 2rem;
-  white-space: nowrap;
-}
-#mdview-contextual-controls > button:hover,
-.mdview-layout-choice:hover,
-#mdview-options-toggle:hover { background: var(--border); }
-#mdview-contextual-controls > button:disabled,
-.mdview-layout-choice:disabled { cursor: default; opacity: .45; }
-.mdview-layout-choice[aria-pressed="true"] {
-  background: var(--border);
-  font-weight: 600;
-}
-#mdview-options { position: relative; }
-#mdview-options-toggle { padding-left: .5rem; padding-right: .5rem; }
-#mdview-options-menu {
-  background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.18); display: flex; flex-direction: column;
-  gap: .25rem; min-width: 150px; padding: .4rem;
-  position: absolute; right: 0; top: calc(100% + .35rem);
-}
-#mdview-options-menu[hidden] { display: none; }
-#mdview-options-menu button {
-  background: none; border: 1px solid transparent; border-radius: 4px; color: var(--muted);
-  cursor: pointer; font: inherit; padding: .35rem .45rem; text-align: left;
-}
-#mdview-options-menu button:hover,
-#mdview-options-menu button[aria-pressed="true"],
-#mdview-options-menu button[data-selected="true"] {
-  background: var(--bg); border-color: var(--border); color: var(--fg);
-}
-#mdview-diff-layout-controls {
-  display: flex;
-}
-#mdview-diff-layout-controls[hidden] { display: none; }
-
 @media (max-width: 700px) {
-  #mdview-toolbar { right: 3rem; }
   #mdview-find-input { width: 8rem; }
   #mdview-find-count { min-width: 0; }
-  :root[data-sidebar-open="1"] #mdview-toolbar { right: calc(var(--sidebar-width, 260px) + 3rem); }
-  #mdview-contextual-controls > button,
-  .mdview-layout-choice,
-  #mdview-options-toggle { padding-left: .3rem; padding-right: .3rem; min-width: 1.8rem; }
 }
 
 .mdview-sidebar-head {
@@ -581,79 +441,20 @@ body.mdview-resizing #mdview-sidebar-resizer {
   gap: .5rem;
   justify-content: space-between;
   padding: .55rem .75rem .6rem;
-  /* Room for the fixed toggle, which lands at the end of this row. */
-  padding-right: 3.25rem;
 }
 
-/* Tabs read as one segmented control rather than two loose buttons. */
-.mdview-tabs,
-.mdview-sidebar-actions { align-items: center; display: flex; gap: .15rem; }
-.mdview-tab,
-.mdview-sidebar-actions > button,
-.mdview-sidebar-actions summary {
-  align-items: center;
-  background: none; border: 1px solid transparent; border-radius: 6px;
-  color: var(--muted); cursor: pointer; display: flex;
-  font: inherit; padding: .35rem;
+/* The heading is what is left of a header that used to hold two tabs, a star
+   and a theme trigger. It is the only thing naming the panel now. */
+#mdview-sidebar-title {
+  border: 0;
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  margin: 0;
+  padding: 0;
+  text-transform: uppercase;
 }
-.mdview-tab:hover,
-.mdview-sidebar-actions > button:hover,
-.mdview-sidebar-actions summary:hover { border-color: var(--border); color: var(--fg); }
-/* The selected tab needs a border as well as a fill: --code-bg sits close to
-   --bg on the light palettes, and --border is held to a 3:1 contrast floor. */
-.mdview-tab[aria-selected="true"] {
-  background: var(--code-bg); border-color: var(--border); color: var(--fg);
-}
-.mdview-sidebar-head svg { display: block; }
-/* Bookmarked state is the filled star; the glyph itself never changes. */
-#mdview-star[aria-pressed="true"] { color: var(--fg); }
-#mdview-star[aria-pressed="true"] svg { fill: currentColor; }
-
-#mdview-theme {
-  background: none; color: var(--muted); cursor: pointer; position: relative;
-  /* Distance between the trigger and the menu. Used twice below: once to
-     offset the menu, once to size the strip that bridges the gap. */
-  --menu-gap: .25rem;
-}
-#mdview-theme summary { list-style: none; }
-/* Unconditionally: the marker was only hidden while open, so the closed
-   picker showed a stray disclosure triangle. */
-#mdview-theme summary::-webkit-details-marker { display: none; }
-#mdview-theme[open] summary { border-color: var(--border); color: var(--fg); }
-
-.mdview-theme-list {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
-  display: flex;
-  flex-direction: column;
-  gap: .1rem;
-  min-width: 11rem;
-  padding: .3rem;
-  position: absolute;
-  right: 0;
-  top: calc(100% + var(--menu-gap));
-  z-index: 20;
-}
-/* Bridge the gap. Without this the band between the trigger and the menu
-   hit-tests to whatever is behind it, so the pointer leaves #mdview-theme on
-   its way to the menu and the mouseleave handler closes it before it arrives.
-   The strip belongs to the list, so hovering it still counts as inside. */
-.mdview-theme-list::before {
-  content: "";
-  height: var(--menu-gap);
-  left: 0;
-  position: absolute;
-  right: 0;
-  top: calc(-1 * var(--menu-gap));
-}
-.mdview-sidebar-head .mdview-theme-item {
-  background: none; border: 0; color: var(--fg); cursor: pointer;
-  font: inherit; padding: .5rem .75rem; text-align: left;
-}
-.mdview-theme-item:hover { background: var(--bg); }
-
 #mdview-sidebar-body { padding: .75rem .75rem 2rem; }
 #mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }
 #mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
@@ -753,3 +554,97 @@ body.mdview-resizing #mdview-sidebar-resizer {
   padding: .05rem .35rem;
   white-space: nowrap;
 }
+
+/* A zoomable image gets a cursor, not a badge: the affordance has to be there
+   for a mouse without putting a control on the page. */
+.mdview-zoomable { cursor: zoom-in; }
+
+/* The theme palette. Same shell as the cheat sheet -- both are things the
+   keyboard summons over the document -- with a search field and a list. */
+#mdview-theme-palette {
+  align-items: flex-start;
+  background: rgba(0, 0, 0, .55);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1100;
+}
+#mdview-theme-palette[hidden] { display: none; }
+.mdview-palette-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 35%);
+  display: flex;
+  flex-direction: column;
+  /* Not centred vertically: a palette that grows and shrinks as you filter
+     would walk up and down the window if it were. */
+  margin-top: 12vh;
+  max-height: 70vh;
+  overflow: hidden;
+  width: min(22rem, 90vw);
+}
+.mdview-palette-search {
+  background: var(--bg);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  font: inherit;
+  font-size: .9375rem;
+  padding: .7rem .9rem;
+  width: 100%;
+}
+.mdview-palette-search:focus { outline: none; }
+.mdview-palette-list { overflow-y: auto; padding: .3rem; }
+.mdview-palette-row {
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: .4rem .6rem;
+  text-align: left;
+  width: 100%;
+}
+.mdview-palette-row[hidden] { display: none; }
+/* One highlight, driven by the keyboard. Hover does not paint its own, or two
+   rows would look chosen at once while the arrows and the mouse disagree. */
+.mdview-palette-row.is-current {
+  background: var(--code-bg);
+  box-shadow: inset 2px 0 0 var(--link);
+}
+.mdview-palette-empty {
+  color: var(--muted);
+  font-size: .875rem;
+  margin: 0;
+  padding: .6rem .9rem .8rem;
+}
+
+/* One transient line: the first-run hint, and acknowledgements for actions
+   whose only other evidence is in a panel that may not be open. */
+#mdview-hint {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  bottom: 1.5rem;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 22%);
+  color: var(--fg);
+  font-size: .8125rem;
+  left: 50%;
+  opacity: 0;
+  padding: .4rem .9rem;
+  /* It is a notice, never a target: clicks belong to the document under it. */
+  pointer-events: none;
+  position: fixed;
+  transform: translate(-50%, .5rem);
+  transition: opacity .25s ease, transform .25s ease;
+  z-index: 1200;
+}
+#mdview-hint.is-visible { opacity: 1; transform: translate(-50%, 0); }
+#mdview-hint.is-leaving { opacity: 0; transform: translate(-50%, .5rem); }

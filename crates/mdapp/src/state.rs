@@ -17,6 +17,21 @@ pub fn diff_layout_wire(layout: DiffLayout) -> &'static str {
     }
 }
 
+/// The stored theme, or System when nothing is stored. `Theme::from_wire` maps
+/// anything unrecognised to System, so this cannot fail; it exists so the menu
+/// bar and the page cannot disagree about what "no stored value" means.
+#[allow(dead_code)]
+pub fn resolve_theme(stored: Option<&str>) -> Theme {
+    Theme::from_wire(stored.unwrap_or(""))
+}
+
+/// The hint is shown once ever. Absent means never shown, which is the only
+/// state a fresh install can be in.
+#[allow(dead_code)]
+pub fn should_show_shortcuts_hint(stored: Option<bool>) -> bool {
+    !stored.unwrap_or(false)
+}
+
 #[allow(dead_code)]
 pub fn resolve_full_width(stored: Option<bool>) -> bool {
     stored.unwrap_or(false)
@@ -98,6 +113,14 @@ pub fn find_step_script(forward: bool) -> &'static str {
 #[allow(dead_code)]
 pub fn shortcuts_script() -> &'static str {
     "window.mdviewToggleShortcuts && window.mdviewToggleShortcuts();"
+}
+
+/// The one-time nudge that tells a first-time user the keys exist. With no
+/// buttons on the page there is nothing else to notice, so this is the only
+/// thing standing between a new user and an apparently inert window.
+#[allow(dead_code)]
+pub fn shortcuts_hint_script() -> &'static str {
+    "window.mdviewShowShortcutsHint && window.mdviewShowShortcutsHint();"
 }
 
 /// Put `path` at the front of `list`, promoting an existing entry rather than
@@ -261,6 +284,35 @@ mod tests {
         assert!(shortcuts_script().contains("mdviewToggleShortcuts"));
         // Same hazard as the find scripts: the error page has no init.js.
         assert!(shortcuts_script().contains("&&"));
+    }
+
+    #[test]
+    fn the_hint_script_calls_the_pages_own_hook_and_is_guarded() {
+        assert!(shortcuts_hint_script().contains("mdviewShowShortcutsHint"));
+        assert!(shortcuts_hint_script().contains("&&"));
+    }
+
+    #[test]
+    fn an_unset_theme_resolves_to_system() {
+        assert_eq!(resolve_theme(None), Theme::System);
+        assert_eq!(resolve_theme(Some("")), Theme::System);
+        // Anything unrecognised, including a theme that has since been removed.
+        assert_eq!(resolve_theme(Some("no-such-theme")), Theme::System);
+    }
+
+    #[test]
+    fn a_stored_theme_round_trips_through_its_wire_value() {
+        for theme in Theme::all() {
+            assert_eq!(resolve_theme(Some(theme.as_wire())), *theme);
+        }
+    }
+
+    #[test]
+    fn the_hint_shows_only_until_it_has_been_shown_once() {
+        // A fresh install has never written the key at all.
+        assert!(should_show_shortcuts_hint(None));
+        assert!(should_show_shortcuts_hint(Some(false)));
+        assert!(!should_show_shortcuts_hint(Some(true)));
     }
 
     #[test]
