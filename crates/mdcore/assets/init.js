@@ -316,16 +316,21 @@
         resetZoom();
         break;
       // An arrow moves the VIEW, so the content travels the other way.
+      // hjkl pan the same way, for hands already resting there.
       case "ArrowLeft":
+      case "h":
         panBy(LIGHTBOX_PAN, 0);
         break;
       case "ArrowRight":
+      case "l":
         panBy(-LIGHTBOX_PAN, 0);
         break;
       case "ArrowUp":
+      case "k":
         panBy(0, LIGHTBOX_PAN);
         break;
       case "ArrowDown":
+      case "j":
         panBy(0, -LIGHTBOX_PAN);
         break;
       default:
@@ -3276,7 +3281,7 @@
       items: [
         { keys: [], hint: "click  z", label: "Open it filling the window", run: null },
         { keys: [], hint: "+  −  0", label: "Zoom in, out, reset", run: null },
-        { keys: [], hint: "↑ ↓ ← →", label: "Pan", run: null },
+        { keys: [], hint: "↑ ↓ ← →   h j k l", label: "Pan", run: null },
         { keys: [], hint: "esc", label: "Close", run: null },
       ],
     },

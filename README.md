@@ -134,6 +134,7 @@ full list, which the app also offers once on first launch.
 | g d | Diff, and back to Markdown (needs a tracked file) |
 | g l | Diff layout, unified or split |
 | z | Zoom the nearest image or diagram |
+| ↑ ↓ ← → / h j k l | Pan the zoomed image or diagram |
 | g w | Toggle fullwidth view |
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |
