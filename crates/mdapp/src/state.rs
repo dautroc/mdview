@@ -354,6 +354,39 @@ pub fn review_prompt(review_path: &str, doc_path: &str) -> String {
     )
 }
 
+/// The banner for a review file MDView could not wholly read, or `None` when
+/// it read cleanly.
+///
+/// Says the consequence, not just the fault: the file is about to stop being
+/// written to, and nothing else on screen would show that. `C` asks Claude to
+/// delete records, so a half-deleted one is the likely cause and the line
+/// number is what makes it findable.
+#[allow(dead_code)]
+pub fn damaged_review_banner(
+    damage: &[crate::review::Damage],
+    review_path: &str,
+) -> Option<String> {
+    let [first, rest @ ..] = damage else {
+        return None;
+    };
+    if rest.is_empty() {
+        return Some(format!(
+            "Line {} of the review file cannot be read: {}. \
+             MDView will not write to the file until it is fixed — {review_path}",
+            first.line, first.reason,
+        ));
+    }
+    let lines: Vec<String> = damage.iter().map(|d| d.line.to_string()).collect();
+    Some(format!(
+        "{} records in the review file cannot be read, at lines {}. \
+         The first: {}. \
+         MDView will not write to the file until they are fixed — {review_path}",
+        damage.len(),
+        lines.join(", "),
+        first.reason,
+    ))
+}
+
 /// Hand the page its comment list. Built here rather than in `app.rs` because
 /// it is a pure function of pure inputs, and the objc layer has no tests.
 #[allow(dead_code)]
@@ -464,6 +497,43 @@ mod tests {
         assert!(prompt.contains("mdview-note"));
         assert!(prompt.contains("fences included"), "a half-deleted record parses as nothing");
         assert!(prompt.contains("leave the rest of the file alone"));
+    }
+
+    /// A clean file must not raise anything: the banner is a condition someone
+    /// has to resolve, and one that appears for every document would be noise
+    /// nobody reads by the time it means something.
+    #[test]
+    fn a_review_that_read_cleanly_raises_no_banner() {
+        assert_eq!(damaged_review_banner(&[], "/Users/x/r/9.md"), None);
+    }
+
+    /// The banner has to say the CONSEQUENCE. Nothing else on screen would
+    /// show that comments have quietly stopped being saved, and a user who
+    /// reads this as cosmetic will keep typing notes into a file that is not
+    /// being written.
+    #[test]
+    fn the_damaged_review_banner_names_the_line_the_reason_and_the_consequence() {
+        let one = [crate::review::Damage { line: 12, reason: crate::review::ORPHAN_NOTE }];
+        let text = damaged_review_banner(&one, "/Users/x/r/9.md").expect("a banner");
+        assert!(text.contains("Line 12"), "no line number: {text}");
+        assert!(text.contains(crate::review::ORPHAN_NOTE));
+        assert!(text.contains("will not write"), "does not say what stopped: {text}");
+        assert!(text.contains("/Users/x/r/9.md"), "nothing to open: {text}");
+    }
+
+    #[test]
+    fn a_review_with_several_bad_records_counts_them_and_lists_the_lines() {
+        let many = [
+            crate::review::Damage { line: 12, reason: crate::review::ORPHAN_NOTE },
+            crate::review::Damage { line: 31, reason: crate::review::BAD_INFO },
+        ];
+        let text = damaged_review_banner(&many, "/Users/x/r/9.md").expect("a banner");
+        assert!(text.contains("2 records"), "no count: {text}");
+        assert!(text.contains("lines 12, 31"), "no lines: {text}");
+        // The first reason only: a banner listing every one would not be read.
+        assert!(text.contains(crate::review::ORPHAN_NOTE));
+        assert!(!text.contains(crate::review::BAD_INFO));
+        assert!(text.contains("will not write"));
     }
 
     /// Same hazard as the bookmarks list: a quote is arbitrary document text,

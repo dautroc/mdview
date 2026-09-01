@@ -49,6 +49,18 @@ the commits that introduced them. The newest release is listed first.
   the only thing that would notice: comments were re-read on open and after
   MDView's own writes, and an edit by anyone else sat unseen until the document
   was reloaded for some unrelated reason.
+- **A review MDView cannot wholly read is never written over.** Writing renders
+  the comment list and nothing else, so a record the parser had to skip was
+  erased by the next save — silently, since skipping was the documented way to
+  survive a bad file. That was survivable while nothing else edited the file;
+  asking Claude to delete records makes a half-deleted one the likely failure,
+  and a half-deleted record is exactly what the parser skips. Every write is now
+  gated on the file reading cleanly, and a banner names the line, the reason and
+  the consequence. It clears itself as soon as the file parses again. Three
+  things count as unreadable: a `mdview-quote` line missing its numbers, a
+  `mdview-note` block with no comment to attach to, and a record whose closing
+  fence is gone — which is invisible from the outside, because the *next*
+  record's fence closes it and the two silently become one.
 - **Comments survive editing.** An anchor is re-found after every live reload
   by its quoted words, scoped to the section it was made in, so a save
   elsewhere in the document does not move it. A comment whose words were edited

@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::review::{parse_review, serialize_review, Comment};
+use crate::review::{parse_review, serialize_review, Comment, Review};
 
 /// The most comments one document can carry, the way `FIND_MATCH_LIMIT` caps
 /// find. Re-anchoring walks the document once per comment on every render.
@@ -41,16 +41,17 @@ pub fn review_watch_path(canonical_doc: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-/// This document's comments, or an empty list. A file that cannot be read is
-/// indistinguishable from one that does not exist yet, on purpose: the caller
-/// has nothing useful to do about either.
-pub fn load(canonical_doc: &str) -> Vec<Comment> {
+/// This document's review, empty when there is no file. A file that cannot be
+/// read is indistinguishable from one that does not exist yet, on purpose: the
+/// caller has nothing useful to do about either. A file that reads but does not
+/// wholly parse is a different matter, and comes back in `Review::damage`.
+pub fn load(canonical_doc: &str) -> Review {
     let Some(path) = review_path(canonical_doc) else {
-        return Vec::new();
+        return Review::default();
     };
     match std::fs::read_to_string(&path) {
         Ok(text) => parse_review(&text),
-        Err(_) => Vec::new(),
+        Err(_) => Review::default(),
     }
 }
 
@@ -123,6 +124,10 @@ mod tests {
 
     #[test]
     fn a_document_with_no_review_yet_loads_as_no_comments() {
-        assert!(load("/nonexistent/never/opened.md").is_empty());
+        let review = load("/nonexistent/never/opened.md");
+        assert!(review.comments.is_empty());
+        // And a file that is simply not there is not damage: refusing to write
+        // here would make the first comment on any document impossible.
+        assert!(review.damage.is_empty());
     }
 }

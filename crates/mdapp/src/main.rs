@@ -217,6 +217,45 @@ mod bundle_version_tests {
         );
     }
 
+    /// The gate that makes the review file safe to share with Claude.
+    ///
+    /// `serialize_review` renders the comment list and nothing else, so writing
+    /// a file MDView only partly understood erases every record it had to skip.
+    /// `C` asks Claude to delete records on every pass, which is exactly the
+    /// edit that produces a half-deleted one — so the write has to refuse, and
+    /// it has to say so, or comments stop being saved with nothing on screen
+    /// to show it.
+    #[test]
+    fn a_review_that_cannot_be_wholly_read_is_never_written_over() {
+        let app = include_str!("app.rs");
+        // Through the single funnel every write goes through.
+        let start = app.find("fn write_review").expect("no write_review");
+        let end = start + app[start..].find("\n    /// Whether").expect("end of fn");
+        let body = &app[start..end];
+        assert!(body.contains("if self.review_is_damaged("), "the write is not gated");
+        assert!(
+            body.find("review_is_damaged").unwrap() < body.find("store::save").unwrap(),
+            "the gate has to come before the write, not after it"
+        );
+        // Re-read at the gate rather than trusted from the caller, so an edit
+        // made between their read and this write cannot slip through.
+        let gate = app.find("fn review_is_damaged").expect("no gate");
+        let gate_end = gate + app[gate..].find("\n    /// Send each page").expect("end of gate");
+        assert!(app[gate..gate_end].contains("crate::store::load("));
+        assert!(app[gate..gate_end].contains("damaged_review_banner"));
+
+        // And the banner tracks the file rather than the moment: raised and
+        // cleared by the funnel the review watcher runs.
+        let push = app.find("pub(crate) fn push_comments_to_pages").expect("no push");
+        let push_end = push + app[push..].find("\n    ///").expect("end of push");
+        let push = &app[push..push_end];
+        assert!(push.contains("damaged_review_banner"));
+        assert!(push.contains("clear_banner"), "a fixed file must take its banner away");
+        // Queued, not evaluated: this runs on every open, when the page it
+        // would be injected into does not exist yet.
+        assert!(push.contains("pending_banners"));
+    }
+
     /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
     /// evaluating it directly would run against a page that does not exist yet.
     #[test]

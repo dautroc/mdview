@@ -153,13 +153,66 @@ fn closes(line: &str, width: usize) -> bool {
     trimmed.len() >= width && trimmed.chars().all(|c| c == '~')
 }
 
+/// Why one record could not be read. Short enough for a banner, specific
+/// enough to find the record it is about.
+pub const BAD_INFO: &str =
+    "its `~~~~ mdview-quote` line is missing the id, heading and occurrence numbers";
+pub const ORPHAN_NOTE: &str = "a `~~~~ mdview-note` block with no comment above it to attach to";
+pub const MERGED: &str = "its closing fence is missing, so it has swallowed the record below it";
+
+/// A record `parse_review` had to skip, and where to find it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Damage {
+    /// 1-based line of the fence that opens the unreadable record.
+    pub line: usize,
+    pub reason: &'static str,
+}
+
+/// One review file: the comments, and whatever could not be read.
+///
+/// The second half exists because writing is destructive. `serialize_review`
+/// renders the comment list and nothing else, so writing a file we only partly
+/// understood erases every record we skipped — and this file is shared with
+/// Claude, which `C` now asks to edit it on every pass. Silence there costs
+/// someone a comment with nothing to show that it ever existed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Review {
+    pub comments: Vec<Comment>,
+    pub damage: Vec<Damage>,
+}
+
+/// Has this payload swallowed a record whose opening fence is still in it?
+///
+/// The test is `width`, and it is exact rather than a guess. `fence_for` makes
+/// every fence strictly longer than the longest run of leading tildes in the
+/// payload it wraps, so in a file MDView wrote, no payload line can open a
+/// fence as wide as the one enclosing it. A line that does means two records
+/// were merged — which is what deleting a closing fence does, since the NEXT
+/// record's closing fence then closes this one and nothing looks unterminated.
+///
+/// The strictness matters in both directions: a quote whose text happens to
+/// contain `~~~~ mdview-quote` is legitimate, and is wrapped in a longer fence
+/// precisely so it can be told apart from this.
+fn swallows_a_record(payload: &[&str], width: usize) -> bool {
+    payload.iter().any(|line| match opener(line) {
+        Some(open) => {
+            open.width >= width && (open.kind == "mdview-quote" || open.kind == "mdview-note")
+        }
+        None => false,
+    })
+}
+
 /// Parse a review file. Never fails: a malformed record is skipped and a
 /// truncated file yields the records it could read, matching the contract
 /// `parse_message` states in `state.rs`. Dropping the whole file because one
 /// record is bad would lose comments a human still has on screen.
-pub fn parse_review(text: &str) -> Vec<Comment> {
+///
+/// What it will not do is skip a record *quietly*. Every skip is recorded in
+/// `Review::damage`, and the caller refuses to write the file while any of it
+/// stands.
+pub fn parse_review(text: &str) -> Review {
     let lines: Vec<&str> = text.lines().collect();
-    let mut comments: Vec<Comment> = Vec::new();
+    let mut review = Review::default();
     let mut index = 0;
     while index < lines.len() {
         let Some(open) = opener(lines[index]) else {
@@ -170,6 +223,7 @@ pub fn parse_review(text: &str) -> Vec<Comment> {
             index += 1;
             continue;
         }
+        let at = index + 1;
         // Consume the payload even for a record we are going to discard, or
         // its text would be re-read as structure on the next pass.
         let mut payload: Vec<&str> = Vec::new();
@@ -181,30 +235,56 @@ pub fn parse_review(text: &str) -> Vec<Comment> {
         index += 1; // step over the closing fence, or off the end
         let body = payload.join("\n");
 
+        // A fence that simply runs off the end of the file is a write that was
+        // cut short, and the payload is what survived it — kept, as it always
+        // was. A fence that has eaten the record below it is a different thing
+        // entirely, and that record has stopped existing.
+        if swallows_a_record(&payload, open.width) {
+            review.damage.push(Damage { line: at, reason: MERGED });
+        }
+
         if open.kind == "mdview-note" {
             // Attaches to the most recent quote that has not been given one,
             // so the decorative headings between them do not break the pair.
-            if let Some(last) = comments.last_mut() {
-                if last.note.is_empty() {
+            let attached = match review.comments.last_mut() {
+                Some(last) if last.note.is_empty() => {
                     last.note = body;
+                    true
                 }
+                _ => false,
+            };
+            // Its quote block is gone, or the comment above it already has a
+            // note. Either way this text has nowhere to go.
+            if !attached {
+                review.damage.push(Damage { line: at, reason: ORPHAN_NOTE });
             }
             continue;
         }
         let [id, heading, nth] = open.info.as_slice() else {
+            review.damage.push(Damage { line: at, reason: BAD_INFO });
             continue;
         };
         let (Ok(heading), Ok(nth)) = (heading.parse::<usize>(), nth.parse::<usize>()) else {
+            review.damage.push(Damage { line: at, reason: BAD_INFO });
             continue;
         };
-        comments.push(Comment::new(id, heading, nth, &body, ""));
+        review.comments.push(Comment::new(id, heading, nth, &body, ""));
     }
-    comments
+    review
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parse, insisting the file was wholly readable. Every test that builds
+    /// a well-formed file goes through this, so each of them also pins that
+    /// MDView would be willing to write the file back.
+    fn read(text: &str) -> Vec<Comment> {
+        let review = parse_review(text);
+        assert_eq!(review.damage, vec![], "unexpected damage in a well-formed file");
+        review.comments
+    }
 
     fn c(quote: &str, note: &str) -> Comment {
         Comment::new("1", 2, 0, quote, note)
@@ -240,7 +320,7 @@ mod tests {
                 let original = vec![c(quote, note)];
                 let text = serialize_review("/tmp/notes.md", &[], &original);
                 assert_eq!(
-                    parse_review(&text),
+                    read(&text),
                     original,
                     "round trip failed for quote {quote:?} note {note:?}"
                 );
@@ -271,7 +351,7 @@ mod tests {
         let annotated = format!(
             "{text}\n\n## Notes from Claude\n\nI fixed the first one. The second\nneeds a decision from you.\n"
         );
-        assert_eq!(parse_review(&annotated), original);
+        assert_eq!(read(&annotated), original);
     }
 
     /// A crash mid-write, or a file someone truncated by hand. Dropping every
@@ -285,14 +365,19 @@ mod tests {
         ];
         let text = serialize_review("/tmp/notes.md", &[], &original);
         let cut = &text[..text.len() - 6];
-        assert_eq!(parse_review(cut), original);
+        let review = parse_review(cut);
+        assert_eq!(review.comments, original);
+        // And a cut-short write is not damage: the payload is what survived,
+        // nothing was swallowed, and refusing to write from here on would
+        // strand the file for good.
+        assert_eq!(review.damage, vec![]);
     }
 
     #[test]
     fn a_record_with_no_note_block_parses_as_an_empty_note() {
         let text = "~~~~ mdview-quote a 4 2\njust the quote\n~~~~\n";
         assert_eq!(
-            parse_review(text),
+            read(text),
             vec![Comment::new("a", 4, 2, "just the quote", "")]
         );
     }
@@ -304,7 +389,7 @@ mod tests {
         let original = vec![Comment::new("1", 7, 0, "quote", "note")];
         let text = serialize_review("/tmp/notes.md", &["Setup".into()], &original);
         let meddled = text.replace("## 1. ", "## 99. Something Else — ");
-        assert_eq!(parse_review(&meddled), original);
+        assert_eq!(read(&meddled), original);
     }
 
     /// Two comments quoting the same words in one section are told apart by
@@ -316,7 +401,7 @@ mod tests {
             Comment::new("2", 2, 1, "retry", "the second one"),
         ];
         let text = serialize_review("/tmp/notes.md", &[], &original);
-        assert_eq!(parse_review(&text), original);
+        assert_eq!(read(&text), original);
     }
 
     #[test]
@@ -327,7 +412,15 @@ mod tests {
             "~~~~ mdview-quote a 1\nq\n~~~~\n",
             "~~~~ mdview-quote a 1 2 3\nq\n~~~~\n",
         ] {
-            assert!(parse_review(bad).is_empty(), "should have skipped {bad:?}");
+            let review = parse_review(bad);
+            assert!(review.comments.is_empty(), "should have skipped {bad:?}");
+            // Skipped, but never quietly: the payload is someone's comment and
+            // writing the file would erase it.
+            assert_eq!(
+                review.damage,
+                vec![Damage { line: 1, reason: BAD_INFO }],
+                "silently dropped {bad:?}"
+            );
         }
     }
 
@@ -337,7 +430,119 @@ mod tests {
     #[test]
     fn a_skipped_records_payload_is_not_re_read_as_structure() {
         let text = "~~~~~ mdview-quote bad\n~~~~ mdview-quote z 1 0\nsmuggled\n~~~~\n~~~~~\n";
-        assert!(parse_review(text).is_empty());
+        let review = parse_review(text);
+        assert!(review.comments.is_empty());
+        assert_eq!(review.damage, vec![Damage { line: 1, reason: BAD_INFO }]);
+    }
+
+    /// The whole point of the exercise, done right: `C` tells Claude to delete
+    /// both fenced blocks of each comment it addressed, and doing exactly that
+    /// has to leave a file MDView will still write to. This is the case that
+    /// happens on every successful pass, so a false positive here would stop
+    /// comments being saved for the entire feature.
+    #[test]
+    fn deleting_a_record_the_way_the_prompt_asks_leaves_a_readable_file() {
+        let whole = vec![
+            Comment::new("1", 1, 0, "first quote", "first note"),
+            Comment::new("2", 2, 0, "second quote", "second note"),
+            Comment::new("3", 3, 0, "third quote", "third note"),
+        ];
+        let text = serialize_review("/tmp/notes.md", &[], &whole);
+        // Both blocks of record 2, opening and closing fences included, which
+        // is what the prompt spells out.
+        let quote = "~~~~ mdview-quote 2 2 0\nsecond quote\n~~~~\n";
+        let note = "~~~~ mdview-note\nsecond note\n~~~~\n";
+        assert!(text.contains(quote) && text.contains(note), "the file is not shaped as assumed");
+        let pruned = text.replace(quote, "").replace(note, "");
+
+        let review = parse_review(&pruned);
+        assert_eq!(review.comments, vec![whole[0].clone(), whole[2].clone()]);
+        assert_eq!(review.damage, vec![], "a correct deletion must not read as damage");
+    }
+
+    /// The half-deletion `C` invites: Claude removes the quote block of the
+    /// comment it addressed and leaves the note behind. The note has nothing
+    /// to attach to, so its text would be dropped on read and gone from the
+    /// file on the next write.
+    #[test]
+    fn a_note_block_whose_quote_was_deleted_is_reported_not_dropped() {
+        let text = "~~~~ mdview-note\nthe note nobody deleted\n~~~~\n";
+        let review = parse_review(text);
+        assert!(review.comments.is_empty());
+        assert_eq!(review.damage, vec![Damage { line: 1, reason: ORPHAN_NOTE }]);
+    }
+
+    /// The same edit made one record too far down: the note now lands on the
+    /// comment ABOVE it, which already has one of its own. Silently keeping
+    /// the first note and discarding the second is the worst of both.
+    #[test]
+    fn a_second_note_on_one_comment_is_reported_rather_than_discarded() {
+        let text = concat!(
+            "~~~~ mdview-quote a 1 0\nquote\n~~~~\n",
+            "~~~~ mdview-note\nthe first note\n~~~~\n",
+            "~~~~ mdview-note\nthe orphaned one\n~~~~\n",
+        );
+        let review = parse_review(text);
+        assert_eq!(review.comments, vec![Comment::new("a", 1, 0, "quote", "the first note")]);
+        assert_eq!(review.damage, vec![Damage { line: 7, reason: ORPHAN_NOTE }]);
+    }
+
+    /// The other half-deletion: the closing fence goes. Nothing looks
+    /// unterminated afterwards — the NEXT record's closing fence quietly
+    /// closes this one — so the two records become one holding both payloads,
+    /// and the second has stopped existing. A write would make that permanent.
+    #[test]
+    fn a_deleted_closing_fence_that_swallows_the_record_below_it_is_reported() {
+        let whole = vec![
+            Comment::new("a", 1, 0, "quote", ""),
+            Comment::new("b", 2, 0, "second quote", ""),
+        ];
+        let text = serialize_review("/tmp/notes.md", &[], &whole);
+        // Exactly one closing fence removed, the way a careless edit would.
+        let broken = text.replacen("quote\n~~~~\n", "quote\n", 1);
+        let review = parse_review(&broken);
+        assert_eq!(review.comments.len(), 1, "the two records merged into one");
+        assert_eq!(review.damage.len(), 1);
+        assert_eq!(review.damage[0].reason, MERGED);
+    }
+
+    /// The same edit at the end of the file, where there is no following fence
+    /// to close it: still one record swallowing another.
+    #[test]
+    fn a_missing_final_fence_that_swallows_a_record_is_reported() {
+        let text = concat!(
+            "~~~~ mdview-quote a 1 0\nquote\n",
+            "~~~~ mdview-note\nthe note\n",
+        );
+        let review = parse_review(text);
+        assert_eq!(review.damage, vec![Damage { line: 1, reason: MERGED }]);
+    }
+
+    /// The distinction the rule turns on, from the other side: a fence that
+    /// runs to the end of a cut-short file swallowed nothing, and is the
+    /// tolerated case. Getting this wrong would make every truncated file
+    /// unwritable rather than merely short.
+    #[test]
+    fn a_fence_that_runs_off_the_end_of_a_cut_file_swallows_nothing() {
+        let review = parse_review("~~~~ mdview-quote a 1 0\nhalf a quo");
+        assert_eq!(review.comments, vec![Comment::new("a", 1, 0, "half a quo", "")]);
+        assert_eq!(review.damage, vec![]);
+    }
+
+    /// The false positive the width test exists to avoid: a quote whose own
+    /// text is a record opener. `fence_for` wrapped it in a longer fence, which
+    /// is exactly what tells it apart from a record that swallowed another.
+    #[test]
+    fn a_quote_whose_text_is_itself_a_record_opener_is_not_damage() {
+        for payload in [
+            "~~~~ mdview-quote z 9 9\nnot really a record",
+            "~~~~ mdview-note\nnor is this",
+            "~~~~~~ mdview-quote z 9 9",
+        ] {
+            let original = vec![c(payload, "a note about it")];
+            let text = serialize_review("/tmp/notes.md", &[], &original);
+            assert_eq!(read(&text), original, "false positive on {payload:?}");
+        }
     }
 
     #[test]
@@ -367,6 +572,6 @@ mod tests {
         let comments = vec![Comment::new("1", 0, 0, "preamble", "")];
         let text = serialize_review("/tmp/notes.md", &["Setup".into()], &comments);
         assert!(text.contains("(before the first heading)"));
-        assert_eq!(parse_review(&text), comments);
+        assert_eq!(read(&text), comments);
     }
 }

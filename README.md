@@ -32,6 +32,9 @@ LaTeX math, and Mermaid diagrams.
   — MDView watches that file, so a comment leaves the margin as soon as it is
   dealt with. A comment whose passage was rewritten instead stays in the
   sidebar, struck through, rather than vanishing with the words it was about.
+  If the review file ends up in a state MDView cannot wholly read, it says so
+  and stops writing to it rather than saving over the part it did not
+  understand.
 - **Themes** — three light, four dark, or follow the system. `t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.

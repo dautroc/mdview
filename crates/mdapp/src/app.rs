@@ -729,7 +729,7 @@ impl AppDelegate {
                 let Some(window) = self.frontmost_window() else { return };
                 let doc = window.path.borrow().clone();
                 let key = doc.to_string_lossy().into_owned();
-                let mut comments = crate::store::load(&key);
+                let mut comments = crate::store::load(&key).comments;
                 if comments.len() >= crate::store::COMMENT_LIMIT {
                     window.show_banner(
                         "mdview-comments",
@@ -745,7 +745,7 @@ impl AppDelegate {
                 let Some(window) = self.frontmost_window() else { return };
                 let doc = window.path.borrow().clone();
                 let key = doc.to_string_lossy().into_owned();
-                let mut comments = crate::store::load(&key);
+                let mut comments = crate::store::load(&key).comments;
                 let Some(target) = comments.iter_mut().find(|c| c.id == id) else {
                     // It went away under us — a hand-edit of the review file,
                     // most likely. Re-push so the page stops showing it.
@@ -767,7 +767,7 @@ impl AppDelegate {
                 let key = doc.to_string_lossy().into_owned();
                 // `x` has no undo, so the previous file is the recovery.
                 crate::store::backup(&key);
-                let mut comments = crate::store::load(&key);
+                let mut comments = crate::store::load(&key).comments;
                 comments.retain(|c| c.id != id);
                 self.write_review(&window, &doc, &comments);
             }
@@ -794,6 +794,14 @@ impl AppDelegate {
         comments: &[crate::review::Comment],
     ) {
         let key = doc.to_string_lossy().into_owned();
+        // The one gate on every write. `serialize_review` renders the comment
+        // list and nothing else, so writing a file we only partly understood
+        // erases every record we had to skip — and it is read again here, not
+        // taken from the caller, so nothing that happened between their read
+        // and this write slips past.
+        if self.review_is_damaged(window, &key) {
+            return;
+        }
         let headings = crate::store::headings_of(doc);
         match crate::store::save(&key, &headings, comments) {
             Ok(()) => self.push_comments_to_pages(),
@@ -803,15 +811,48 @@ impl AppDelegate {
         }
     }
 
+    /// Whether the review file has records MDView could not read, raising the
+    /// banner that says so. True means: do not write to this file.
+    fn review_is_damaged(&self, window: &Rc<DocumentWindow>, key: &str) -> bool {
+        let damage = crate::store::load(key).damage;
+        let path = crate::store::review_path(key).unwrap_or_default();
+        match crate::state::damaged_review_banner(&damage, &path.to_string_lossy()) {
+            Some(message) => {
+                window.show_banner("mdview-review", &message);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Send each page ITS OWN document's comments. Unlike the bookmark list,
     /// which is global, a review belongs to one document — pushing one
     /// window's comments to all of them would anchor them in the wrong text.
     pub(crate) fn push_comments_to_pages(&self) {
         for window in self.ivars().windows.borrow().iter() {
             let key = window.path.borrow().to_string_lossy().into_owned();
-            let script = crate::state::comments_script(&crate::store::load(&key));
+            let review = crate::store::load(&key);
+            // What could be read still goes to the page. Showing nothing
+            // because one record is bad would hide the comments that are fine.
+            let script = crate::state::comments_script(&review.comments);
             // Queued, never evaluated. See push_bookmarks_to_pages.
             window.pending_scripts.borrow_mut().push(script);
+            // The banner tracks the FILE, not the moment it went wrong: raised
+            // whenever a record cannot be read and taken away as soon as it can
+            // be again. This is the funnel the review watcher runs, so fixing
+            // the file by hand clears the banner without touching MDView.
+            let path = crate::store::review_path(&key).unwrap_or_default();
+            match crate::state::damaged_review_banner(&review.damage, &path.to_string_lossy()) {
+                // Queued for the same reason the script is: this runs on every
+                // open, when the page it would be injected into does not exist.
+                Some(message) => window
+                    .pending_banners
+                    .borrow_mut()
+                    .push(("mdview-review".to_string(), message)),
+                // Direct, and safe to lose: a page too new to receive this is
+                // also too new to be carrying the banner it would clear.
+                None => window.clear_banner("mdview-review"),
+            }
         }
     }
 
@@ -822,15 +863,20 @@ impl AppDelegate {
         let Some(window) = self.frontmost_window() else { return };
         let doc = window.path.borrow().clone();
         let key = doc.to_string_lossy().into_owned();
-        let comments = crate::store::load(&key);
+        let comments = crate::store::load(&key).comments;
         if comments.is_empty() {
             window.show_note("No comments on this document yet.");
             return;
         }
         // Write before copying, so the path in the prompt names a file that
-        // exists and is current even if an earlier write failed.
-        let headings = crate::store::headings_of(&doc);
-        let _ = crate::store::save(&key, &headings, &comments);
+        // exists and is current even if an earlier write failed. Skipped when
+        // the file cannot be wholly read: the prompt is still worth copying,
+        // and rewriting it here would erase exactly the records the banner is
+        // about — the ones a previous round of this same prompt mangled.
+        if !self.review_is_damaged(&window, &key) {
+            let headings = crate::store::headings_of(&doc);
+            let _ = crate::store::save(&key, &headings, &comments);
+        }
         let Some(review) = crate::store::review_path(&key) else { return };
         let prompt = crate::state::review_prompt(&review.to_string_lossy(), &key);
 
