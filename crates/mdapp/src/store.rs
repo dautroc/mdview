@@ -80,3 +80,26 @@ pub fn headings_of(doc: &Path) -> Vec<String> {
         Err(_) => Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The invariant the whole storage decision rests on: MDView writes only
+    /// where MDView owns. A review beside the document would fail on a
+    /// read-only volume and would show up in `git status` for every document
+    /// anyone commented on.
+    #[test]
+    fn the_review_lives_under_application_support_not_beside_the_document() {
+        let path = review_path("/Users/someone/project/notes.md").expect("HOME is set in tests");
+        let text = path.to_string_lossy();
+        assert!(text.contains("Library/Application Support/MDView/reviews"));
+        assert!(!text.contains("/project/"), "must not be beside the document");
+        assert!(text.ends_with(&crate::state::review_file_name("/Users/someone/project/notes.md")));
+    }
+
+    #[test]
+    fn a_document_with_no_review_yet_loads_as_no_comments() {
+        assert!(load("/nonexistent/never/opened.md").is_empty());
+    }
+}

@@ -82,6 +82,8 @@ pub struct ChromeTokens {
     pub find_hit_fg: Rgb,
     pub find_current_bg: Rgb,
     pub find_current_fg: Rgb,
+    pub comment_bg: Rgb,
+    pub comment_fg: Rgb,
 }
 
 /// Derive every chrome token from a theme's background and foreground.
@@ -118,6 +120,15 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
     // the warn hue, and the match the user is standing on takes the accent, so
     // "which one am I on" is a hue change rather than a brightness change that
     // a busy page can swallow.
+    // Comments take a third hue for the same reason find takes two: a page
+    // can hold a find match and a comment anchor at once, and telling them
+    // apart by tint alone is the only cue available inside running text.
+    let comment = if dark {
+        Rgb { r: 0xd2, g: 0xa8, b: 0xff }
+    } else {
+        Rgb { r: 0x82, g: 0x50, b: 0xdf }
+    };
+    let comment_bg = mix(bg, comment, if dark { 0.22 } else { 0.28 });
     let find_hit_bg = mix(bg, warn, if dark { 0.20 } else { 0.30 });
     let find_current_bg = mix(bg, accent, if dark { 0.24 } else { 0.34 });
     let diff_add_bg = mix(bg, add, 0.18);
@@ -147,6 +158,8 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         find_hit_fg: mix_to_contrast(find_hit_bg, fg, find_hit_bg, 4.5),
         find_current_bg,
         find_current_fg: mix_to_contrast(find_current_bg, fg, find_current_bg, 4.5),
+        comment_bg,
+        comment_fg: mix_to_contrast(comment_bg, fg, comment_bg, 4.5),
     }
 }
 
@@ -157,7 +170,8 @@ impl ChromeTokens {
 --banner-bg:{};--banner-fg:{};--banner-border:{};\
 --diff-add-bg:{};--diff-add-fg:{};--diff-del-bg:{};--diff-del-fg:{};\
 --diff-hunk-bg:{};--diff-hunk-fg:{};\
---find-hit-bg:{};--find-hit-fg:{};--find-current-bg:{};--find-current-fg:{};",
+--find-hit-bg:{};--find-hit-fg:{};--find-current-bg:{};--find-current-fg:{};\
+--comment-bg:{};--comment-fg:{};",
             self.bg.hex(),
             self.fg.hex(),
             self.muted.hex(),
@@ -177,6 +191,8 @@ impl ChromeTokens {
             self.find_hit_fg.hex(),
             self.find_current_bg.hex(),
             self.find_current_fg.hex(),
+            self.comment_bg.hex(),
+            self.comment_fg.hex(),
         )
     }
 }
@@ -236,6 +252,7 @@ mod tests {
             "--diff-hunk-bg", "--diff-hunk-fg",
             "--find-hit-bg", "--find-hit-fg",
             "--find-current-bg", "--find-current-fg",
+            "--comment-bg", "--comment-fg",
         ] {
             assert!(css.contains(name), "missing {name}");
         }

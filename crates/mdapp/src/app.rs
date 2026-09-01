@@ -253,6 +253,18 @@ define_class!(
             self.show_sidebar_tab("bookmarks");
         }
 
+        #[unsafe(method(showComments:))]
+        fn show_comments_action(&self, _sender: Option<&NSObject>) {
+            self.show_sidebar_tab("comments");
+        }
+
+        #[unsafe(method(copyReviewPrompt:))]
+        fn copy_review_prompt_action(&self, _sender: Option<&NSObject>) {
+            // Through handle_message, so the menu and the page's C cannot
+            // drift apart.
+            self.handle_message(crate::state::Message::CopyReview);
+        }
+
         #[unsafe(method(findInPage:))]
         fn find_in_page_action(&self, _sender: Option<&NSObject>) {
             self.run_page_script(crate::state::open_find_script());

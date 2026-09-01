@@ -193,6 +193,10 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 <input type="text" id="mdview-find-input" placeholder="Find" aria-label="Find in document" autocomplete="off" autocorrect="off" spellcheck="false">
 <span id="mdview-find-count" role="status" aria-live="polite"></span>
 </div>
+<div id="mdview-comment" hidden>
+<input type="text" id="mdview-comment-input" placeholder="Comment" aria-label="Comment on the selection" autocomplete="off" autocorrect="off" spellcheck="false">
+<span id="mdview-comment-quote"></span>
+</div>
 <div id="mdview-content">{body}</div>
 </main>
 <div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
@@ -270,6 +274,38 @@ mod tests {
         let bar = html.find("id=\"mdview-find\"").unwrap();
         let content = html.find("id=\"mdview-content\"").unwrap();
         assert!(bar < content);
+    }
+
+    #[test]
+    fn page_emits_the_comment_bar_hidden_with_its_field() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        assert!(html.contains("id=\"mdview-comment\" hidden"));
+        assert!(html.contains("id=\"mdview-comment-input\""));
+        // Same reason as the find bar: a live reload replaces #mdview-content
+        // wholesale and would take the bar, and the field's focus, with it.
+        let bar = html.find("id=\"mdview-comment\"").unwrap();
+        let content = html.find("id=\"mdview-content\"").unwrap();
+        assert!(bar < content);
+    }
+
+    /// The anchor colours are the one pair a named theme does NOT have to
+    /// supply. Under the default System theme no `data-theme` is stamped, so
+    /// `chrome::tokens` never runs and an undefined var paints nothing — the
+    /// bug that would make every comment invisible out of the box, and the one
+    /// `--find-hit-bg` only escapes because `<mark>` has a UA default.
+    #[test]
+    fn the_comment_anchor_colour_has_a_fallback_for_the_system_theme() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        // The catalogue of named-theme blocks is always emitted; what System
+        // leaves off is the attribute on <html> that would select one.
+        let root_tag = &html[..html.find('>').expect("the html tag")];
+        assert!(!root_tag.contains("data-theme="), "System stamps no theme");
+        let root = html.find(":root {").expect("the base palette");
+        let dark = html.find("@media (prefers-color-scheme: dark)").expect("the dark palette");
+        let vars = &html[root..dark];
+        assert!(vars.contains("--comment-bg:"), "no light fallback for --comment-bg");
+        assert!(vars.contains("--comment-fg:"), "no light fallback for --comment-fg");
+        assert!(html[dark..].contains("--comment-bg:"), "no dark fallback");
     }
 
     #[test]
@@ -428,6 +464,25 @@ mod tests {
         }
     }
 
+    /// Find tears its marks down by replacing each with a flat text node,
+    /// which deletes whatever was nested inside. So comment anchors have to be
+    /// the OUTER wrapper: applied before find re-runs, never after. Get this
+    /// backwards and closing the find bar silently strips every anchor it
+    /// happened to overlap — invisible until someone loses a comment.
+    #[test]
+    fn comment_anchors_are_applied_before_the_search_re_runs() {
+        let js = assets::INIT_JS;
+        let start = js
+            .find("function refreshHighlights(")
+            .expect("the one funnel for both highlight layers");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        let anchors = body.find("applyCommentAnchors()").expect("anchors are applied");
+        let find = body.find("refreshFind()").expect("find is re-run");
+        assert!(anchors < find, "find would delete the anchors nested inside it");
+        assert!(body.contains("clearFindHighlights()"), "stale find marks would nest");
+    }
+
     #[test]
     fn keyboard_shortcuts_are_embedded_in_the_page() {
         let html = build_page(&doc(), "<p>hi</p>", Theme::System);
@@ -447,6 +502,7 @@ mod tests {
             "\"/\"", "\"n\"", "\"N\"",
             "\"s\"", "\"o\"", "\"b\"", "\"m\"", "\"t\"",
             "\"D\"", "\"l\"", "\"z\"", "\"w\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
+            "\"c\"", "\"e\"", "\"x\"", "\"C\"",
         ] {
             let needle = format!("keys: [{}", key);
             let alt = format!(", {}]", key);

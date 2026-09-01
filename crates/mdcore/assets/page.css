@@ -14,6 +14,12 @@
   --diff-del-fg: #1f2328;
   --diff-hunk-bg: #e7f0ff;
   --diff-hunk-fg: #1f2328;
+  /* Named themes get these from chrome::tokens, but the default System theme
+     stamps no data-theme and so gets nothing. A <mark> would still show in the
+     UA's yellow, which is find's colour - the comment hue has to be defined
+     here or the two become indistinguishable out of the box. */
+  --comment-bg: #ede2fb;
+  --comment-fg: #4b2c85;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -31,6 +37,8 @@
     --diff-add-fg: #e6edf3;
     --diff-del-bg: #4b2223;
     --diff-del-fg: #e6edf3;
+    --comment-bg: #34215c;
+    --comment-fg: #e0ccff;
     --diff-hunk-bg: #1f334b;
     --diff-hunk-fg: #e6edf3;
   }
@@ -429,7 +437,69 @@ body.mdview-resizing #mdview-sidebar-resizer {
   box-shadow: 0 0 0 2px var(--find-current-fg);
 }
 
+/* Comment anchors. One comment can span several marks when the selection
+   crosses inline elements, so the run reads as one highlight only if the
+   marks are seamless - hence no per-mark padding. */
+.mdview-comment-anchor {
+  background: var(--comment-bg);
+  border-radius: 2px;
+  color: var(--comment-fg);
+  cursor: default;
+}
+.mdview-comment-anchor.is-current {
+  box-shadow: 0 0 0 2px var(--comment-fg);
+}
+
+/* A comment whose quoted text was edited away. It keeps its place in the list
+   rather than vanishing - it is still something you wrote - but it has no
+   highlight to jump to, and says so. */
+/* Scoped through the id, because #mdview-sidebar-body a already sets both of
+   these and out-specifies a bare class selector. */
+#mdview-sidebar-body .mdview-comment-item.is-orphaned a {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* The entry bar sits where find's does, and only one of them is ever up. */
+#mdview-comment {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 13;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+#mdview-comment[hidden] { display: none; }
+#mdview-comment-input {
+  width: 22rem;
+  padding: 0.2rem 0.35rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+#mdview-comment-input:focus {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
+#mdview-comment-quote {
+  max-width: 18rem;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 700px) {
+  #mdview-comment-input { width: 10rem; }
+  #mdview-comment-quote { display: none; }
   #mdview-find-input { width: 8rem; }
   #mdview-find-count { min-width: 0; }
 }

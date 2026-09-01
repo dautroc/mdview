@@ -176,6 +176,17 @@ fn rendered_html_carries_every_token_mdapp_js_depends_on() {
         assert!(html.contains(token), "missing sidebar token {token}");
     }
 
+    // The comment layer crosses the same crate boundary: `state.rs` names
+    // `mdviewSetComments` in a script it builds, and the two classes are what
+    // the anchors and the entry field are looked up and painted by.
+    for token in [
+        "mdviewSetComments",
+        "id=\"mdview-comment-input\"",
+        "mdview-comment-anchor",
+    ] {
+        assert!(html.contains(token), "missing comment token {token}");
+    }
+
     // Self-contained: no external stylesheet, no externally-sourced script.
     assert_eq!(html.matches("<link").count(), 0, "no external stylesheets: {html}");
     assert_eq!(html.matches("src=\"http").count(), 0, "no external scripts: {html}");

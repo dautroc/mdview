@@ -144,6 +144,9 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     find_menu.addItem(&item(mtm, "Find Next", sel!(findNextMatch:), ""));
     find_menu.addItem(&item(mtm, "Find Previous", sel!(findPreviousMatch:), ""));
     edit_menu.addItem(&find_holder);
+    edit_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    // C on the keyboard. No key equivalent here: ⇧⌘C is not MDView's to take.
+    edit_menu.addItem(&item(mtm, "Copy Review Prompt", sel!(copyReviewPrompt:), ""));
     menubar.addItem(&edit_holder);
 
     let (view_holder, view_menu) = submenu(mtm, "View");
@@ -164,6 +167,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     // still switch tabs; these are what is left for a mouse.
     view_menu.addItem(&item(mtm, "Outline", sel!(showOutline:), ""));
     view_menu.addItem(&item(mtm, "Bookmarks", sel!(showBookmarks:), ""));
+    view_menu.addItem(&item(mtm, "Comments", sel!(showComments:), ""));
     // Themes have no other native home: the in-page picker is a palette the
     // keyboard opens, so without this the menu bar could not reach them at all.
     // Checkmarks are stamped in the delegate's validateMenuItem:, not here, so

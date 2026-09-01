@@ -378,7 +378,7 @@
     // runs -- covering images -- even when mermaid itself failed.
     renderDiagrams().then(enhanceZoomables);
     renderSidebarBody();
-    refreshFind();
+    refreshHighlights();
   };
 
   // ---- Find in page --------------------------------------------------------
@@ -673,7 +673,10 @@
     // With the tabs gone, this heading is the only thing saying which of the
     // two panels you are looking at.
     var title = document.getElementById("mdview-sidebar-title");
-    if (title) title.textContent = sidebarTab === "bookmarks" ? "Bookmarks" : "Outline";
+    if (title) {
+      title.textContent =
+        sidebarTab === "bookmarks" ? "Bookmarks" : sidebarTab === "comments" ? "Comments" : "Outline";
+    }
     renderSidebarBody();
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
   }
@@ -838,6 +841,35 @@
           );
           if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
         });
+      }
+    } else if (sidebarTab === "comments") {
+      if (!comments.length) {
+        body.innerHTML = "<p class=\"mdview-sidebar-empty\">No comments yet.</p>";
+        return;
+      }
+      body.innerHTML = "<ul></ul>";
+      var commentList = body.firstChild;
+      for (var n = 0; n < comments.length; n++) {
+        (function (comment) {
+          var li = document.createElement("li");
+          li.className = "mdview-comment-item";
+          var a = document.createElement("a");
+          a.href = "#";
+          // textContent, never innerHTML: both fields are document text.
+          a.textContent = comment.note || comment.quote;
+          a.title = comment.quote;
+          if (commentOrphans[comment.id]) {
+            li.classList.add("is-orphaned");
+            a.title = "The text this quoted is gone:\n" + comment.quote;
+          }
+          a.addEventListener("click", function (event) {
+            event.preventDefault();
+            var marks = anchorMarks(comment.id);
+            if (marks && marks.length) marks[0].scrollIntoView({ block: "center" });
+          });
+          li.appendChild(a);
+          commentList.appendChild(li);
+        })(comments[n]);
       }
     } else {
       if (!bookmarks.length) {
@@ -1103,6 +1135,485 @@
     }
   }
 
+  // ---- Comments -------------------------------------------------------------
+  //
+  // A comment is anchored by (heading ordinal, quote, nth occurrence), never by
+  // a heading id: buildOutline is the only code that assigns those, and it runs
+  // only while the outline panel is showing, so an id is a field that is
+  // frequently absent.
+  //
+  // Anchors are re-applied from scratch after every render, like the outline
+  // and unlike anything incremental -- patching already-processed nodes is the
+  // defect class that has bitten this project twice.
+
+  var comments = [];
+  var commentAnchors = [];
+  var commentOrphans = {};
+  var pendingComment = null;
+  var editingCommentId = null;
+  var COMMENT_QUOTE_MAX = 400;
+  var COMMENT_BLOCKS = "p,li,td,th,h1,h2,h3,h4,h5,h6,pre,blockquote,dd,dt,figcaption";
+
+  function contentEl() {
+    return document.getElementById("mdview-content");
+  }
+
+  // The concatenated plain text of a root, plus the map back to the text nodes
+  // it came from.
+  //
+  // This exists because Selection.toString() concatenates across inline
+  // elements: selecting `the **bold** word` yields "the bold word", a string
+  // that appears in no single text node. Find matches one node at a time, which
+  // is why it silently misses phrases containing code, bold or a link; reusing
+  // that here would orphan most real selections on the first save.
+  function textIndex(root) {
+    var nodes = collectFindTextNodes(root);
+    var text = "";
+    var spans = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var value = nodes[i].nodeValue;
+      spans.push({ node: nodes[i], start: text.length, end: text.length + value.length });
+      text += value;
+    }
+    return { text: text, spans: spans };
+  }
+
+  // Map a [from, to) slice of that concatenated text back to one run per text
+  // node it crosses.
+  function runsFor(index, from, to) {
+    var runs = [];
+    for (var i = 0; i < index.spans.length; i++) {
+      var span = index.spans[i];
+      if (span.end <= from) continue;
+      if (span.start >= to) break;
+      runs.push({
+        node: span.node,
+        start: Math.max(from, span.start) - span.start,
+        end: Math.min(to, span.end) - span.start,
+      });
+    }
+    return runs;
+  }
+
+  // Wrap each run in its own <mark>. Deliberately not Range.surroundContents,
+  // which throws on a partially selected node -- precisely this case. One
+  // comment therefore becomes several marks sharing a data-comment-id, which
+  // read as a single highlight because the class carries no padding.
+  function wrapRuns(runs, id) {
+    var marks = [];
+    for (var i = 0; i < runs.length; i++) {
+      var run = runs[i];
+      if (run.end <= run.start) continue;
+      var hit = run.start > 0 ? run.node.splitText(run.start) : run.node;
+      if (hit.nodeValue.length > run.end - run.start) hit.splitText(run.end - run.start);
+      var mark = document.createElement("mark");
+      mark.className = "mdview-comment-anchor";
+      mark.setAttribute("data-comment-id", id);
+      hit.parentNode.replaceChild(mark, hit);
+      mark.appendChild(hit);
+      marks.push(mark);
+    }
+    return marks;
+  }
+
+  // Where each heading's section starts in the concatenated text: the offset of
+  // the first text node at or after it.
+  function sectionStarts(index) {
+    var content = contentEl();
+    if (!content) return [];
+    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var starts = new Array(headings.length);
+    var k = 0;
+    for (var i = 0; i < index.spans.length && k < headings.length; i++) {
+      var node = index.spans[i].node;
+      while (k < headings.length && headingReaches(headings[k], node)) {
+        starts[k] = index.spans[i].start;
+        k++;
+      }
+    }
+    for (; k < headings.length; k++) starts[k] = index.text.length;
+    return starts;
+  }
+
+  function headingReaches(heading, node) {
+    if (heading.contains(node)) return true;
+    return (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }
+
+  // The [from, to) slice a comment's heading ordinal names. 0 is the text above
+  // the first heading.
+  function sectionRange(index, starts, heading) {
+    if (!starts.length) return { from: 0, to: index.text.length };
+    if (heading <= 0) return { from: 0, to: starts.length ? starts[0] : index.text.length };
+    var from = heading - 1 < starts.length ? starts[heading - 1] : index.text.length;
+    var to = heading < starts.length ? starts[heading] : index.text.length;
+    return { from: from, to: to };
+  }
+
+  function clearCommentAnchors() {
+    for (var i = 0; i < commentAnchors.length; i++) {
+      var marks = commentAnchors[i].marks;
+      for (var j = 0; j < marks.length; j++) {
+        var mark = marks[j];
+        var parent = mark.parentNode;
+        if (!parent) continue;
+        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+        parent.normalize();
+      }
+    }
+    commentAnchors = [];
+  }
+
+  // Re-find every comment and highlight it.
+  //
+  // Ranges are resolved against ONE pristine index and then wrapped in
+  // descending order, because wrapping splits text nodes: going backwards means
+  // a split can only ever affect offsets we have already used.
+  function applyCommentAnchors() {
+    clearCommentAnchors();
+    commentOrphans = {};
+    var content = contentEl();
+    if (!content || !comments.length) return;
+    var index = textIndex(content);
+    var starts = sectionStarts(index);
+    var found = [];
+    for (var i = 0; i < comments.length; i++) {
+      var comment = comments[i];
+      if (!comment.quote) continue;
+      var range = sectionRange(index, starts, comment.heading);
+      var section = index.text.slice(range.from, range.to);
+      var at = -1;
+      var seen = -1;
+      var cursor = 0;
+      while (cursor <= section.length) {
+        var hit = section.indexOf(comment.quote, cursor);
+        if (hit < 0) break;
+        seen++;
+        at = hit;
+        if (seen >= comment.nth) break;
+        cursor = hit + 1;
+      }
+      if (at < 0) {
+        // The text it quoted is gone. Kept in the list, marked orphaned: a
+        // comment whose subject was edited away is still something you wrote.
+        commentOrphans[comment.id] = true;
+        continue;
+      }
+      found.push({
+        comment: comment,
+        from: range.from + at,
+        to: range.from + at + comment.quote.length,
+      });
+    }
+    found.sort(function (a, b) {
+      return b.from - a.from;
+    });
+    var claimed = [];
+    for (var f = 0; f < found.length; f++) {
+      var entry = found[f];
+      var overlaps = false;
+      for (var c = 0; c < claimed.length; c++) {
+        if (entry.from < claimed[c].to && claimed[c].from < entry.to) overlaps = true;
+      }
+      // Nested anchors would destroy each other on the next clear, so the
+      // second comment on the same words shows in the list without a highlight.
+      if (overlaps) {
+        commentOrphans[entry.comment.id] = true;
+        continue;
+      }
+      claimed.push(entry);
+      var marks = wrapRuns(runsFor(index, entry.from, entry.to), entry.comment.id);
+      if (marks.length) commentAnchors.push({ id: entry.comment.id, marks: marks });
+      else commentOrphans[entry.comment.id] = true;
+    }
+  }
+
+  // The one funnel for both highlight layers, and the reason it exists: find
+  // tears its marks down by replacing them with a flat text node, which DELETES
+  // anything nested inside. So comment anchors have to be the OUTER wrapper --
+  // applied before find, never after it -- or closing find would silently strip
+  // every anchor it happened to overlap.
+  function refreshHighlights() {
+    clearFindHighlights();
+    applyCommentAnchors();
+    refreshFind();
+  }
+
+  function anchorMarks(id) {
+    for (var i = 0; i < commentAnchors.length; i++) {
+      if (commentAnchors[i].id === id) return commentAnchors[i].marks;
+    }
+    return null;
+  }
+
+  // The comment you are looking at, by the rule z already uses for images.
+  // `limit` caps how far off centre it may be: x deletes without undo, so it
+  // refuses when there is nothing on screen you could have seen.
+  function nearestComment(limit) {
+    var best = null;
+    var bestDistance = Infinity;
+    var centre = window.innerHeight / 2;
+    for (var i = 0; i < commentAnchors.length; i++) {
+      var marks = commentAnchors[i].marks;
+      if (!marks.length) continue;
+      var rect = marks[0].getBoundingClientRect();
+      var distance = Math.abs((rect.top + rect.bottom) / 2 - centre);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = commentAnchors[i].id;
+      }
+    }
+    if (best === null) return null;
+    if (limit != null && bestDistance > limit) return null;
+    return commentById(best);
+  }
+
+  function commentById(id) {
+    for (var i = 0; i < comments.length; i++) {
+      if (comments[i].id === id) return comments[i];
+    }
+    return null;
+  }
+
+  // ---- The comment entry bar ------------------------------------------------
+
+  function commentBarEl() {
+    return document.getElementById("mdview-comment");
+  }
+
+  function commentInputEl() {
+    return document.getElementById("mdview-comment-input");
+  }
+
+  function commentBarIsOpen() {
+    var bar = commentBarEl();
+    return !!bar && !bar.hidden;
+  }
+
+  function openCommentBar(quote, note) {
+    var bar = commentBarEl();
+    var input = commentInputEl();
+    if (!bar || !input) return;
+    var label = document.getElementById("mdview-comment-quote");
+    if (label) label.textContent = quote;
+    input.value = note || "";
+    bar.hidden = false;
+    input.focus();
+    input.select();
+  }
+
+  function closeCommentBar() {
+    var bar = commentBarEl();
+    var input = commentInputEl();
+    pendingComment = null;
+    editingCommentId = null;
+    if (!bar || !input) return;
+    bar.hidden = true;
+    // Blurred on the way out: a hidden field that still holds focus goes on
+    // eating j and k. Same hazard the find bar documents.
+    input.blur();
+  }
+
+  function commitComment() {
+    var input = commentInputEl();
+    if (!input) return;
+    var note = input.value;
+    if (editingCommentId !== null) {
+      postToHost("editComment:" + editingCommentId + ":" + encodeURIComponent(note));
+    } else if (pendingComment) {
+      postToHost(
+        "addComment:" +
+          pendingComment.heading +
+          ":" +
+          pendingComment.nth +
+          ":" +
+          encodeURIComponent(pendingComment.quote) +
+          ":" +
+          encodeURIComponent(note)
+      );
+    }
+    closeCommentBar();
+  }
+
+  // ---- Capturing a selection ------------------------------------------------
+
+  function blockOf(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    while (el && el !== document.body) {
+      if (el.matches && el.matches(COMMENT_BLOCKS)) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function insideUnstableSubtree(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    while (el && el !== document.body) {
+      var tag = el.tagName ? el.tagName.toLowerCase() : "";
+      // Mermaid re-runs and KaTeX rewrites their own subtrees, so text in
+      // there is not the same text after the next render.
+      if (tag === "svg") return true;
+      if (el.classList && (el.classList.contains("katex") || el.classList.contains("katex-mathml"))) {
+        return true;
+      }
+      el = el.parentNode;
+    }
+    return false;
+  }
+
+  function offsetOfPoint(index, node, offset) {
+    for (var i = 0; i < index.spans.length; i++) {
+      if (index.spans[i].node === node) return index.spans[i].start + offset;
+    }
+    return -1;
+  }
+
+  // What the selection is, or null with the reason shown. Called BEFORE the
+  // input is focused, because focusing collapses the selection in WebKit.
+  function captureSelection() {
+    var content = contentEl();
+    if (!content) return null;
+    if (document.documentElement.getAttribute("data-view") === "diff") {
+      showNote("Comments belong on the document, not the diff.");
+      return null;
+    }
+    var selection = null;
+    try {
+      selection = window.getSelection();
+    } catch (err) {
+      return null;
+    }
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+    var range = selection.getRangeAt(0);
+    if (!content.contains(range.commonAncestorContainer)) return null;
+    var quote = String(selection);
+    if (!quote.trim()) return null;
+    if (quote.length > COMMENT_QUOTE_MAX) {
+      showNote("That selection is too long to comment on.");
+      return null;
+    }
+    if (insideUnstableSubtree(range.startContainer)) {
+      showNote("Maths and diagrams cannot hold a comment.");
+      return null;
+    }
+    var startBlock = blockOf(range.startContainer);
+    var endBlock = blockOf(range.endContainer);
+    if (!startBlock || startBlock !== endBlock) {
+      showNote("Select within a single paragraph.");
+      return null;
+    }
+    var index = textIndex(content);
+    var starts = sectionStarts(index);
+    var absolute = offsetOfPoint(index, range.startContainer, range.startOffset);
+    var heading = 0;
+    for (var i = 0; i < starts.length; i++) {
+      if (absolute >= starts[i]) heading = i + 1;
+    }
+    var section = sectionRange(index, starts, heading);
+    var body = index.text.slice(section.from, section.to);
+    // Which occurrence of these words this is, counted within the section, so
+    // two identical quotes under one heading stay told apart.
+    var nth = 0;
+    if (absolute >= 0) {
+      var cursor = 0;
+      while (true) {
+        var hit = body.indexOf(quote, cursor);
+        if (hit < 0 || section.from + hit >= absolute) break;
+        nth++;
+        cursor = hit + 1;
+      }
+    }
+    return { heading: heading, nth: nth, quote: quote };
+  }
+
+  // ---- The keys -------------------------------------------------------------
+
+  function commentKey() {
+    var capture = captureSelection();
+    if (!capture) {
+      // No selection: c is then the third panel, the way o and b are.
+      showSidebarTab("comments");
+      return;
+    }
+    if (!hasHost()) {
+      showNote("Comments need the app.");
+      return;
+    }
+    pendingComment = capture;
+    editingCommentId = null;
+    setSidebar(true, "comments");
+    openCommentBar(capture.quote, "");
+  }
+
+  function editCommentKey() {
+    var comment = nearestComment(null);
+    if (!comment) {
+      showNote("No comment to edit.");
+      return;
+    }
+    pendingComment = null;
+    editingCommentId = comment.id;
+    openCommentBar(comment.quote, comment.note);
+  }
+
+  function deleteCommentKey() {
+    // A viewport height off centre: far enough to cover a comment scrolled to
+    // either edge, close enough that you cannot delete one you never saw.
+    var comment = nearestComment(window.innerHeight);
+    if (!comment) {
+      showNote("No comment on screen to delete.");
+      return;
+    }
+    var excerpt = comment.quote.length > 40 ? comment.quote.slice(0, 40) + "…" : comment.quote;
+    postToHost("deleteComment:" + comment.id);
+    showNote("Deleted the comment on “" + excerpt + "”");
+  }
+
+  function copyReviewKey() {
+    if (!postToHost("copyReview")) showNote("Comments need the app.");
+  }
+
+  // Whether the app is behind this page at all, asked without sending
+  // anything: c has to refuse before opening an input that could never save.
+  function hasHost() {
+    try {
+      return !!window.webkit.messageHandlers.mdview;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // ---- Host hooks -----------------------------------------------------------
+
+  window.mdviewSetComments = function (items) {
+    comments = Array.isArray(items) ? items : [];
+    refreshHighlights();
+    if (sidebarTab === "comments") renderSidebarBody();
+  };
+
+  function attachCommentListeners() {
+    var input = commentInputEl();
+    if (!input) return;
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitComment();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeCommentBar();
+      }
+    });
+    // The safety net find has for the same reason: the bar can lose focus to a
+    // click and Escape should still shut it.
+    document.addEventListener("keydown", function (event) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "Escape" && commentBarIsOpen() && !zoomState) {
+        event.preventDefault();
+        closeCommentBar();
+      }
+    });
+  }
+
   // ---- The first-run hint ---------------------------------------------------
   //
   // Shown once ever, queued by the app. Its own element rather than a banner:
@@ -1271,7 +1782,8 @@
   // than toggling it, unlike the o and b keys: picking "Outline" from a menu and
   // having the panel shut is not what anyone means by it.
   window.mdviewShowSidebarTab = function (tab) {
-    setSidebar(true, tab === "bookmarks" ? "bookmarks" : "outline");
+    var known = tab === "bookmarks" || tab === "comments" ? tab : "outline";
+    setSidebar(true, known);
   };
 
   function cycleDiffLayout() {
@@ -1378,6 +1890,16 @@
         { keys: ["b"], hint: "b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["t"], hint: "t", label: "Themes", run: toggleThemePalette },
+      ],
+    },
+    {
+      title: "Comments",
+      items: [
+        { keys: ["c"], hint: "c", label: "Comment on the selection, or show the comments", run: commentKey },
+        { keys: ["e"], hint: "e", label: "Edit the comment you are looking at", run: editCommentKey },
+        { keys: ["x"], hint: "x", label: "Delete the comment you are looking at", run: deleteCommentKey },
+        { keys: ["C"], hint: "C", label: "Copy the review prompt for Claude", run: copyReviewKey },
+        { keys: [], hint: "esc", label: "Abandon what you were typing", run: null },
       ],
     },
     {
@@ -1663,6 +2185,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     attachSidebarListeners();
     attachFindListeners();
+    attachCommentListeners();
     attachKeyListeners();
     window.mdviewRenderAll();
   });

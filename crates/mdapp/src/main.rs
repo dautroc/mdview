@@ -135,6 +135,40 @@ mod bundle_version_tests {
         assert!(app.contains("mdviewShowSidebarTab"));
     }
 
+    #[test]
+    fn the_comment_commands_are_reachable_without_the_keyboard() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(showComments:)"));
+        assert!(menu.contains("sel!(copyReviewPrompt:)"));
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(showComments:))]"));
+        assert!(app.contains("#[unsafe(method(copyReviewPrompt:))]"));
+        // Through the same message the page's C sends, so the two cannot drift.
+        assert!(app.contains("Message::CopyReview"));
+    }
+
+    /// The same hazard as the first-run hint, and the one most likely to be
+    /// got wrong twice: comments are pushed on every open and reload, which is
+    /// exactly when loadHTMLString has returned but the page does not exist
+    /// yet. Evaluating there runs the call against nothing and the anchors
+    /// never appear, with no error anywhere.
+    #[test]
+    fn the_comment_list_is_queued_rather_than_evaluated() {
+        let app = include_str!("app.rs");
+        let start = app
+            .find("pub(crate) fn push_comments_to_pages")
+            .expect("the comment push must have a single funnel");
+        let end = start + app[start..].find("\n    ///").expect("end of fn");
+        let body = &app[start..end];
+        assert!(body.contains("pending_scripts"));
+        assert!(
+            !body.contains("eval_script"),
+            "drain_pending_banners owns the readiness check"
+        );
+        // One document's comments never reach another document's page.
+        assert!(body.contains("window.path.borrow()"));
+    }
+
     /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
     /// evaluating it directly would run against a page that does not exist yet.
     #[test]

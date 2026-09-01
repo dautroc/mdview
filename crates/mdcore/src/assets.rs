@@ -24,4 +24,23 @@ mod tests {
         assert!(super::PAGE_CSS.contains("#mdview-note {"));
         assert!(super::PAGE_CSS.contains("#mdview-note.is-visible"));
     }
+
+    /// Same hazard, same guard: the comment layer is three hooks the host
+    /// calls by name and two classes only the stylesheet defines. A rename on
+    /// one side alone throws, or paints nothing, in silence.
+    #[test]
+    fn the_comment_helpers_are_defined_and_styled() {
+        for hook in [
+            "window.mdviewSetComments",
+            "function applyCommentAnchors(",
+            "function clearCommentAnchors(",
+            "function refreshHighlights(",
+            "function attachCommentListeners(",
+        ] {
+            assert!(super::INIT_JS.contains(hook), "init.js is missing {hook}");
+        }
+        assert!(super::INIT_JS.contains("attachCommentListeners();"), "never attached");
+        assert!(super::PAGE_CSS.contains(".mdview-comment-anchor {"));
+        assert!(super::PAGE_CSS.contains("#mdview-comment-input {"));
+    }
 }

@@ -22,6 +22,9 @@ LaTeX math, and Mermaid diagrams.
 - **Outline** built from the document's headings, in a sidebar you can toggle
   and drag to resize; the width is remembered across launches.
 - **Bookmarks** for documents you come back to, kept across launches.
+- **Comments.** Select a phrase, press `c`, type a note. Comments are
+  highlighted in the text, listed in the sidebar and kept across launches, and
+  `C` copies a prompt that points Claude at the review file holding them.
 - **Themes** — three light, four dark, or follow the system. `t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
@@ -94,6 +97,9 @@ offers once on first launch.
 | s | Toggle the sidebar |
 | o / b | Outline / bookmarks in the sidebar |
 | m | Bookmark this document |
+| c | Comment on the selection, or show the comments |
+| e / x | Edit / delete the comment you are looking at |
+| C | Copy the review prompt for Claude |
 | t | Themes |
 | D | Diff, and back to Markdown |
 | l | Diff layout, unified or split |

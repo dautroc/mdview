@@ -3,6 +3,25 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## Unreleased
+
+### What's new
+
+- **Comments.** Select a phrase, press `c`, type a note. The passage is
+  highlighted where it sits, the note joins a list in the sidebar beside the
+  outline and bookmarks, and both come back next launch. `e` edits the comment
+  you are looking at and `x` deletes it — refusing when the nearest one is off
+  screen, since there is no undo. `C` copies a one-line prompt naming the
+  review file, to paste into Claude.
+- **Comments survive editing.** An anchor is re-found after every live reload
+  by its quoted words, scoped to the section it was made in, so a save
+  elsewhere in the document does not move it. A comment whose words were edited
+  away keeps its place in the list, struck through, rather than vanishing.
+- **Reviews are stored where MDView owns.** Under Application Support, keyed by
+  the document's path, not beside the document — MDView is pointed at files on
+  read-only volumes and inside app bundles, and a sibling file would land in
+  `git status` for every document anyone commented on.
+
 ## [v0.9.1](https://github.com/dautroc/mdview/releases/tag/v0.9.1) — 2026-09-01
 
 ### Fixes
