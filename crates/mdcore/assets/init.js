@@ -718,6 +718,40 @@
     postToHost("setSidebarWidth:" + next);
   }
 
+  // ---- Transient acknowledgements -----------------------------------------
+  //
+  // A short line in the top-right for actions whose only other evidence is a
+  // panel that may be shut. Top-RIGHT because the find bar owns the top-left
+  // and the first-run hint owns the bottom; it steps aside when the sidebar
+  // is open so it never lands on top of the list it is reporting about.
+
+  var NOTE_LINGER_MS = 1800;
+  var noteTimer = 0;
+
+  function showNote(text) {
+    var note = document.getElementById("mdview-note");
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "mdview-note";
+      note.setAttribute("role", "status");
+      document.body.appendChild(note);
+    }
+    note.textContent = text;
+    // Toggling twice in a row rewrites the line in place and restarts the
+    // countdown, so the second message is not cut short by the first's timer.
+    clearTimeout(noteTimer);
+    // Two frames, so a freshly inserted element is laid out before the
+    // transition starts; adding the class in the same frame skips the fade.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        note.classList.add("is-visible");
+      });
+    });
+    noteTimer = setTimeout(function () {
+      note.classList.remove("is-visible");
+    }, NOTE_LINGER_MS);
+  }
+
   // The star button was the whole feedback for bookmarking. With it gone,
   // pressing m with the sidebar shut would be a keypress into the void, so the
   // change is reported instead. The first call is the page being told what it

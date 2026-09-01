@@ -648,3 +648,30 @@ body.mdview-resizing #mdview-sidebar-resizer {
 }
 #mdview-hint.is-visible { opacity: 1; transform: translate(-50%, 0); }
 #mdview-hint.is-leaving { opacity: 0; transform: translate(-50%, .5rem); }
+
+/* The top-right acknowledgement. Same material as the hint, opposite corner:
+   the hint sits at the bottom for six seconds on first run, and an action's
+   receipt has to be able to appear while that one is still up. */
+#mdview-note {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 22%);
+  color: var(--fg);
+  font-size: .8125rem;
+  opacity: 0;
+  padding: .4rem .9rem;
+  /* It is a notice, never a target: clicks belong to the document under it. */
+  pointer-events: none;
+  position: fixed;
+  right: .75rem;
+  top: .55rem;
+  transform: translateY(-.5rem);
+  transition: opacity .2s ease, transform .2s ease;
+  z-index: 1200;
+}
+/* Clear of the sidebar, which is in normal flow along the right edge. */
+:root[data-sidebar-open="1"] #mdview-note {
+  right: calc(var(--sidebar-width, 260px) + .75rem);
+}
+#mdview-note.is-visible { opacity: 1; transform: translateY(0); }

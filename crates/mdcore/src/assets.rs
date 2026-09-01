@@ -10,3 +10,18 @@ pub const MERMAID_JS: &str = include_str!("../assets/mermaid.js");
 /// Monokai Pro's palette is not one of syntect's defaults, so it ships as a
 /// tmTheme embedded like every other asset rather than read from disk.
 pub const MONOKAI_PRO_THEME: &str = include_str!("../assets/monokai-pro.tmTheme");
+
+#[cfg(test)]
+mod tests {
+    /// v0.9.0 shipped a call to `showNote` with no such function anywhere in
+    /// the file: every bookmark toggle threw, which took the page's own star
+    /// state and the bookmarks list down with it. Nothing failed loudly, so
+    /// the pairing is asserted here.
+    #[test]
+    fn the_note_helper_is_defined_and_styled() {
+        assert!(super::INIT_JS.contains("function showNote("));
+        assert!(super::INIT_JS.contains("showNote(next ? "));
+        assert!(super::PAGE_CSS.contains("#mdview-note {"));
+        assert!(super::PAGE_CSS.contains("#mdview-note.is-visible"));
+    }
+}
