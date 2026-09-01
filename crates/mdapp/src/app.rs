@@ -803,7 +803,7 @@ impl AppDelegate {
         let key = doc.to_string_lossy().into_owned();
         let comments = crate::store::load(&key);
         if comments.is_empty() {
-            window.show_banner("mdview-comments", "No comments on this document yet.");
+            window.show_note("No comments on this document yet.");
             return;
         }
         // Write before copying, so the path in the prompt names a file that
@@ -820,7 +820,7 @@ impl AppDelegate {
             pasteboard.clearContents();
             pasteboard.setString_forType(&NSString::from_str(&prompt), NSPasteboardTypeString);
         }
-        window.show_banner("mdview-comments", "Review prompt copied — paste it into Claude.");
+        window.show_note("Review prompt copied — paste it into Claude.");
     }
 
     /// Send the bookmark list, and whether the current document is among

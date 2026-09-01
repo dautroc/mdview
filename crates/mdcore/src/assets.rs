@@ -23,6 +23,8 @@ mod tests {
         assert!(super::INIT_JS.contains("showNote(next ? "));
         assert!(super::PAGE_CSS.contains("#mdview-note {"));
         assert!(super::PAGE_CSS.contains("#mdview-note.is-visible"));
+        // The host says some of the same things, and reaches this by name.
+        assert!(super::INIT_JS.contains("window.mdviewNote = showNote;"));
     }
 
     /// Same hazard, same guard: the comment layer is three hooks the host

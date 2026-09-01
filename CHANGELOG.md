@@ -32,6 +32,13 @@ the commits that introduced them. The newest release is listed first.
   multi-line code now anchor too, and a selection that really does cross a
   paragraph break says so. The words are trimmed first, so the whitespace a
   double-click takes with them is not part of the anchor.
+- **`C` says "copied" the way every other key does.** It first reported through
+  a banner, which is the app's way of raising a condition someone has to deal
+  with: it sits in the corner until it is clicked, so pressing the shortcut
+  twice left two of them stacked up. Copying is news that expires, so it now
+  uses the same short notice in the top-right corner that bookmarking and the
+  other keys use, and it takes itself away. A review that could not be *written*
+  is still a banner, because that one does want attention.
 - **Comments survive editing.** An anchor is re-found after every live reload
   by its quoted words, scoped to the section it was made in, so a save
   elsewhere in the document does not move it. A comment whose words were edited

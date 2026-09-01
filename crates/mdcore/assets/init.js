@@ -757,6 +757,12 @@
     }, NOTE_LINGER_MS);
   }
 
+  // The host says some of the same things the page does -- "copied", "nothing
+  // to copy" -- and they are news that expires, not a condition to resolve. A
+  // banner would sit there until clicked; this is the same transient line the
+  // page's own keys use, so one kind of message reads one way.
+  window.mdviewNote = showNote;
+
   // The star button was the whole feedback for bookmarking. With it gone,
   // pressing m with the sidebar shut would be a keypress into the void, so the
   // change is reported instead. The first call is the page being told what it

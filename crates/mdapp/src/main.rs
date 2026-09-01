@@ -147,6 +147,24 @@ mod bundle_version_tests {
         assert!(app.contains("Message::CopyReview"));
     }
 
+    /// Copying is news that expires, not a condition anyone has to resolve.
+    /// It first shipped as a banner, which sits in the corner until clicked --
+    /// so a shortcut you might press twice left two of them behind. Only the
+    /// failed WRITE, which does need attention, stays a banner.
+    #[test]
+    fn copying_the_review_prompt_reports_through_the_transient_note() {
+        let app = include_str!("app.rs");
+        let start = app.find("fn copy_review_prompt(&self)").expect("no copy_review_prompt");
+        let end = start + app[start..].find("\n    /// Send the bookmark").expect("end of fn");
+        let body = &app[start..end];
+        assert!(body.contains("show_note("), "C must speak through the note");
+        assert!(!body.contains("show_banner("), "a banner would outlive the news");
+        let window = include_str!("window.rs");
+        assert!(window.contains("pub fn show_note"));
+        // The error page has no init.js, so the call has to be guarded.
+        assert!(window.contains("window.mdviewNote && window.mdviewNote("));
+    }
+
     /// The same hazard as the first-run hint, and the one most likely to be
     /// got wrong twice: comments are pushed on every open and reload, which is
     /// exactly when loadHTMLString has returned but the page does not exist

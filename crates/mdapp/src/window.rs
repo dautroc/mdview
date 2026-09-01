@@ -558,6 +558,18 @@ impl DocumentWindow {
         self.eval_script(&script);
     }
 
+    /// Say something that expires. A banner is for a condition someone has to
+    /// resolve and it stays until clicked; this is the page's own transient
+    /// line, for news like "copied" that is stale a second later. Guarded,
+    /// because the error page carries no init.js.
+    pub fn show_note(&self, message: &str) {
+        let script = format!(
+            "window.mdviewNote && window.mdviewNote({message});",
+            message = mdcore::escape::js_string_literal(message),
+        );
+        self.eval_script(&script);
+    }
+
     pub fn clear_banner(&self, id: &str) {
         let script = format!(
             "(function() {{ var el = document.getElementById({id}); if (el) el.remove(); }})();",
