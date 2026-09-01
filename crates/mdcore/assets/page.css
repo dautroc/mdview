@@ -517,8 +517,15 @@ body.mdview-resizing #mdview-sidebar-resizer {
   opacity: 0;
   transition: opacity .12s ease;
 }
+/* The focused card shows its controls whether or not it is hovered. Hover
+   alone is not enough: a card is a new element after every layout, and a
+   browser does not re-evaluate :hover until the pointer next moves -- so
+   escaping out of an edit put the card back under a stationary cursor with
+   its buttons invisible. Tying them to the current card also states the rule
+   plainly: the comment you are on shows what you can do to it. */
 .mdview-comment-card:hover .mdview-comment-card-actions,
-.mdview-comment-card:focus-within .mdview-comment-card-actions { opacity: 1; }
+.mdview-comment-card:focus-within .mdview-comment-card-actions,
+.mdview-comment-card.is-current .mdview-comment-card-actions { opacity: 1; }
 .mdview-comment-card-btn {
   appearance: none;
   padding: .1rem .3rem;

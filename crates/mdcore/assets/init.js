@@ -1430,6 +1430,10 @@
     if (!bar || !input) return;
     bar.hidden = true;
     draftTop = null;
+    bar.classList.remove("is-railed");
+    bar.style.left = "";
+    bar.style.width = "";
+    bar.style.top = "";
     layoutCommentRail();
     // Blurred on the way out: a hidden field that still holds focus goes on
     // eating j and k. Same hazard the find bar documents.
