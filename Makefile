@@ -68,8 +68,12 @@ uninstall:
 #   make shot FILE=notes.md JS='document.getElementById("mdview-theme").open=true'
 #
 # SIDEBAR=1 opens the panel, which is hidden in a freshly generated page
-# because the app normally opens it over the bridge. JS runs after load and is
-# appended to that, for states the page does not start in.
+# because the app normally opens it over the bridge. It goes through the page's
+# own mdviewShowSidebarTab -- the hook the View menu uses -- rather than poking
+# the markup, so a shot cannot drift from the app the way it did when this
+# reached for the sidebar tabs that v0.9.0 deleted. SIDEBAR=bookmarks picks the
+# other panel. JS runs after load and is appended to that, for states the page
+# does not start in.
 FILE   ?=
 THEME  ?=
 WIDTH  ?= 900
@@ -90,7 +94,7 @@ endif
 	@mkdir -p target/shots
 	@$(BINARY) --print-html $(if $(THEME),--theme $(THEME),) $(FILE) > target/shots/page.html
 	@$(SHOT_BIN) target/shots/page.html $(SHOT_OUT) $(WIDTH) $(HEIGHT) \
-		'$(if $(SIDEBAR),document.getElementById("mdview-sidebar").hidden=false; document.querySelectorAll(".mdview-tab")[0].setAttribute("aria-selected","true");,) $(JS)'
+		'$(if $(SIDEBAR),window.mdviewShowSidebarTab("$(if $(filter bookmarks,$(SIDEBAR)),bookmarks,outline)");,) $(JS)'
 
 # Redraw the app icon. bundle/MDView.icns is committed, so building the app
 # needs no Swift toolchain; run this only after editing tools/icon.swift.
