@@ -149,3 +149,23 @@ pub fn headings(markdown: &str) -> Vec<String> {
     }
     out
 }
+
+#[cfg(test)]
+mod heading_tests {
+    use super::headings;
+
+    /// The labels in a review file. Inline markup inside a heading is part of
+    /// its text rather than a separate event, so it has to be collected: a
+    /// heading of "The `retry` loop" coming back as "The loop" would label the
+    /// wrong section.
+    #[test]
+    fn headings_are_collected_in_document_order_with_their_inline_text() {
+        let markdown = "# One\n\ntext\n\n## The `retry` loop\n\n### **Bold** and _italic_\n";
+        assert_eq!(headings(markdown), vec!["One", "The retry loop", "Bold and italic"]);
+    }
+
+    #[test]
+    fn a_document_with_no_headings_has_no_labels() {
+        assert!(headings("just a paragraph\n").is_empty());
+    }
+}

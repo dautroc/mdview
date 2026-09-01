@@ -1461,9 +1461,17 @@
     return false;
   }
 
-  function offsetOfPoint(index, node, offset) {
+  // Where a range endpoint falls in the concatenated text. A selection anchored
+  // on an element rather than a text node -- a triple-click, or a drag that
+  // ended on a boundary -- is not in the span map at all, so fall back to the
+  // start of its block. Returning -1 here instead would silently file the
+  // comment under the preamble, anchoring it in the wrong section.
+  function offsetOfPoint(index, node, offset, block) {
     for (var i = 0; i < index.spans.length; i++) {
       if (index.spans[i].node === node) return index.spans[i].start + offset;
+    }
+    for (var j = 0; j < index.spans.length; j++) {
+      if (block && block.contains(index.spans[j].node)) return index.spans[j].start;
     }
     return -1;
   }
@@ -1504,7 +1512,7 @@
     }
     var index = textIndex(content);
     var starts = sectionStarts(index);
-    var absolute = offsetOfPoint(index, range.startContainer, range.startOffset);
+    var absolute = offsetOfPoint(index, range.startContainer, range.startOffset, startBlock);
     var heading = 0;
     for (var i = 0; i < starts.length; i++) {
       if (absolute >= starts[i]) heading = i + 1;
