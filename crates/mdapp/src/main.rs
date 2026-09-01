@@ -84,13 +84,15 @@ mod bundle_version_tests {
         );
     }
 
-    /// The README documents the shortcut policy, so it has to move with it:
-    /// three modifier shortcuts, and no others advertised.
+    /// The README documents the shortcut policy, so it has to move with it.
+    /// The table is the SINGLE-KEY list now: the surviving modifier shortcuts
+    /// were moved into the prose that introduces it rather than repeated in a
+    /// second table, so they are asserted as mentions, not as rows.
     #[test]
-    fn readme_lists_only_the_three_surviving_modifier_shortcuts() {
+    fn readme_documents_the_single_key_shortcuts_and_no_retired_ones() {
         let readme = include_str!("../../../README.md");
-        for row in ["| ⌘O | Open a file |", "| ⌘F | Find in this document |", "| ⌘R | Reload |"] {
-            assert!(readme.contains(row), "README should list {row}");
+        for survivor in ["⌘O", "⌘F"] {
+            assert!(readme.contains(survivor), "README should mention {survivor}");
         }
         for gone in ["⌥⌘F", "⌥⌘S", "⌥⌘D", "⌘G", "⇧⌘/", "| ⌘D |"] {
             assert!(!readme.contains(gone), "README still advertises {gone}");
