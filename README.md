@@ -102,6 +102,7 @@ offers once on first launch.
 | o / b | Outline / bookmarks in the sidebar |
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |
+| ) / ( | Next / previous comment |
 | click | Focus the comment on a highlighted passage |
 | e / x | Edit / delete the comment you are looking at |
 | C | Copy the review prompt for Claude |

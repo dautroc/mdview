@@ -1600,6 +1600,70 @@
     showNote("Deleted the comment on “" + excerpt + "”");
   }
 
+  // Anchored comments in the order they appear on the page. commentAnchors is
+  // in wrapping order, which runs backwards, so this cannot lean on it; two
+  // comments on one line are separated by their horizontal position, as the
+  // rail does.
+  function commentsInDocumentOrder() {
+    var list = [];
+    for (var i = 0; i < commentAnchors.length; i++) {
+      var comment = commentById(commentAnchors[i].id);
+      var marks = commentAnchors[i].marks;
+      if (!comment || !marks.length) continue;
+      var rect = marks[0].getBoundingClientRect();
+      list.push({ comment: comment, top: rect.top, left: rect.left });
+    }
+    list.sort(function (a, b) {
+      if (a.top !== b.top) return a.top - b.top;
+      return a.left - b.left;
+    });
+    return list;
+  }
+
+  // ) and ( step between comments, wrapping at both ends the way n and N do.
+  function stepComment(direction) {
+    var list = commentsInDocumentOrder();
+    if (!list.length) {
+      showNote("No comments to step through.");
+      return;
+    }
+    var at = -1;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].comment.id === currentCommentId) {
+        at = i;
+        break;
+      }
+    }
+    var next;
+    if (at >= 0) {
+      next = (((at + direction) % list.length) + list.length) % list.length;
+    } else if (direction > 0) {
+      // Nothing focused yet, so enter the list from where you are reading
+      // rather than from the top of the document.
+      next = 0;
+      for (var f = 0; f < list.length; f++) {
+        if (list[f].top > 0) {
+          next = f;
+          break;
+        }
+      }
+    } else {
+      next = list.length - 1;
+      for (var b = list.length - 1; b >= 0; b--) {
+        if (list[b].top < 0) {
+          next = b;
+          break;
+        }
+      }
+    }
+    var target = list[next].comment;
+    // The card is level with the passage, so centring the passage brings the
+    // card with it; scrolling both would have them fight.
+    focusComment(target.id, false);
+    var marks = anchorMarks(target.id);
+    if (marks && marks.length) marks[0].scrollIntoView({ block: "center" });
+  }
+
   function editCommentKey() {
     var comment = nearestComment(null);
     if (!comment) {
@@ -2186,6 +2250,8 @@
       title: "Comments",
       items: [
         { keys: ["c"], hint: "c", label: "Comment on the selection, or show the comments", run: commentKey },
+        { keys: [")"], hint: ")", label: "Next comment", run: function () { stepComment(1); } },
+        { keys: ["("], hint: "(", label: "Previous comment", run: function () { stepComment(-1); } },
         { keys: ["e"], hint: "e", label: "Edit the comment you are looking at", run: editCommentKey },
         { keys: ["x"], hint: "x", label: "Delete the comment you are looking at", run: deleteCommentKey },
         { keys: ["C"], hint: "C", label: "Copy the review prompt for Claude", run: copyReviewKey },
