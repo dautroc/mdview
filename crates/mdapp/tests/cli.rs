@@ -183,6 +183,7 @@ fn rendered_html_carries_every_token_mdapp_js_depends_on() {
         "mdviewSetComments",
         "id=\"mdview-comment-input\"",
         "mdview-comment-anchor",
+        "mdview-comment-card",
     ] {
         assert!(html.contains(token), "missing comment token {token}");
     }

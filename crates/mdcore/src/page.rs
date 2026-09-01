@@ -481,6 +481,10 @@ mod tests {
         let find = body.find("refreshFind()").expect("find is re-run");
         assert!(anchors < find, "find would delete the anchors nested inside it");
         assert!(body.contains("clearFindHighlights()"), "stale find marks would nest");
+        // The rail places each card level with its highlight, so it can only
+        // run once the highlights exist.
+        let rail = body.find("layoutCommentRail()").expect("the rail is laid out");
+        assert!(anchors < rail, "the rail would have no anchors to measure");
     }
 
     #[test]

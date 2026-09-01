@@ -43,4 +43,18 @@ mod tests {
         assert!(super::PAGE_CSS.contains(".mdview-comment-anchor {"));
         assert!(super::PAGE_CSS.contains("#mdview-comment-input {"));
     }
+
+    /// The rail is built entirely in JS, so nothing in the emitted markup
+    /// would notice if it stopped being wired up.
+    #[test]
+    fn the_comment_rail_is_defined_and_styled() {
+        for hook in ["function layoutCommentRail(", "function focusComment(", "function railGeometry("] {
+            assert!(super::INIT_JS.contains(hook), "init.js is missing {hook}");
+        }
+        assert!(super::PAGE_CSS.contains("#mdview-comment-rail {"));
+        assert!(super::PAGE_CSS.contains(".mdview-comment-card {"));
+        // The draft opens in the same column, which takes the id to out-
+        // specify the bar's own fixed positioning.
+        assert!(super::PAGE_CSS.contains("#mdview-comment.is-railed {"));
+    }
 }

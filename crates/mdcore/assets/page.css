@@ -460,6 +460,48 @@ body.mdview-resizing #mdview-sidebar-resizer {
   text-decoration: line-through;
 }
 
+/* The comment rail. Absolutely positioned inside #mdview-main, which is
+   position:relative and as tall as the document, so the cards scroll with the
+   passages they are about without anything syncing them. */
+#mdview-comment-rail {
+  position: absolute;
+  top: 0;
+}
+#mdview-comment-rail[hidden] { display: none; }
+
+.mdview-comment-card {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: .5rem .6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--comment-bg);
+  border-radius: 6px;
+  cursor: default;
+  /* Placement is animated because a card moves when its neighbours change
+     height; jumping would read as the list being rebuilt, which it is. */
+  transition: top .15s ease, border-color .15s ease;
+}
+.mdview-comment-card.is-current {
+  border-color: var(--comment-fg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .16);
+}
+.mdview-comment-card-quote {
+  margin: 0 0 .25rem;
+  color: var(--muted);
+  font-size: .8em;
+  /* Two lines of the passage is enough to recognise it; the highlight in the
+     document is the real reference. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.mdview-comment-card-note { margin: 0; font-size: .9em; }
+.mdview-comment-card-note.is-empty { color: var(--muted); font-style: italic; }
+
 /* The entry bar sits where find's does, and only one of them is ever up. */
 #mdview-comment {
   position: fixed;
@@ -476,6 +518,21 @@ body.mdview-resizing #mdview-sidebar-resizer {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 #mdview-comment[hidden] { display: none; }
+/* Railed, it is the draft card: same column, level with the passage. The id is
+   needed to out-specify the fixed positioning above. */
+#mdview-comment.is-railed {
+  position: absolute;
+  box-sizing: border-box;
+  display: block;
+  top: 0;
+}
+#mdview-comment.is-railed #mdview-comment-input { width: 100%; }
+#mdview-comment.is-railed #mdview-comment-quote {
+  display: block;
+  max-width: none;
+  margin-bottom: .3rem;
+  font-size: .8em;
+}
 #mdview-comment-input {
   width: 22rem;
   padding: 0.2rem 0.35rem;

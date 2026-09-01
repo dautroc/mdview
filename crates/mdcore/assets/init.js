@@ -653,6 +653,7 @@
     var w = clampSidebarWidth(px);
     sidebarWidth = w;
     document.documentElement.style.setProperty("--sidebar-width", w + "px");
+    layoutCommentRail();
     return w;
   }
 
@@ -678,6 +679,7 @@
         sidebarTab === "bookmarks" ? "Bookmarks" : sidebarTab === "comments" ? "Comments" : "Outline";
     }
     renderSidebarBody();
+    layoutCommentRail();
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
   }
 
@@ -1337,6 +1339,7 @@
     clearFindHighlights();
     applyCommentAnchors();
     refreshFind();
+    layoutCommentRail();
   }
 
   function anchorMarks(id) {
@@ -1390,13 +1393,27 @@
     return !!bar && !bar.hidden;
   }
 
-  function openCommentBar(quote, note) {
+  function openCommentBar(quote, note, viewportTop) {
     var bar = commentBarEl();
     var input = commentInputEl();
     if (!bar || !input) return;
     var label = document.getElementById("mdview-comment-quote");
     if (label) label.textContent = quote;
     input.value = note || "";
+    var geometry = viewportTop == null ? null : railGeometry();
+    if (geometry) {
+      // Level with the passage, in the rail's column: a draft that appears
+      // where its card will appear.
+      bar.classList.add("is-railed");
+      bar.style.left = geometry.left + "px";
+      bar.style.width = geometry.width + "px";
+      bar.style.top = viewportTop - geometry.top + "px";
+    } else {
+      bar.classList.remove("is-railed");
+      bar.style.left = "";
+      bar.style.width = "";
+      bar.style.top = "";
+    }
     bar.hidden = false;
     input.focus();
     input.select();
@@ -1531,7 +1548,7 @@
         cursor = hit + 1;
       }
     }
-    return { heading: heading, nth: nth, quote: quote };
+    return { heading: heading, nth: nth, quote: quote, top: range.getBoundingClientRect().top };
   }
 
   // ---- The keys -------------------------------------------------------------
@@ -1549,8 +1566,12 @@
     }
     pendingComment = capture;
     editingCommentId = null;
-    setSidebar(true, "comments");
-    openCommentBar(capture.quote, "");
+    // The sidebar panel only when the rail has nowhere to go. Opening both
+    // would be the same list twice, and the sidebar takes its width out of
+    // main -- which is the very margin the rail needs, so it would shut the
+    // rail as it opened.
+    if (!railGeometry()) setSidebar(true, "comments");
+    openCommentBar(capture.quote, "", capture.top);
   }
 
   function editCommentKey() {
@@ -1561,7 +1582,10 @@
     }
     pendingComment = null;
     editingCommentId = comment.id;
-    openCommentBar(comment.quote, comment.note);
+    focusComment(comment.id, true);
+    var marks = anchorMarks(comment.id);
+    var top = marks && marks.length ? marks[0].getBoundingClientRect().top : null;
+    openCommentBar(comment.quote, comment.note, top);
   }
 
   function deleteCommentKey() {
@@ -1591,6 +1615,166 @@
     }
   }
 
+
+  // ---- The comment rail -----------------------------------------------------
+  //
+  // Cards in the document's right margin, each level with the passage it is
+  // about. The rail lives inside #mdview-main, which is position:relative and
+  // as tall as the document, so page-coordinate offsets scroll with the text on
+  // their own. The sidebar could not host this: it is position:sticky, so its
+  // contents would need the scroll position fed to them by hand.
+  //
+  // It appears only when the margin is genuinely wide enough. Reserving space
+  // for it instead would re-wrap the text column, which moves your place in the
+  // document every time a comment is added -- and every comment is still in the
+  // sidebar panel, which is where orphans live in any case.
+
+  var RAIL_MIN = 180;
+  var RAIL_MAX = 280;
+  var RAIL_GAP = 16;
+  var RAIL_CARD_GAP = 8;
+  var currentCommentId = null;
+  var railResizeTimer = null;
+
+  function mainEl() {
+    return document.getElementById("mdview-main");
+  }
+
+  function railEl() {
+    var rail = document.getElementById("mdview-comment-rail");
+    if (rail) return rail;
+    var main = mainEl();
+    if (!main) return null;
+    rail = document.createElement("div");
+    rail.id = "mdview-comment-rail";
+    rail.hidden = true;
+    // Appended to main rather than to #mdview-content: the body swap on every
+    // live reload would take it, and the card you were reading, with it.
+    main.appendChild(rail);
+    return rail;
+  }
+
+  // How much room the margin has, and how wide the rail may be in it.
+  function railGeometry() {
+    var main = mainEl();
+    var content = contentEl();
+    if (!main || !content) return null;
+    var mainRect = main.getBoundingClientRect();
+    var contentRect = content.getBoundingClientRect();
+    var margin = mainRect.right - contentRect.right - RAIL_GAP;
+    if (margin < RAIL_MIN) return null;
+    return {
+      top: mainRect.top,
+      left: contentRect.right - mainRect.left + RAIL_GAP,
+      width: Math.min(RAIL_MAX, margin),
+    };
+  }
+
+  // Where a comment's highlight sits, in the rail's own coordinates. `left` is
+  // carried for the tie-break alone: two comments on the same line share a top,
+  // and without it they would keep the order they were made in.
+  function anchorPoint(id, geometry) {
+    var marks = anchorMarks(id);
+    if (!marks || !marks.length) return null;
+    var rect = marks[0].getBoundingClientRect();
+    return { top: rect.top - geometry.top, left: rect.left };
+  }
+
+  function buildCommentCard(comment) {
+    var card = document.createElement("div");
+    card.className = "mdview-comment-card";
+    card.setAttribute("data-comment-id", comment.id);
+    card.setAttribute("role", "button");
+    card.setAttribute("tabindex", "0");
+    var quote = document.createElement("p");
+    quote.className = "mdview-comment-card-quote";
+    // textContent, never innerHTML: both fields are document text.
+    quote.textContent = comment.quote;
+    var note = document.createElement("p");
+    note.className = "mdview-comment-card-note";
+    note.textContent = comment.note || "No note";
+    if (!comment.note) note.classList.add("is-empty");
+    card.appendChild(quote);
+    card.appendChild(note);
+    card.addEventListener("click", function () {
+      focusComment(comment.id, false);
+      var marks = anchorMarks(comment.id);
+      if (marks && marks.length) marks[0].scrollIntoView({ block: "center" });
+    });
+    return card;
+  }
+
+  // Rebuilt wholesale on every render rather than patched, like the outline:
+  // incremental updates over already-processed nodes are the defect class that
+  // has bitten this project twice.
+  function layoutCommentRail() {
+    var rail = railEl();
+    if (!rail) return;
+    var geometry = railGeometry();
+    if (!geometry || !commentAnchors.length) {
+      rail.hidden = true;
+      rail.textContent = "";
+      return;
+    }
+    rail.textContent = "";
+    rail.hidden = false;
+    rail.style.left = geometry.left + "px";
+    rail.style.width = geometry.width + "px";
+
+    var placed = [];
+    for (var i = 0; i < commentAnchors.length; i++) {
+      var id = commentAnchors[i].id;
+      var comment = commentById(id);
+      if (!comment) continue;
+      var point = anchorPoint(id, geometry);
+      if (!point) continue;
+      placed.push({ comment: comment, desired: point.top, left: point.left });
+    }
+    // Sorted before anything is appended, so the DOM order is the reading
+    // order: commentAnchors runs backwards through the document (wrapping has
+    // to, or splitting a text node would invalidate the offsets still to be
+    // used), and tab order would follow it.
+    placed.sort(function (a, b) {
+      if (a.desired !== b.desired) return a.desired - b.desired;
+      return a.left - b.left;
+    });
+    for (var c = 0; c < placed.length; c++) {
+      var card = buildCommentCard(placed[c].comment);
+      if (placed[c].comment.id === currentCommentId) card.classList.add("is-current");
+      rail.appendChild(card);
+      placed[c].card = card;
+    }
+    // Level with its passage where it can be, pushed down where two would
+    // overlap. Heights are only measurable once the cards are in the document,
+    // hence the second pass.
+    var floor = 0;
+    for (var p = 0; p < placed.length; p++) {
+      var top = Math.max(placed[p].desired, floor);
+      placed[p].card.style.top = top + "px";
+      floor = top + placed[p].card.offsetHeight + RAIL_CARD_GAP;
+    }
+  }
+
+  // Clicking a highlight brings its card forward, and the other way round.
+  function focusComment(id, scrollCard) {
+    currentCommentId = id;
+    var rail = document.getElementById("mdview-comment-rail");
+    if (rail) {
+      var cards = rail.querySelectorAll(".mdview-comment-card");
+      for (var i = 0; i < cards.length; i++) {
+        var match = cards[i].getAttribute("data-comment-id") === id;
+        cards[i].classList.toggle("is-current", match);
+        if (match && scrollCard) cards[i].scrollIntoView({ block: "nearest" });
+      }
+    }
+    for (var a = 0; a < commentAnchors.length; a++) {
+      var marks = commentAnchors[a].marks;
+      for (var m = 0; m < marks.length; m++) {
+        marks[m].classList.toggle("is-current", commentAnchors[a].id === id);
+      }
+    }
+  }
+
   // ---- Host hooks -----------------------------------------------------------
 
   window.mdviewSetComments = function (items) {
@@ -1600,6 +1784,25 @@
   };
 
   function attachCommentListeners() {
+    var content = contentEl();
+    if (content) {
+      content.addEventListener("click", function (event) {
+        var el = event.target;
+        while (el && el !== content) {
+          if (el.classList && el.classList.contains("mdview-comment-anchor")) {
+            focusComment(el.getAttribute("data-comment-id"), true);
+            return;
+          }
+          el = el.parentNode;
+        }
+      });
+    }
+    // The margin the rail needs comes and goes with the window and with the
+    // sidebar, so the cards are re-placed rather than left hanging.
+    window.addEventListener("resize", function () {
+      clearTimeout(railResizeTimer);
+      railResizeTimer = setTimeout(layoutCommentRail, 120);
+    });
     var input = commentInputEl();
     if (!input) return;
     input.addEventListener("keydown", function (event) {
@@ -1907,6 +2110,7 @@
         { keys: ["e"], hint: "e", label: "Edit the comment you are looking at", run: editCommentKey },
         { keys: ["x"], hint: "x", label: "Delete the comment you are looking at", run: deleteCommentKey },
         { keys: ["C"], hint: "C", label: "Copy the review prompt for Claude", run: copyReviewKey },
+        { keys: [], hint: "click", label: "Focus the comment on a highlighted passage", run: null },
         { keys: [], hint: "esc", label: "Abandon what you were typing", run: null },
       ],
     },

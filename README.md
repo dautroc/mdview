@@ -22,9 +22,12 @@ LaTeX math, and Mermaid diagrams.
 - **Outline** built from the document's headings, in a sidebar you can toggle
   and drag to resize; the width is remembered across launches.
 - **Bookmarks** for documents you come back to, kept across launches.
-- **Comments.** Select a phrase, press `c`, type a note. Comments are
-  highlighted in the text, listed in the sidebar and kept across launches, and
-  `C` copies a prompt that points Claude at the review file holding them.
+- **Comments.** Select a phrase, press `c`, type a note. The note becomes a
+  card in the document's right margin, level with the passage it is about;
+  clicking a highlighted passage brings its card forward, and clicking a card
+  jumps to the passage. When the window is too narrow for the margin the cards
+  live in the sidebar instead. `C` copies a prompt that points Claude at the
+  review file holding them.
 - **Themes** — three light, four dark, or follow the system. `t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
@@ -98,6 +101,7 @@ offers once on first launch.
 | o / b | Outline / bookmarks in the sidebar |
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |
+| click | Focus the comment on a highlighted passage |
 | e / x | Edit / delete the comment you are looking at |
 | C | Copy the review prompt for Claude |
 | t | Themes |

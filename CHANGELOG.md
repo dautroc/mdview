@@ -13,6 +13,15 @@ the commits that introduced them. The newest release is listed first.
   you are looking at and `x` deletes it — refusing when the nearest one is off
   screen, since there is no undo. `C` copies a one-line prompt naming the
   review file, to paste into Claude.
+- **Comments sit in the margin.** Each note is a card in the document's right
+  margin, level with the passage it is about and pushed down only where two
+  would overlap. Clicking a highlighted passage brings its card forward and
+  clicking a card jumps to the passage. The rail lives inside the document
+  column, which is as tall as the document, so the cards scroll with the text
+  rather than being fed a scroll position. It stands down when the margin is
+  too narrow — reserving space would re-wrap the text and move your place in
+  the document every time a comment was added — and the sidebar panel is then
+  the way to read them, as it always is for comments whose text was edited away.
 - **Comments survive editing.** An anchor is re-found after every live reload
   by its quoted words, scoped to the section it was made in, so a save
   elsewhere in the document does not move it. A comment whose words were edited
