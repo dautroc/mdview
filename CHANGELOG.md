@@ -3,6 +3,61 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.9.1](https://github.com/dautroc/mdview/releases/tag/v0.9.1) — 2026-09-01
+
+### Fixes
+
+- **Bookmarking works from the keyboard again.** `m` toggled the bookmark in
+  storage but the page never heard about it: the callback the app runs after a
+  toggle called a `showNote` that did not exist, so it threw before the star
+  state or the bookmarks list could update. With the sidebar shut the key
+  looked dead, and with it open the list did not move.
+- **Bookmarking now says so.** Toggling raises a short notice in the top-right
+  corner — “Bookmarked” or “Bookmark removed” — which steps aside when the
+  sidebar is open so it never covers the list it is reporting on.
+
+## [v0.9.0](https://github.com/dautroc/mdview/releases/tag/v0.9.0) — 2026-08-31
+
+### What’s new
+
+- **Vim-flavoured keys for everything.** Nothing in a read-only viewer is
+  expecting your typing, so every command has a single key: `j`/`k` by the
+  line, `d`/`u` by the half page, space and ⇧space by the page, `gg`/`G` to the
+  ends, `]`/`[` between headings and `}`/`{` between top-level ones, `/` and
+  `n`/`N` to search, `s` `o` `b` `m` `t` `D` `l` `z` `w` `r` and `+`/`−`/`0`
+  for the rest. Press **?** for the list, which the app offers once on first
+  launch. Motion is instant and jumps are smooth, so a held `j` does not queue
+  animations that fight each other.
+- **The page draws no controls at all.** The toolbar, the find bar's buttons,
+  the sidebar's tabs and star, the sidebar toggle and the zoom badge are gone —
+  every one of them duplicated a key, and between them they cost a fixed
+  toolbar that re-offset itself by the sidebar width and a seven-level z-index
+  ladder. The menu bar is the mouse's route to all of it.
+- **A theme palette on `t`.** Type to filter, arrow to move, and every move
+  previews the theme on the document — the thing a native menu cannot do, and
+  the reason the palette exists alongside the new View ▸ Theme submenu rather
+  than deferring to it. The submenu is checkmarked at draw time, so a theme
+  picked from the page cannot leave the menu stale.
+
+### Fixes
+
+- **The diff layout and the lightbox keep a route in.** `l` cycles unified and
+  split, which had lived only on two buttons, and `z` opens the nearest image
+  or diagram, since dropping the zoom badge would otherwise have left the
+  lightbox mouse-only. A zoom-in cursor keeps the affordance without drawing a
+  control.
+
+### Documentation
+
+- The screenshot was retaken from the running app: the old one still showed the
+  toolbar, sidebar tabs, star and hamburger, none of which exist.
+- Only ⌘O, ⌘F and ⌘R keep a key equivalent. Every other menu command now has a
+  single key in the page, so its shortcut was a second binding to keep in sync
+  with the first — and the pair had already drifted once, when ⌘D bookmarked
+  while ⌥⌘D toggled the diff. The macOS standards (⌘C, ⌘A, ⌘Q, ⌘W, ⌘M, ⌘H)
+  stay; they duplicate nothing, and ⌘C is the only way to copy out of a
+  WKWebView at all.
+
 ## [v0.8.0](https://github.com/dautroc/mdview/releases/tag/v0.8.0) — 2026-08-31
 
 ### What’s new
