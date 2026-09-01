@@ -4,7 +4,7 @@ members = ["crates/mdcore", "crates/mdapp"]
 
 [workspace.package]
 edition = "2021"
-version = "0.11.0"
+version = "0.11.1"
 rust-version = "1.75"
 
 [workspace.dependencies]

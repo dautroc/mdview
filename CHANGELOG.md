@@ -3,6 +3,18 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.11.1](https://github.com/dautroc/mdview/releases/tag/v0.11.1) — 2026-09-01
+
+### What's new
+
+- **`h` `j` `k` `l` pan a zoomed image or diagram.** The lightbox was the one
+  place left where the vim keys stopped working: `z` opened a diagram and then
+  only the arrows moved it, so the hand that had just pressed `z` had to travel
+  for the rest. They pan exactly as the arrows do — the same nudge, the same
+  direction — and `l` still cycles the diff layout everywhere the lightbox is
+  not up, because the document already hands the keyboard over while one is
+  open. `?` lists them alongside the arrows.
+
 ## [v0.11.0](https://github.com/dautroc/mdview/releases/tag/v0.11.0) — 2026-09-01
 
 ### What's new
