@@ -1579,12 +1579,9 @@
     openCommentBar(capture.quote, "", capture.top);
   }
 
-  function editCommentKey() {
-    var comment = nearestComment(null);
-    if (!comment) {
-      showNote("No comment to edit.");
-      return;
-    }
+  // e and the card's own button reach the same two functions, so a comment
+  // cannot be editable one way and not the other.
+  function beginEditComment(comment) {
     pendingComment = null;
     editingCommentId = comment.id;
     focusComment(comment.id, true);
@@ -1593,17 +1590,31 @@
     openCommentBar(comment.quote, comment.note, top);
   }
 
+  function removeComment(comment) {
+    var excerpt = comment.quote.length > 40 ? comment.quote.slice(0, 40) + "…" : comment.quote;
+    postToHost("deleteComment:" + comment.id);
+    showNote("Deleted the comment on “" + excerpt + "”");
+  }
+
+  function editCommentKey() {
+    var comment = nearestComment(null);
+    if (!comment) {
+      showNote("No comment to edit.");
+      return;
+    }
+    beginEditComment(comment);
+  }
+
   function deleteCommentKey() {
     // A viewport height off centre: far enough to cover a comment scrolled to
-    // either edge, close enough that you cannot delete one you never saw.
+    // either edge, close enough that you cannot delete one you never saw. The
+    // button needs no such guard -- you cannot click what you cannot see.
     var comment = nearestComment(window.innerHeight);
     if (!comment) {
       showNote("No comment on screen to delete.");
       return;
     }
-    var excerpt = comment.quote.length > 40 ? comment.quote.slice(0, 40) + "…" : comment.quote;
-    postToHost("deleteComment:" + comment.id);
-    showNote("Deleted the comment on “" + excerpt + "”");
+    removeComment(comment);
   }
 
   function copyReviewKey() {
@@ -1686,17 +1697,46 @@
     return { top: rect.top - geometry.top, left: rect.left };
   }
 
+  function commentCardButton(label, hint, glyph, run) {
+    var button = document.createElement("button");
+    button.className = "mdview-comment-card-btn";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label + " (" + hint + ")");
+    button.textContent = glyph;
+    button.addEventListener("click", function (event) {
+      // The card's own click scrolls to the passage; a button press is not
+      // that, and the two firing together would fight over the scroll.
+      event.stopPropagation();
+      run();
+    });
+    return button;
+  }
+
   function buildCommentCard(comment) {
     var card = document.createElement("div");
     card.className = "mdview-comment-card";
     card.setAttribute("data-comment-id", comment.id);
-    card.setAttribute("role", "button");
+    // No role="button": the card holds buttons of its own, and a control
+    // inside a control is not something a screen reader can announce.
     card.setAttribute("tabindex", "0");
     var note = document.createElement("p");
     note.className = "mdview-comment-card-note";
     // textContent, never innerHTML: the note is document text.
     note.textContent = comment.note || "No note";
     if (!comment.note) note.classList.add("is-empty");
+    var actions = document.createElement("div");
+    actions.className = "mdview-comment-card-actions";
+    actions.appendChild(
+      commentCardButton("Edit comment", "e", "\u270E", function () {
+        beginEditComment(comment);
+      })
+    );
+    actions.appendChild(
+      commentCardButton("Delete comment", "x", "\u2715", function () {
+        removeComment(comment);
+      })
+    );
+    card.appendChild(actions);
     card.appendChild(note);
     card.addEventListener("click", function () {
       focusComment(comment.id, false);

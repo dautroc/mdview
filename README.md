@@ -25,7 +25,8 @@ LaTeX math, and Mermaid diagrams.
 - **Comments.** Select a phrase, press `c`, type a note. The note becomes a
   card in the document's right margin, level with the passage it is about;
   clicking a highlighted passage brings its card forward, hovering a card lights
-  up its passage, and clicking one jumps to it. When the window is too narrow for the margin the cards
+  up its passage and reveals its edit and delete buttons, and clicking one
+  jumps to the passage. When the window is too narrow for the margin the cards
   live in the sidebar instead. `C` copies a prompt that points Claude at the
   review file holding them.
 - **Themes** — three light, four dark, or follow the system. `t` opens a

@@ -57,4 +57,22 @@ mod tests {
         // specify the bar's own fixed positioning.
         assert!(super::PAGE_CSS.contains("#mdview-comment.is-railed {"));
     }
+
+    /// The card's buttons and the e and x keys must reach the same two
+    /// functions. A second copy of either would be a comment that behaves one
+    /// way from the keyboard and another from the mouse.
+    #[test]
+    fn the_card_buttons_share_the_key_paths() {
+        let js = super::INIT_JS;
+        assert!(js.contains("function commentCardButton("));
+        for shared in ["function beginEditComment(", "function removeComment("] {
+            assert!(js.contains(shared), "init.js is missing {shared}");
+        }
+        assert!(js.matches("openCommentBar(comment.quote").count() == 1, "edit has two paths");
+        assert!(js.matches("postToHost(\"deleteComment:\"").count() == 1, "delete has two paths");
+        assert!(super::PAGE_CSS.contains(".mdview-comment-card-btn {"));
+        // Reserved by a float rather than overlaid, or hovering a card would
+        // cover the end of its first line.
+        assert!(super::PAGE_CSS.contains("float: right;"));
+    }
 }

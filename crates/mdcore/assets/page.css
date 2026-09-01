@@ -497,6 +497,48 @@ body.mdview-resizing #mdview-sidebar-resizer {
   box-shadow: 0 2px 12px rgba(0, 0, 0, .14);
 }
 .mdview-comment-card-note { margin: 0; font-size: .9em; line-height: 1.45; }
+/* The float is the last thing in the box when a note is one short line, so
+   the card has to be told to contain it. */
+.mdview-comment-card::after { content: ""; display: block; clear: both; }
+
+/* Floated, not overlaid, and holding their space whether or not they are
+   showing. Overlaying would cover the end of the first line every time you
+   pointed at a card; a row of their own would make every card taller for two
+   controls you want only while pointing at one; and revealing them on hover
+   alone would change a card's height under the cursor, which -- the cards
+   being absolutely positioned -- would shove every card below it down the
+   page. A float reserves the corner on the first line only, so the note wraps
+   around a gap that is always the same size. */
+.mdview-comment-card-actions {
+  float: right;
+  display: flex;
+  gap: .15rem;
+  margin: -.1rem 0 .1rem .4rem;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.mdview-comment-card:hover .mdview-comment-card-actions,
+.mdview-comment-card:focus-within .mdview-comment-card-actions { opacity: 1; }
+.mdview-comment-card-btn {
+  appearance: none;
+  padding: .1rem .3rem;
+  color: var(--muted);
+  font: inherit;
+  font-size: .8em;
+  line-height: 1.3;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: default;
+}
+.mdview-comment-card-btn:hover {
+  color: var(--fg);
+  border-color: var(--comment-fg);
+}
+.mdview-comment-card-btn:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
 .mdview-comment-card-note.is-empty { color: var(--muted); font-style: italic; }
 
 /* The entry bar sits where find's does, and only one of them is ever up. */
