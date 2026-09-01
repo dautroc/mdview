@@ -446,7 +446,11 @@ body.mdview-resizing #mdview-sidebar-resizer {
   color: var(--comment-fg);
   cursor: default;
 }
-.mdview-comment-anchor.is-current {
+/* is-current is the comment you clicked; is-peek is the one you are merely
+   hovering in the rail. Same ring, because they mean the same thing to the
+   eye: this card and this passage are the same comment. */
+.mdview-comment-anchor.is-current,
+.mdview-comment-anchor.is-peek {
   box-shadow: 0 0 0 2px var(--comment-fg);
 }
 
@@ -474,32 +478,25 @@ body.mdview-resizing #mdview-sidebar-resizer {
   left: 0;
   width: 100%;
   box-sizing: border-box;
-  padding: .5rem .6rem;
+  padding: .45rem .6rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--comment-bg);
-  border-radius: 6px;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
   cursor: default;
-  /* Placement is animated because a card moves when its neighbours change
+  /* Placement is animated because a card moves when a neighbour changes
      height; jumping would read as the list being rebuilt, which it is. */
-  transition: top .15s ease, border-color .15s ease;
+  transition: top .15s ease, background .15s ease, border-color .15s ease;
 }
+.mdview-comment-card:hover { border-color: var(--comment-fg); }
+/* The focused card takes the highlight's own tint, which is the whole of what
+   ties it to the passage now that it no longer repeats the words. */
 .mdview-comment-card.is-current {
+  background: var(--comment-bg);
   border-color: var(--comment-fg);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, .16);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .14);
 }
-.mdview-comment-card-quote {
-  margin: 0 0 .25rem;
-  color: var(--muted);
-  font-size: .8em;
-  /* Two lines of the passage is enough to recognise it; the highlight in the
-     document is the real reference. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.mdview-comment-card-note { margin: 0; font-size: .9em; }
+.mdview-comment-card-note { margin: 0; font-size: .9em; line-height: 1.45; }
 .mdview-comment-card-note.is-empty { color: var(--muted); font-style: italic; }
 
 /* The entry bar sits where find's does, and only one of them is ever up. */
@@ -520,19 +517,36 @@ body.mdview-resizing #mdview-sidebar-resizer {
 #mdview-comment[hidden] { display: none; }
 /* Railed, it is the draft card: same column, level with the passage. The id is
    needed to out-specify the fixed positioning above. */
+/* In the rail the draft IS a card, so the bar sheds its own chrome and lets
+   the field carry it -- otherwise the field's box sits inside the bar's box
+   and the draft reads as two nested boxes where every card is one. */
 #mdview-comment.is-railed {
   position: absolute;
   box-sizing: border-box;
   display: block;
   top: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
 }
-#mdview-comment.is-railed #mdview-comment-input { width: 100%; }
-#mdview-comment.is-railed #mdview-comment-quote {
-  display: block;
-  max-width: none;
-  margin-bottom: .3rem;
-  font-size: .8em;
+#mdview-comment.is-railed #mdview-comment-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: .45rem .6rem;
+  background: var(--bg);
+  border: 1px solid var(--comment-fg);
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .14);
 }
+/* In the rail the draft sits beside the passage and is about to become a
+   card, neither of which repeats the words, so the label would be the only
+   place they appeared. Out of the rail there is no highlight beside it, so the
+   corner bar keeps its label. */
+#mdview-comment.is-railed #mdview-comment-quote { display: none; }
+/* Above the cards: the draft is pinned to your selection and they flow around
+   it, but a card just above can still be tall enough to reach it. */
+#mdview-comment.is-railed { z-index: 14; }
 #mdview-comment-input {
   width: 22rem;
   padding: 0.2rem 0.35rem;

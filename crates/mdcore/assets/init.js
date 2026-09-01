@@ -1407,14 +1407,17 @@
       bar.classList.add("is-railed");
       bar.style.left = geometry.left + "px";
       bar.style.width = geometry.width + "px";
-      bar.style.top = viewportTop - geometry.top + "px";
+      draftTop = viewportTop - geometry.top;
+      bar.style.top = draftTop + "px";
     } else {
+      draftTop = null;
       bar.classList.remove("is-railed");
       bar.style.left = "";
       bar.style.width = "";
       bar.style.top = "";
     }
     bar.hidden = false;
+    layoutCommentRail();
     input.focus();
     input.select();
   }
@@ -1426,6 +1429,8 @@
     editingCommentId = null;
     if (!bar || !input) return;
     bar.hidden = true;
+    draftTop = null;
+    layoutCommentRail();
     // Blurred on the way out: a hidden field that still holds focus goes on
     // eating j and k. Same hazard the find bar documents.
     input.blur();
@@ -1635,6 +1640,7 @@
   var RAIL_CARD_GAP = 8;
   var currentCommentId = null;
   var railResizeTimer = null;
+  var draftTop = null;
 
   function mainEl() {
     return document.getElementById("mdview-main");
@@ -1686,20 +1692,24 @@
     card.setAttribute("data-comment-id", comment.id);
     card.setAttribute("role", "button");
     card.setAttribute("tabindex", "0");
-    var quote = document.createElement("p");
-    quote.className = "mdview-comment-card-quote";
-    // textContent, never innerHTML: both fields are document text.
-    quote.textContent = comment.quote;
     var note = document.createElement("p");
     note.className = "mdview-comment-card-note";
+    // textContent, never innerHTML: the note is document text.
     note.textContent = comment.note || "No note";
     if (!comment.note) note.classList.add("is-empty");
-    card.appendChild(quote);
     card.appendChild(note);
     card.addEventListener("click", function () {
       focusComment(comment.id, false);
       var marks = anchorMarks(comment.id);
       if (marks && marks.length) marks[0].scrollIntoView({ block: "center" });
+    });
+    // Without the quote on the card, hovering it is what says which passage it
+    // belongs to.
+    card.addEventListener("mouseenter", function () {
+      peekComment(comment.id);
+    });
+    card.addEventListener("mouseleave", function () {
+      peekComment(null);
     });
     return card;
   }
@@ -1726,9 +1736,19 @@
       var id = commentAnchors[i].id;
       var comment = commentById(id);
       if (!comment) continue;
+      // The one being edited is represented by the draft, not by a card.
+      if (id === editingCommentId) continue;
       var point = anchorPoint(id, geometry);
       if (!point) continue;
       placed.push({ comment: comment, desired: point.top, left: point.left });
+    }
+    // The open draft takes a slot of its own so the cards make room for it.
+    // It is never moved: it is pinned to the passage you selected, and having
+    // it slide out from under the cursor while you type would be worse than a
+    // card overlapping it.
+    var bar = commentBarEl();
+    if (draftTop !== null && bar && !bar.hidden) {
+      placed.push({ draft: bar, desired: draftTop, left: -1 });
     }
     // Sorted before anything is appended, so the DOM order is the reading
     // order: commentAnchors runs backwards through the document (wrapping has
@@ -1739,6 +1759,10 @@
       return a.left - b.left;
     });
     for (var c = 0; c < placed.length; c++) {
+      if (placed[c].draft) {
+        placed[c].card = placed[c].draft;
+        continue;
+      }
       var card = buildCommentCard(placed[c].comment);
       if (placed[c].comment.id === currentCommentId) card.classList.add("is-current");
       rail.appendChild(card);
@@ -1749,9 +1773,20 @@
     // hence the second pass.
     var floor = 0;
     for (var p = 0; p < placed.length; p++) {
-      var top = Math.max(placed[p].desired, floor);
-      placed[p].card.style.top = top + "px";
+      var top = placed[p].draft ? placed[p].desired : Math.max(placed[p].desired, floor);
+      if (!placed[p].draft) placed[p].card.style.top = top + "px";
       floor = top + placed[p].card.offsetHeight + RAIL_CARD_GAP;
+    }
+  }
+
+  // Hovering a card lights up the passage it is about, without disturbing
+  // which comment is actually focused.
+  function peekComment(id) {
+    for (var a = 0; a < commentAnchors.length; a++) {
+      var marks = commentAnchors[a].marks;
+      for (var m = 0; m < marks.length; m++) {
+        marks[m].classList.toggle("is-peek", id !== null && commentAnchors[a].id === id);
+      }
     }
   }
 
