@@ -445,9 +445,12 @@
     }
     findMatches = [];
     findIndex = -1;
+    invalidateTextIndex();
   }
 
   function highlightFindMatches(query) {
+    // Invalidates the text index on the way in, which also covers the early
+    // return below.
     clearFindHighlights();
     var content = document.getElementById("mdview-content");
     if (!content || !query) return;
@@ -469,6 +472,10 @@
         at = node.nodeValue.toLowerCase().indexOf(needle);
       }
     }
+    // Every split above moved the spans the cursor resolves through. The
+    // offsets themselves are untouched -- the string is the same -- so this
+    // only has to drop the node map.
+    invalidateTextIndex();
   }
 
   function updateFindCount() {
@@ -538,6 +545,11 @@
     var bar = findBarEl();
     var input = findInputEl();
     if (!bar || !input) return;
+    // Focusing the field collapses the selection in WebKit, so leave visual
+    // mode deliberately rather than watching it be dismantled. exitVisual only
+    // clears a selection this page painted, so the seed below still works for
+    // one made with the mouse.
+    exitVisual();
     // Seed from the document selection, the way Find does across macOS. A
     // selection inside the bar itself is the user's own query, not a seed.
     var selection = "";
@@ -1098,6 +1110,7 @@
   }
 
   function openThemePalette() {
+    exitVisual();
     var overlay = themePaletteEl() || buildThemePalette();
     overlay.hidden = false;
     var input = themePaletteInput();
@@ -1225,6 +1238,7 @@
       mark.appendChild(hit);
       marks.push(mark);
     }
+    invalidateTextIndex();
     return marks;
   }
 
@@ -1274,6 +1288,7 @@
       }
     }
     commentAnchors = [];
+    invalidateTextIndex();
   }
 
   // Re-find every comment and highlight it.
@@ -1350,6 +1365,15 @@
     applyCommentAnchors();
     refreshFind();
     layoutCommentRail();
+    // Last, and only here: the wrapping above has finished splitting text
+    // nodes, so this is the first moment an offset can be turned back into a
+    // rectangle. restoreCursor puts it where the document says it belongs --
+    // the text may have been edited under us since the last motion.
+    restoreCursor(cachedIndex());
+    placeCaret();
+    // The selection's nodes went out with the marks; the offsets that describe
+    // it did not.
+    if (visual) paintVisual();
   }
 
   function anchorMarks(id) {
@@ -1407,6 +1431,10 @@
     var bar = commentBarEl();
     var input = commentInputEl();
     if (!bar || !input) return;
+    // Reached only once captureSelection has already read the selection --
+    // commentKey calls it first, and says so. So `c` in visual mode needs no
+    // special case at all: the words are captured, then the mode is left.
+    exitVisual();
     var label = document.getElementById("mdview-comment-quote");
     if (label) label.textContent = quote;
     input.value = note || "";
@@ -1523,34 +1551,70 @@
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
     var range = selection.getRangeAt(0);
     if (!content.contains(range.commonAncestorContainer)) return null;
-    // Trimmed, because a double-click takes the word and whatever whitespace
-    // follows it, and neither end of that is part of what you are commenting
-    // on. Anchoring on the trimmed words is also what makes the comment
-    // survive a reflow that moves the line break.
-    var quote = String(selection).replace(/^\s+|\s+$/g, "");
-    if (!quote) return null;
-    if (quote.length > COMMENT_QUOTE_MAX) {
-      showNote("That selection is too long to comment on.");
-      return false;
-    }
     if (insideUnstableSubtree(range.startContainer)) {
       showNote("Maths and diagrams cannot hold a comment.");
       return false;
     }
     var index = textIndex(content);
     var starts = sectionStarts(index);
-    // The real question is not "is this one paragraph" but "can these words be
-    // found again", which is the same search `applyCommentAnchors` will run on
-    // every render -- so ask it directly rather than guessing from tag names.
-    // A selection that crosses a block boundary fails it, because
-    // Selection.toString() puts a newline at that boundary and the document's
-    // own text has none.
-    var at = offsetOfPoint(index, range.startContainer, range.startOffset);
-    if (at < 0 || index.text.substr(at, quote.length) !== quote) {
-      at = index.text.indexOf(quote);
+
+    // The words are taken from the INDEX, never from Selection.toString().
+    //
+    // The two disagree wherever the markdown source was hard wrapped. A
+    // paragraph written across two source lines keeps that newline inside its
+    // text node, so the index holds "hard wrapped\nacross two lines" while the
+    // selection reports the RENDERED text, "hard wrapped across two lines". A
+    // quote taken from the selection is then a string the document does not
+    // contain, and every search for it fails -- which used to be reported as a
+    // paragraph break, from a selection sitting well inside one paragraph.
+    //
+    // Read out of the index, a quote is findable by construction, which is the
+    // only thing applyCommentAnchors will ever ask of it.
+    //
+    // Trimmed, because a double-click takes the word and whatever whitespace
+    // follows it, and neither end of that is part of what you are commenting
+    // on. Anchoring on the trimmed words is also what makes the comment
+    // survive a reflow that moves the line break.
+    var quote = null;
+    var at = -1;
+    var from = offsetOfPoint(index, range.startContainer, range.startOffset);
+    var to = offsetOfPoint(index, range.endContainer, range.endOffset);
+    if (from >= 0 && to > from) {
+      var slice = index.text.slice(from, to);
+      var lead = slice.replace(/^\s+/, "");
+      quote = lead.replace(/\s+$/, "");
+      at = from + (slice.length - lead.length);
+    }
+    // An endpoint that is not a text node has no offset in the index -- a
+    // triple click hands back the element itself. Those go through the
+    // rendered text, matching whitespace to whitespace so a hard wrap cannot
+    // fail the search, and still take the index's own words as the quote.
+    if (!quote) {
+      var rendered = String(selection).replace(/^\s+|\s+$/g, "");
+      if (rendered) {
+        var pattern = rendered.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+        var hit = null;
+        try {
+          hit = new RegExp(pattern).exec(index.text);
+        } catch (err) {
+          hit = null;
+        }
+        if (hit) {
+          quote = hit[0];
+          at = hit.index;
+        } else {
+          quote = rendered;
+          at = index.text.indexOf(rendered);
+        }
+      }
+    }
+    if (!quote) return null;
+    if (quote.length > COMMENT_QUOTE_MAX) {
+      showNote("That selection is too long to comment on.");
+      return false;
     }
     if (at < 0) {
-      showNote("That selection crosses a paragraph break.");
+      showNote("Those words could not be found to anchor to.");
       return false;
     }
     var heading = 0;
@@ -1959,7 +2023,16 @@
     // sidebar, so the cards are re-placed rather than left hanging.
     window.addEventListener("resize", function () {
       clearTimeout(railResizeTimer);
-      railResizeTimer = setTimeout(layoutCommentRail, 120);
+      railResizeTimer = setTimeout(function () {
+        layoutCommentRail();
+        // The text re-wrapped, so the offset the caret sits on is somewhere
+        // else on screen even though it is the same offset.
+        placeCaret();
+        // The labels were placed against rects measured before the reflow and
+        // now point at the wrong words. Cancelling is honest; moving them
+        // under the reader's fingers mid-jump is not.
+        if (jumpIsActive()) endJump();
+      }, 120);
     });
     var input = commentInputEl();
     if (!input) return;
@@ -2018,11 +2091,870 @@
     setTimeout(dismissHint, HINT_LINGER_MS);
   };
 
+  // ---- The cursor ----------------------------------------------------------
+  //
+  // A position in the DOCUMENT, not in the DOM: an integer offset into the
+  // concatenated text `textIndex` builds. That is the whole trick. Both
+  // highlight layers split text nodes to wrap a match and call normalize() to
+  // merge them back, so every (node, offset) pair in the page is invalidated on
+  // any render -- while the string those offsets index into is untouched by all
+  // of it. Only the node map goes stale, never the position.
+  //
+  // Across a live reload the string itself changes, so the cursor is also
+  // remembered the way a comment anchor is (section ordinal + offset within the
+  // section) and re-derived afterwards: an edit somewhere else in the document
+  // then does not drag it.
+
+  // How many line-heights j/k will probe before giving up and falling back to
+  // the next block. A tall image or a display formula between two lines of text
+  // is the case this exists for.
+  var CURSOR_PROBES = 8;
+  // Keeps the caret this far inside the viewport, and keeps a j/k probe off the
+  // very edge where caretRangeFromPoint has nothing to hit.
+  var CURSOR_MARGIN = 28;
+
+  var cursorAt = null;      // offset into cachedIndex().text; null before first use
+  var cursorAnchor = null;  // { heading, offset } -- survives a reload
+  var cursorGoalX = null;   // desired x for j/k; vim's curswant
+  var indexCache = null;
+  var blockCache = null;
+  var sectionCache = null;
+
+  function cachedIndex() {
+    var content = contentEl();
+    if (!content) return null;
+    if (!indexCache) indexCache = textIndex(content);
+    return indexCache;
+  }
+
+  function cachedSections(index) {
+    if (!sectionCache) sectionCache = sectionStarts(index);
+    return sectionCache;
+  }
+
+  // Called by everything that splits or merges a text node. Rebuilding is
+  // cheaper than reasoning about which spans moved, and the whole point of the
+  // offset model is that nothing above this line has to care.
+  function invalidateTextIndex() {
+    indexCache = null;
+    blockCache = null;
+    sectionCache = null;
+  }
+
+  var BLOCK_TAGS = /^(P|H[1-6]|LI|BLOCKQUOTE|PRE|TD|TH|DT|DD|FIGCAPTION|DIV|SECTION|ARTICLE)$/;
+
+  function nearestBlock(node) {
+    var el = node.parentNode;
+    while (el && el !== document.body) {
+      if (el.tagName && BLOCK_TAGS.test(el.tagName)) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  // Where each block begins in the concatenated text.
+  //
+  // This is not a nicety. `index.text` is a raw nodeValue concatenation, and
+  // while the renderer does put a newline between one top-level block and the
+  // next, it puts nothing at all between the cells of a table row:
+  // "<td>one</td><td>two</td>" reads as "onetwo". Without these boundaries a
+  // word motion steps over that join as though it were one word.
+  //
+  // Kept beside the index rather than inside it: applyCommentAnchors counts
+  // occurrences, and every comment already stored on disk was anchored against
+  // the string exactly as textIndex builds it today.
+  function blockBoundaries(index) {
+    if (blockCache) return blockCache;
+    var bounds = [];
+    var previous = null;
+    for (var i = 0; i < index.spans.length; i++) {
+      var block = nearestBlock(index.spans[i].node);
+      if (block !== previous) {
+        bounds.push(index.spans[i].start);
+        previous = block;
+      }
+    }
+    blockCache = bounds;
+    return bounds;
+  }
+
+  function blockStartAt(index, at) {
+    var bounds = blockBoundaries(index);
+    var from = 0;
+    for (var i = 0; i < bounds.length; i++) {
+      if (bounds[i] <= at) from = bounds[i];
+      else break;
+    }
+    return from;
+  }
+
+  function blockEndAfter(index, at) {
+    var bounds = blockBoundaries(index);
+    for (var i = 0; i < bounds.length; i++) {
+      if (bounds[i] > at) return bounds[i];
+    }
+    return index.text.length;
+  }
+
+  // ---- Geometry ------------------------------------------------------------
+
+  // The caret rectangle for an offset. getClientRects()[0], NOT
+  // getBoundingClientRect(): a range that straddles a line wrap has a union box
+  // two lines tall, and the caret would be drawn down both of them.
+  function rectFor(index, at) {
+    if (!index || !index.text.length) return null;
+    var tail = at >= index.text.length;
+    var from = tail ? index.text.length - 1 : at;
+    var runs = runsFor(index, from, from + 1);
+    if (!runs.length) return null;
+    var run = runs[0];
+    var range = document.createRange();
+    try {
+      range.setStart(run.node, run.start);
+      range.setEnd(run.node, run.end);
+    } catch (err) {
+      return null;
+    }
+    var rects = range.getClientRects();
+    if (!rects.length) return null;
+    var rect = rects[0];
+    // The width is the character's own advance, because the cursor is a block
+    // sitting ON the character rather than a bar between two of them. Past the
+    // last character there is nothing to measure, so it borrows that one's
+    // width; a zero-width glyph gets a floor so the block never disappears.
+    var width = Math.max(rect.width, 3);
+    return {
+      left: tail ? rect.right : rect.left,
+      top: rect.top,
+      height: rect.height,
+      width: width,
+    };
+  }
+
+  // WebKit's own API, and the reason j/k can be O(1) rather than a search over
+  // offsets: it answers "what is at this point" for wrapped lines, table cells
+  // and code blocks alike. Feature-checked, so --print-html output opened in a
+  // browser without it still gets the word motions, which need no geometry.
+  function offsetFromPoint(index, x, y) {
+    if (!document.caretRangeFromPoint) return -1;
+    var range = null;
+    try {
+      range = document.caretRangeFromPoint(x, y);
+    } catch (err) {
+      return -1;
+    }
+    if (!range) return -1;
+    var content = contentEl();
+    if (!content || !content.contains(range.startContainer)) return -1;
+    if (insideUnstableSubtree(range.startContainer)) return -1;
+    return offsetOfPoint(index, range.startContainer, range.startOffset);
+  }
+
+  // How far to look for an offset that actually paints. The gaps are one or
+  // two characters in practice; this is a bound, not a budget.
+  var RENDERABLE_SCAN = 64;
+
+  // Not every offset is a place the cursor can be.
+  //
+  // The document's markup puts a newline between one block and the next --
+  // "</p>\n<h2>" -- and that newline is a real text node with a real offset in
+  // the index, but it renders NOTHING: getClientRects() on it comes back empty.
+  // A cursor that lands there cannot be drawn, and cannot get off again either,
+  // because every motion that needs geometry starts by asking for the rectangle
+  // it does not have. That was a cursor that vanished at a heading and stayed
+  // vanished.
+  //
+  // So every offset the cursor takes is snapped to one that is painted,
+  // preferring the direction it was already travelling.
+  function renderableAt(index, at, dir) {
+    var last = Math.max(0, index.text.length - 1);
+    var start = Math.max(0, Math.min(last, at));
+    var first = dir < 0 ? -1 : 1;
+    var order = [first, -first];
+    for (var o = 0; o < order.length; o++) {
+      var step = order[o];
+      var i = start;
+      for (var n = 0; n <= RENDERABLE_SCAN && i >= 0 && i <= last; n++, i += step) {
+        if (rectFor(index, i)) return i;
+      }
+    }
+    return -1;
+  }
+
+  // The one place cursorAt is assigned. Everything that moves the cursor goes
+  // through here so the snap above cannot be forgotten at a new call site.
+  function setCursor(index, at, dir) {
+    var to = renderableAt(index, Math.max(0, Math.min(index.text.length - 1, at)), dir);
+    if (to < 0) return false;
+    cursorAt = to;
+    return true;
+  }
+
+  // ---- Painting ------------------------------------------------------------
+
+  function caretEl() {
+    var caret = document.getElementById("mdview-caret");
+    if (caret) return caret;
+    var main = mainEl();
+    if (!main) return null;
+    caret = document.createElement("div");
+    caret.id = "mdview-caret";
+    caret.hidden = true;
+    // Appended to main rather than to #mdview-content, which the body swap on
+    // every live reload replaces wholesale. Absolute inside a relative main is
+    // document coordinates, so it scrolls with the text on its own -- the same
+    // reason the comment rail lives here.
+    main.appendChild(caret);
+    return caret;
+  }
+
+  function placeCaret() {
+    var caret = caretEl();
+    if (!caret) return;
+    var main = mainEl();
+    var index = cursorAt === null ? null : cachedIndex();
+    var rect = index ? rectFor(index, cursorAt) : null;
+    if (!rect || !main) {
+      caret.hidden = true;
+      return;
+    }
+    var box = main.getBoundingClientRect();
+    caret.style.left = rect.left - box.left + "px";
+    caret.style.top = rect.top - box.top + "px";
+    caret.style.height = rect.height + "px";
+    caret.style.width = rect.width + "px";
+    caret.hidden = false;
+  }
+
+  // ---- Remembering it across a render --------------------------------------
+
+  function rememberCursor(index) {
+    if (cursorAt === null) {
+      cursorAnchor = null;
+      return;
+    }
+    var starts = cachedSections(index);
+    var heading = 0;
+    for (var i = 0; i < starts.length; i++) {
+      if (cursorAt >= starts[i]) heading = i + 1;
+    }
+    var section = sectionRange(index, starts, heading);
+    cursorAnchor = { heading: heading, offset: cursorAt - section.from };
+  }
+
+  // The document may have been edited under us. Put the cursor back in the same
+  // place in the same section, and clamp rather than drop it: a cursor that
+  // vanished on save would be worse than one that moved a word.
+  function restoreCursor(index) {
+    if (!cursorAnchor || !index) return;
+    var starts = cachedSections(index);
+    var section = sectionRange(index, starts, cursorAnchor.heading);
+    var at = section.from + cursorAnchor.offset;
+    // Snapped as well as clamped: an edit can leave the remembered offset on
+    // one of the newlines between two blocks.
+    setCursor(index, Math.min(at, section.to), 1);
+  }
+
+  // Seeded from what is on screen, so the first motion starts where you are
+  // reading rather than at the top of a document you may be halfway down.
+  function ensureCursor(index) {
+    if (cursorAt !== null) return true;
+    if (!index || !index.text.length) return false;
+    var content = contentEl();
+    var box = content ? content.getBoundingClientRect() : null;
+    var at = box ? offsetFromPoint(index, box.left + 4, CURSOR_MARGIN) : -1;
+    if (!setCursor(index, at >= 0 ? at : 0, 1)) return false;
+    cursorGoalX = null;
+    return true;
+  }
+
+  function scrollCursorIntoView() {
+    var index = cachedIndex();
+    var rect = index === null ? null : rectFor(index, cursorAt);
+    if (!rect) return;
+    var top = CURSOR_MARGIN;
+    var bottom = window.innerHeight - CURSOR_MARGIN - rect.height;
+    // Instant, for the reason scrollLines is: a held j queues one smooth
+    // animation per repeat and they fight each other.
+    if (rect.top < top) window.scrollBy(0, rect.top - top);
+    else if (rect.top > bottom) window.scrollBy(0, rect.top - bottom);
+  }
+
+  // ---- Motions -------------------------------------------------------------
+  //
+  // Every motion is (index, at) -> new offset, or -1 for "nothing to do". The
+  // wrapper below is what actually moves the cursor, so scrolling, repainting
+  // and re-anchoring are written once.
+
+  // vim's three character classes. A WORD (W/E/B) is any run of non-whitespace;
+  // a word also breaks between letters and punctuation. Non-ASCII counts as a
+  // letter, so a motion does not stop inside an accented or CJK word.
+  function charClass(ch, big) {
+    if (!ch || /\s/.test(ch)) return 0;
+    if (big) return 1;
+    return /[A-Za-z0-9_]/.test(ch) || ch.charCodeAt(0) > 127 ? 1 : 2;
+  }
+
+  // A block boundary reads as the start of the next word, so `w` steps out of a
+  // paragraph onto the first word of the next one exactly as it steps between
+  // words -- without the two ever being read as joined.
+  function wordForward(index, at, big) {
+    var text = index.text;
+    var limit = blockEndAfter(index, at);
+    var cls = charClass(text.charAt(at), big);
+    var i = at;
+    while (i < limit && cls !== 0 && charClass(text.charAt(i), big) === cls) i++;
+    while (i < limit && charClass(text.charAt(i), big) === 0) i++;
+    return Math.min(i, text.length);
+  }
+
+  function wordEnd(index, at, big) {
+    var text = index.text;
+    var i = at + 1;
+    // The whitespace skip is NOT bounded by the block: `e` on the last word of
+    // a paragraph goes to the end of the first word of the next one, the way it
+    // crosses a line in vim. Bounding it here is what made `e` stick.
+    while (i < text.length && charClass(text.charAt(i), big) === 0) i++;
+    if (i >= text.length) return Math.max(at, text.length - 1);
+    // The run itself is bounded, by the block the landing character is in.
+    var cls = charClass(text.charAt(i), big);
+    var stop = blockEndAfter(index, i);
+    while (i + 1 < stop && charClass(text.charAt(i + 1), big) === cls) i++;
+    return i;
+  }
+
+  function wordBack(index, at, big) {
+    var text = index.text;
+    var floor = blockStartAt(index, at);
+    var i = at;
+    // Already at the top of the block: drop into the one before it.
+    if (i <= floor) {
+      if (floor <= 0) return 0;
+      i = floor;
+      floor = blockStartAt(index, floor - 1);
+    }
+    i--;
+    while (i > floor && charClass(text.charAt(i), big) === 0) i--;
+    var cls = charClass(text.charAt(i), big);
+    while (i > floor && charClass(text.charAt(i - 1), big) === cls) i--;
+    return Math.max(floor, i);
+  }
+
+  // Clamped to the block rather than to the visual line. A rendered paragraph
+  // re-wraps with the window, so "the end of the line" is not a place in the
+  // document; the end of the paragraph is.
+  function charStep(index, at, delta) {
+    var from = blockStartAt(index, at);
+    var to = Math.max(from, blockEndAfter(index, at) - 1);
+    return Math.max(from, Math.min(to, at + delta));
+  }
+
+  // Down and up a VISUAL line -- vim's gj/gk, which is the only reading that
+  // makes sense in reflowed prose. Probing rather than one shot because the gap
+  // between two blocks, a tall image or a display formula all land nowhere.
+  function lineStep(index, at, dir) {
+    var rect = rectFor(index, at);
+    if (!rect) return -1;
+    if (cursorGoalX === null) cursorGoalX = rect.left;
+    var step = Math.max(6, Math.round(rect.height));
+    var y = rect.top + rect.height / 2;
+    for (var i = 0; i < CURSOR_PROBES; i++) {
+      y += dir * step;
+      // caretRangeFromPoint works in VIEWPORT coordinates, so a target below
+      // the fold cannot be hit at all until it is scrolled into view.
+      var over = y < CURSOR_MARGIN ? y - CURSOR_MARGIN : 0;
+      if (y > window.innerHeight - CURSOR_MARGIN) over = y - (window.innerHeight - CURSOR_MARGIN);
+      if (over !== 0) {
+        window.scrollBy(0, over);
+        y -= over;
+      }
+      var hit = offsetFromPoint(index, cursorGoalX, y);
+      if (hit >= 0 && hit !== at) return hit;
+    }
+    // Nothing hittable that way: step to the next block, so j never dead-ends
+    // against a diagram.
+    return dir > 0 ? blockEndAfter(index, at) : Math.max(0, blockStartAt(index, at) - 1);
+  }
+
+  // Ends of the visual line, answered by geometry for the same reason j/k are:
+  // scanning character by character would cost a layout per character.
+  function lineEdge(index, at, dir) {
+    var rect = rectFor(index, at);
+    var content = contentEl();
+    if (!rect || !content) return -1;
+    var box = content.getBoundingClientRect();
+    var y = rect.top + rect.height / 2;
+    var x = dir < 0 ? box.left + 1 : box.right - 1;
+    var hit = offsetFromPoint(index, x, y);
+    return hit >= 0 ? hit : -1;
+  }
+
+  // The one place the cursor actually moves.
+  function cursorKey(motion) {
+    return function () {
+      var index = cachedIndex();
+      if (!index || !index.text.length) return;
+      if (!ensureCursor(index)) return;
+      var at = motion(index, cursorAt);
+      if (at < 0) return;
+      // Never past the last character, and never on one that paints nothing:
+      // the cursor is a block sitting ON a character, which is vim's
+      // normal-mode invariant and the only position a block can be drawn.
+      if (!setCursor(index, at, at < cursorAt ? -1 : 1)) return;
+      rememberCursor(index);
+      // Scroll first: the caret is positioned in DOCUMENT coordinates, so one
+      // placement after the scroll is both correct and enough.
+      scrollCursorIntoView();
+      placeCaret();
+      // The head moved, so the selection did. Visual mode adds exactly this
+      // one line to the motion path -- the motions themselves know nothing
+      // about it.
+      if (visual) paintVisual();
+    };
+  }
+
+  // The ends of the document keep their SMOOTH scroll -- a jump this long is
+  // the one case where the animation tells you which way you travelled -- but
+  // they carry the cursor with them like any other motion.
+  function jumpCursorTo(toEnd) {
+    var index = cachedIndex();
+    if (index && index.text.length) {
+      setCursor(index, toEnd ? index.text.length - 1 : 0, toEnd ? -1 : 1);
+      cursorGoalX = null;
+      rememberCursor(index);
+    }
+    scrollToY(toEnd ? maxScrollY() : 0);
+    placeCaret();
+  }
+
+  // Horizontal motion sets the column j/k will aim for; vertical motion keeps
+  // whatever the last horizontal one asked for, which is what stops a j through
+  // a short line from dragging the cursor left for good.
+  function cursorKeyX(motion) {
+    var move = cursorKey(motion);
+    return function () {
+      cursorGoalX = null;
+      move();
+    };
+  }
+
+
+  // ---- Visual mode ---------------------------------------------------------
+  //
+  // The selection is a REAL DOM Selection, never a third <mark> layer. The two
+  // wrapping layers this page already has are ordered against each other --
+  // comment anchors outside, find hits inside -- because clearFindHighlights
+  // unwraps a mark by replacing it with a flat text node, which deletes
+  // whatever was nested inside. There is no third slot to be had, and a Range
+  // needs none: it costs no DOM at all, and `c` already reads exactly this.
+  //
+  // Which is the point. captureSelection() does not learn a new trick here; it
+  // is handed the selection it has always read, made by the keyboard instead of
+  // by the mouse.
+
+  var visual = null; // { anchor: offset, block: bool }
+
+  function visualIsOn() {
+    return visual !== null;
+  }
+
+  // The head is the cursor, so every motion extends the selection for free.
+  // Inclusive of the character under the head -- the cursor is a block sitting
+  // on a character, and vim selects the one it is sitting on.
+  function visualRange(index) {
+    if (!visual) return null;
+    var from = Math.min(visual.anchor, cursorAt);
+    var to = Math.min(index.text.length, Math.max(visual.anchor, cursorAt) + 1);
+    if (visual.block) {
+      from = blockStartAt(index, from);
+      to = blockEndAfter(index, to - 1);
+    }
+    return { from: from, to: to };
+  }
+
+  function paintVisual() {
+    var index = cachedIndex();
+    if (!index || !visual) return;
+    var span = visualRange(index);
+    if (!span || span.to <= span.from) return;
+    var runs = runsFor(index, span.from, span.to);
+    if (!runs.length) return;
+    var selection = null;
+    try {
+      selection = window.getSelection();
+    } catch (err) {
+      return;
+    }
+    if (!selection) return;
+    var range = document.createRange();
+    var last = runs[runs.length - 1];
+    try {
+      range.setStart(runs[0].node, runs[0].start);
+      range.setEnd(last.node, last.end);
+    } catch (err) {
+      return;
+    }
+    // WebKit scrolls to a range it is handed. The motion that got us here has
+    // already put the viewport where it belongs, so put it back -- the same
+    // save-and-restore the live reload does around its body swap.
+    var y = window.scrollY;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    if (window.scrollY !== y) window.scrollTo(0, y);
+  }
+
+  function enterVisual(block) {
+    var index = cachedIndex();
+    if (!index || !index.text.length) return;
+    if (!ensureCursor(index)) return;
+    visual = { anchor: cursorAt, block: !!block };
+    placeCaret();
+    paintVisual();
+  }
+
+  // Returns whether there was anything to leave, and that matters more than it
+  // looks: mdviewOpenFind seeds its query from the document selection, and a
+  // selection made with the MOUSE has to survive being asked. Only a selection
+  // this mode painted is cleared, so `/` after a double-click still seeds while
+  // `/` after `v` opens empty, the way it does in vim.
+  function exitVisual() {
+    if (!visual) return false;
+    visual = null;
+    try {
+      var selection = window.getSelection();
+      if (selection) selection.removeAllRanges();
+    } catch (err) {
+      /* no selection API: there was nothing painted to clear */
+    }
+    placeCaret();
+    return true;
+  }
+
+  function toggleVisual(block) {
+    if (visual && !!visual.block === !!block) {
+      exitVisual();
+      return;
+    }
+    if (visual) {
+      visual.block = !!block;
+      paintVisual();
+      return;
+    }
+    enterVisual(block);
+  }
+
+  function swapVisualEnds() {
+    if (!visual) return;
+    var index = cachedIndex();
+    if (!index) return;
+    var head = cursorAt;
+    if (!setCursor(index, visual.anchor, 1)) return;
+    visual.anchor = head;
+    cursorGoalX = null;
+    rememberCursor(index);
+    scrollCursorIntoView();
+    placeCaret();
+    paintVisual();
+  }
+
+  // execCommand rather than a host message: the selection is right there, it
+  // needs no new wire format for the bridge to learn, and it works in
+  // --print-html output opened in a plain browser. A keydown handler is the
+  // user gesture it wants.
+  function copyVisual() {
+    if (!visual) return;
+    var copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch (err) {
+      copied = false;
+    }
+    exitVisual();
+    showNote(copied ? "Copied." : "Nothing copied.");
+  }
+
+
+  // ---- Jump ----------------------------------------------------------------
+  //
+  // `s`, then type what you are looking at. Every occurrence on screen lights
+  // up as you type and the nearest ones take a label; type more to narrow, or
+  // type a label to go there. Backspace takes a character back, enter takes the
+  // nearest match, esc gives up.
+  //
+  // The one idea that makes this work without a mode switch: A LABEL IS NEVER A
+  // CHARACTER THAT COULD CONTINUE THE SEARCH. The letters immediately following
+  // the current matches are struck out of the label alphabet, so a keystroke is
+  // never ambiguous -- if it is a label it jumps, and if it is not it narrows.
+  // Nothing has to guess which you meant.
+  //
+  // The labels and the highlights are ordinary spans in their own layer, never
+  // <mark>: the two wrapping layers are ordered against each other and there is
+  // no third slot, the same reason visual mode paints a Selection.
+
+  // How many matches are drawn at once. A cap on drawing, not on what can be
+  // jumped to -- one more character narrows the field.
+  var JUMP_MATCH_MAX = 300;
+  // Home row first, so the labels that come up most are under the fingers.
+  var JUMP_ALPHABET = "asdfghjklqwertyuiopzxcvbnm";
+
+  var jumpOn = false;
+  var jumpQuery = "";
+  var jumpMatches = []; // [{ at, end, rects, label }]  label is null when unlabelled
+
+  function jumpIsActive() {
+    return jumpOn;
+  }
+
+  // The slice of the document on screen, bracketed by probing down from the top
+  // edge and up from the bottom. Probing rather than one shot because a point
+  // in a margin, between two blocks, hits nothing at all.
+  function visibleRange(index) {
+    var content = contentEl();
+    if (!content) return null;
+    var box = content.getBoundingClientRect();
+    var from = -1;
+    var to = -1;
+    for (var y = CURSOR_MARGIN; y < window.innerHeight && from < 0; y += 24) {
+      from = offsetFromPoint(index, box.left + 4, y);
+    }
+    for (var z = window.innerHeight - CURSOR_MARGIN; z > 0 && to < 0; z -= 24) {
+      to = offsetFromPoint(index, box.right - 4, z);
+    }
+    if (from < 0) from = 0;
+    if (to < 0) to = index.text.length;
+    return from <= to ? { from: from, to: to } : { from: to, to: from };
+  }
+
+  // Every box a stretch of text occupies -- more than one when it wraps, which
+  // is why this is not a single bounding rectangle.
+  function rectsFor(index, from, to) {
+    var runs = runsFor(index, from, to);
+    if (!runs.length) return [];
+    var range = document.createRange();
+    var last = runs[runs.length - 1];
+    try {
+      range.setStart(runs[0].node, runs[0].start);
+      range.setEnd(last.node, last.end);
+    } catch (err) {
+      return [];
+    }
+    var list = range.getClientRects();
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].width > 0 && list[i].height > 0) out.push(list[i]);
+    }
+    return out;
+  }
+
+  function collectJumpMatches(index, query) {
+    var span = visibleRange(index);
+    if (!span) return [];
+    var hay = index.text.toLowerCase();
+    var needle = query.toLowerCase();
+    var raw = [];
+    var i = hay.indexOf(needle, span.from);
+    while (i >= 0 && i <= span.to && raw.length < JUMP_MATCH_MAX) {
+      raw.push(i);
+      i = hay.indexOf(needle, i + 1);
+    }
+
+    // A match with no boxes is text that paints nothing -- the newline between
+    // two blocks is in the index like any other character. Dropping it here is
+    // also what keeps a label off a place the cursor could not go.
+    var out = [];
+    for (var k = 0; k < raw.length; k++) {
+      var rects = rectsFor(index, raw[k], raw[k] + needle.length);
+      if (!rects.length) continue;
+      var head = rects[0];
+      if (head.top + head.height < 0 || head.top > window.innerHeight) continue;
+      out.push({ at: raw[k], end: raw[k] + needle.length, rects: rects, label: null });
+    }
+
+    // Nearest the cursor first: the easiest labels land where you are most
+    // likely to be looking, and enter takes the closest match.
+    out.sort(function (x, y) {
+      return Math.abs(x.at - cursorAt) - Math.abs(y.at - cursorAt);
+    });
+
+    // Strike out every letter that could continue the search. This is what
+    // lets one keystroke mean either "narrow" or "go" with no ambiguity.
+    var continues = {};
+    for (var t = 0; t < out.length; t++) {
+      var next = index.text.charAt(out[t].end).toLowerCase();
+      if (next) continues[next] = true;
+    }
+    var pool = [];
+    for (var a = 0; a < JUMP_ALPHABET.length; a++) {
+      var ch = JUMP_ALPHABET.charAt(a);
+      if (!Object.prototype.hasOwnProperty.call(continues, ch)) pool.push(ch);
+    }
+    // A single match gets no label. You are mid-word by then, and a label
+    // offered there is a second thing to read and decide about when the thing
+    // you were already doing -- typing -- still works. Enter takes it.
+    //
+    // More matches than labels is fine too: the rest stay lit but unlabelled,
+    // and one more character brings them within reach.
+    if (out.length > 1) {
+      for (var m = 0; m < out.length && m < pool.length; m++) out[m].label = pool[m];
+    }
+    return out;
+  }
+
+  function jumpLayerEl() {
+    var layer = document.getElementById("mdview-jump");
+    if (layer) return layer;
+    var main = mainEl();
+    if (!main) return null;
+    layer = document.createElement("div");
+    layer.id = "mdview-jump";
+    // On main, like the caret and the rail: the live reload replaces
+    // #mdview-content wholesale and would take the labels with it.
+    main.appendChild(layer);
+    return layer;
+  }
+
+  // Every rect was measured before anything was appended, so the whole set
+  // costs one layout rather than one per box.
+  function drawJump() {
+    var layer = jumpLayerEl();
+    var main = mainEl();
+    if (!layer || !main) return;
+    layer.innerHTML = "";
+    if (!jumpMatches.length) return;
+    var box = main.getBoundingClientRect();
+    var fragment = document.createDocumentFragment();
+    for (var i = 0; i < jumpMatches.length; i++) {
+      var match = jumpMatches[i];
+      for (var r = 0; r < match.rects.length; r++) {
+        var rect = match.rects[r];
+        var hit = document.createElement("span");
+        hit.className = "mdview-jump-hit";
+        hit.style.left = rect.left - box.left + "px";
+        hit.style.top = rect.top - box.top + "px";
+        hit.style.width = rect.width + "px";
+        hit.style.height = rect.height + "px";
+        fragment.appendChild(hit);
+      }
+      if (!match.label) continue;
+      // After the match, the way flash does it: a label sitting on the words
+      // would hide the very text you are reading to aim.
+      var tail = match.rects[match.rects.length - 1];
+      var label = document.createElement("span");
+      label.className = "mdview-jump-label";
+      label.textContent = match.label;
+      label.style.left = tail.right - box.left + "px";
+      label.style.top = tail.top - box.top + "px";
+      label.style.height = tail.height + "px";
+      fragment.appendChild(label);
+    }
+    layer.appendChild(fragment);
+  }
+
+  function endJump() {
+    jumpOn = false;
+    jumpQuery = "";
+    jumpMatches = [];
+    var layer = document.getElementById("mdview-jump");
+    if (layer) layer.innerHTML = "";
+  }
+
+  function jumpTo(at) {
+    var index = cachedIndex();
+    endJump();
+    if (!index || !index.text.length) return;
+    if (!setCursor(index, at, 1)) return;
+    cursorGoalX = null;
+    rememberCursor(index);
+    scrollCursorIntoView();
+    placeCaret();
+    // In visual mode the jump EXTENDS the selection rather than moving the
+    // anchor, because the head is the cursor and nothing else had to change.
+    if (visual) paintVisual();
+  }
+
+  function setJumpQuery(query) {
+    var index = cachedIndex();
+    if (!index) {
+      endJump();
+      return;
+    }
+    if (!query) {
+      jumpQuery = "";
+      jumpMatches = [];
+      drawJump();
+      return;
+    }
+    var found = collectJumpMatches(index, query);
+    if (!found.length) {
+      // Refuse the keystroke rather than sitting in a state that matches
+      // nothing: what is on screen stays, and the search is still live.
+      showNote("Nothing on screen matches " + JSON.stringify(query) + ".");
+      return;
+    }
+    jumpQuery = query;
+    jumpMatches = found;
+    drawJump();
+    // Down to one, and typing is how you got here: say how to take it rather
+    // than taking it. Jumping the moment a query happened to be unique used to
+    // end the mode mid-word, and the rest of the word you were still typing
+    // ran as commands -- which reads exactly like the search resetting itself.
+    if (found.length === 1) showNote("One match — enter to go.");
+  }
+
+  function beginJump() {
+    var index = cachedIndex();
+    if (!index || !index.text.length) return;
+    if (!ensureCursor(index)) return;
+    jumpOn = true;
+    jumpQuery = "";
+    jumpMatches = [];
+    showNote("Jump to…");
+  }
+
+  function onJumpKey(event) {
+    var key = event.key;
+    if (key === "Escape") {
+      event.preventDefault();
+      endJump();
+      return;
+    }
+    if (key === "Backspace") {
+      event.preventDefault();
+      if (!jumpQuery) endJump();
+      else setJumpQuery(jumpQuery.slice(0, -1));
+      return;
+    }
+    if (key === "Enter") {
+      event.preventDefault();
+      if (jumpMatches.length) jumpTo(jumpMatches[0].at);
+      else endJump();
+      return;
+    }
+    // A modifier or a named key (Shift, ArrowLeft) is not an answer to the
+    // question being asked, so it is left alone rather than silently eaten.
+    if (key.length !== 1) return;
+    event.preventDefault();
+    // Labels first, and they can never collide with a character that would
+    // narrow the search -- collectJumpMatches struck those out of the pool.
+    if (jumpQuery) {
+      var lower = key.toLowerCase();
+      for (var i = 0; i < jumpMatches.length; i++) {
+        if (jumpMatches[i].label === lower) {
+          jumpTo(jumpMatches[i].at);
+          return;
+        }
+      }
+    }
+    setJumpQuery(jumpQuery + key);
+  }
+
   // ---- Keyboard shortcuts -------------------------------------------------
   //
-  // Single-key, vim-flavoured bindings. They are safe here because the page
-  // has exactly one text field (the find input) and no editing at all, so an
-  // unmodified letter can never be something the user meant to type.
+  // Vim-flavoured bindings. A binding is one key ("j"), one control key
+  // ("Ctrl+d") or a two-key sequence ("g s"), and all three are written the
+  // same way in `keys`. Unmodified letters are safe here because the page has
+  // no editing at all and only two text fields (find, comment), so a letter
+  // can never be something the user meant to type.
   //
   // ONE table drives both the dispatcher and the `?` cheat sheet. A binding
   // that exists but is undocumented is therefore not expressible -- which is
@@ -2032,8 +2964,10 @@
   var SCROLL_LINE = 60;
   // Two lines of overlap between pages, so nothing is stepped over unread.
   var PAGE_OVERLAP = 2 * SCROLL_LINE;
-  // A "gg" is two presses of g within this window; a lone g does nothing.
-  var G_CHORD_MS = 700;
+  // How long a pressed prefix waits for the key that completes it. A prefix
+  // SWALLOWS whatever follows, so this window is also the way out of one
+  // pressed by accident; esc cancels it outright.
+  var CHORD_MS = 700;
   // How long a heading jump stays chainable. A second press inside the window
   // steps from the heading the last jump was HEADING FOR, not from wherever
   // the smooth scroll has reached -- without this, "]]]" pressed quickly reads
@@ -2046,7 +2980,7 @@
   // just landed on would read as "next" again and the second press would stall.
   var HEADING_EPSILON = HEADING_MARGIN + 4;
 
-  var pendingG = 0;           // timestamp of an unconsumed "g"
+  var pendingPrefix = null;   // { key, at } -- an unconsumed prefix press
   var lastHeadingJump = null; // { el, at } -- what the in-flight jump aimed at
 
   function maxScrollY() {
@@ -2228,14 +3162,48 @@
     {
       title: "Moving",
       items: [
-        { keys: ["j"], hint: "j", label: "Down a line", run: function () { scrollLines(SCROLL_LINE); } },
-        { keys: ["k"], hint: "k", label: "Up a line", run: function () { scrollLines(-SCROLL_LINE); } },
-        { keys: ["d"], hint: "d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
-        { keys: ["u"], hint: "u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
-        { keys: [" "], hint: "space", label: "A page down", run: function () { scrollLines(pageStep()); } },
-        { keys: ["Shift+Space"], hint: "⇧space", label: "A page up", run: function () { scrollLines(-pageStep()); } },
-        { keys: [], hint: "g g", label: "Top of the document", run: null },
-        { keys: ["G"], hint: "G", label: "Bottom of the document", run: function () { scrollToY(maxScrollY()); } },
+        { keys: ["h"], hint: "h", label: "Left a character", run: cursorKeyX(function (index, at) { return charStep(index, at, -1); }) },
+        { keys: ["l"], hint: "l", label: "Right a character", run: cursorKeyX(function (index, at) { return charStep(index, at, 1); }) },
+        { keys: ["j"], hint: "j", label: "Down a line", run: cursorKey(function (index, at) { return lineStep(index, at, 1); }) },
+        { keys: ["k"], hint: "k", label: "Up a line", run: cursorKey(function (index, at) { return lineStep(index, at, -1); }) },
+        { keys: ["s"], hint: "s", label: "Jump to anything you can see", run: beginJump },
+        { keys: ["^"], hint: "^", label: "Start of the line", run: cursorKeyX(function (index, at) { return lineEdge(index, at, -1); }) },
+        { keys: ["$"], hint: "$", label: "End of the line", run: cursorKeyX(function (index, at) { return lineEdge(index, at, 1); }) },
+        { keys: ["g g"], hint: "g  g", label: "Top of the document", run: function () { jumpCursorTo(false); } },
+        { keys: ["G"], hint: "G", label: "Bottom of the document", run: function () { jumpCursorTo(true); } },
+      ],
+    },
+    {
+      title: "Words",
+      items: [
+        { keys: ["w"], hint: "w", label: "Forward a word", run: cursorKeyX(function (index, at) { return wordForward(index, at, false); }) },
+        { keys: ["W"], hint: "W", label: "Forward a WORD", run: cursorKeyX(function (index, at) { return wordForward(index, at, true); }) },
+        { keys: ["e"], hint: "e", label: "To the end of the word", run: cursorKeyX(function (index, at) { return wordEnd(index, at, false); }) },
+        { keys: ["E"], hint: "E", label: "To the end of the WORD", run: cursorKeyX(function (index, at) { return wordEnd(index, at, true); }) },
+        { keys: ["b"], hint: "b", label: "Back a word", run: cursorKeyX(function (index, at) { return wordBack(index, at, false); }) },
+        { keys: ["B"], hint: "B", label: "Back a WORD", run: cursorKeyX(function (index, at) { return wordBack(index, at, true); }) },
+      ],
+    },
+    {
+      title: "Selecting",
+      items: [
+        { keys: ["v"], hint: "v", label: "Select from the cursor", run: function () { toggleVisual(false); } },
+        { keys: ["V"], hint: "V", label: "Select whole blocks", run: function () { toggleVisual(true); } },
+        { keys: ["o"], hint: "o", label: "Swap which end you are moving", run: swapVisualEnds },
+        { keys: ["y"], hint: "y", label: "Copy the selection", run: copyVisual },
+        { keys: [], hint: "c", label: "Comment on the selection", run: null },
+        { keys: [], hint: "esc", label: "Leave the selection", run: null },
+      ],
+    },
+    {
+      title: "Scrolling",
+      items: [
+        { keys: ["Ctrl+d"], hint: "⌃d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
+        { keys: ["Ctrl+u"], hint: "⌃u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
+        { keys: ["Ctrl+f"], hint: "⌃f", label: "A page down", run: function () { scrollLines(pageStep()); } },
+        { keys: ["Ctrl+b"], hint: "⌃b", label: "A page up", run: function () { scrollLines(-pageStep()); } },
+        { keys: ["Ctrl+e"], hint: "⌃e", label: "A line down, leaving the cursor", run: function () { scrollLines(SCROLL_LINE); } },
+        { keys: ["Ctrl+y"], hint: "⌃y", label: "A line up, leaving the cursor", run: function () { scrollLines(-SCROLL_LINE); } },
       ],
     },
     {
@@ -2260,11 +3228,11 @@
     {
       title: "Sidebar",
       items: [
-        { keys: ["s"], hint: "s", label: "Toggle the sidebar", run: toggleSidebarKey },
-        { keys: ["o"], hint: "o", label: "Outline", run: function () { showSidebarTab("outline"); } },
-        { keys: ["b"], hint: "b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
+        { keys: ["g s"], hint: "g  s", label: "Toggle the sidebar", run: toggleSidebarKey },
+        { keys: ["g o"], hint: "g  o", label: "Outline", run: function () { showSidebarTab("outline"); } },
+        { keys: ["g b"], hint: "g  b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
-        { keys: ["t"], hint: "t", label: "Themes", run: toggleThemePalette },
+        { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
       ],
     },
     {
@@ -2273,7 +3241,7 @@
         { keys: ["c"], hint: "c", label: "Comment on the selection, or show the comments", run: commentKey },
         { keys: [")"], hint: ")", label: "Next comment", run: function () { stepComment(1); } },
         { keys: ["("], hint: "(", label: "Previous comment", run: function () { stepComment(-1); } },
-        { keys: ["e"], hint: "e", label: "Edit the comment you are looking at", run: editCommentKey },
+        { keys: ["g c"], hint: "g  c", label: "Edit the comment you are looking at", run: editCommentKey },
         { keys: ["x"], hint: "x", label: "Delete the comment you are looking at", run: deleteCommentKey },
         { keys: ["C"], hint: "C", label: "Copy the review prompt for Claude", run: copyReviewKey },
         { keys: [], hint: "click", label: "Focus the comment on a highlighted passage", run: null },
@@ -2283,10 +3251,10 @@
     {
       title: "View",
       items: [
-        { keys: ["D"], hint: "D", label: "Diff and back to Markdown", run: toggleDiffKey },
-        { keys: ["l"], hint: "l", label: "Diff layout, unified or split", run: cycleDiffLayout },
+        { keys: ["g d"], hint: "g  d", label: "Diff and back to Markdown", run: toggleDiffKey },
+        { keys: ["g l"], hint: "g  l", label: "Diff layout, unified or split", run: cycleDiffLayout },
         { keys: ["z"], hint: "z", label: "Zoom the nearest image", run: zoomNearest },
-        { keys: ["w"], hint: "w", label: "Toggle full width", run: toggleFullWidthKey },
+        { keys: ["g w"], hint: "g  w", label: "Toggle full width", run: toggleFullWidthKey },
         { keys: ["r"], hint: "r", label: "Reload the document", run: reloadKey },
         { keys: ["+", "="], hint: "+", label: "Zoom in", run: function () { postToHost("zoomIn"); } },
         { keys: ["-"], hint: "−", label: "Zoom out", run: function () { postToHost("zoomOut"); } },
@@ -2314,24 +3282,62 @@
     },
   ];
 
-  var keyMap = null;
+  var keyMap = null;    // "j", "Ctrl+d"  -> item
+  var chordMap = null;  // "g s"          -> item
+  var prefixSet = null; // "g"            -> true
 
-  function shortcutFor(key) {
-    if (!keyMap) {
-      keyMap = {};
-      for (var g = 0; g < SHORTCUTS.length; g++) {
-        var items = SHORTCUTS[g].items;
-        for (var i = 0; i < items.length; i++) {
-          if (!items[i].run) continue;
-          for (var k = 0; k < items[i].keys.length; k++) {
-            keyMap[items[i].keys[k]] = items[i];
+  // One pass over the table fills all three. A `keys` name containing a space
+  // is a two-key sequence, and its first token is a prefix -- so the set of
+  // prefixes is DERIVED from the table rather than listed here, and adding
+  // "g q" later needs no change to the dispatcher.
+  function buildKeyMaps() {
+    keyMap = {};
+    chordMap = {};
+    prefixSet = {};
+    for (var g = 0; g < SHORTCUTS.length; g++) {
+      var items = SHORTCUTS[g].items;
+      for (var i = 0; i < items.length; i++) {
+        if (!items[i].run) continue;
+        for (var k = 0; k < items[i].keys.length; k++) {
+          var name = items[i].keys[k];
+          var at = name.indexOf(" ");
+          if (at > 0) {
+            chordMap[name] = items[i];
+            prefixSet[name.slice(0, at)] = true;
+          } else {
+            keyMap[name] = items[i];
           }
         }
       }
     }
-    // hasOwnProperty, not a truth test: a key like "constructor" would
-    // otherwise find something on Object.prototype and be "bound".
-    return Object.prototype.hasOwnProperty.call(keyMap, key) ? keyMap[key] : null;
+  }
+
+  // hasOwnProperty, not a truth test: a key like "constructor" would
+  // otherwise find something on Object.prototype and be "bound".
+  function lookup(map, key) {
+    return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+  }
+
+  function shortcutFor(key) {
+    if (!keyMap) buildKeyMaps();
+    return lookup(keyMap, key);
+  }
+
+  function chordFor(prefix, key) {
+    if (!chordMap) buildKeyMaps();
+    return lookup(chordMap, prefix + " " + key);
+  }
+
+  function isPrefix(key) {
+    if (!prefixSet) buildKeyMaps();
+    return lookup(prefixSet, key) === true;
+  }
+
+  // Whether a ⌃-combo is one the page has asked for. Everything else modified
+  // belongs to the menu bar and to WebKit, and is handed straight back.
+  function isCtrlBound(key) {
+    if (!keyMap) buildKeyMaps();
+    return lookup(keyMap, "Ctrl+" + String(key).toLowerCase()) !== null;
   }
 
   // ---- The ? cheat sheet ---------------------------------------------------
@@ -2446,8 +3452,12 @@
     // Any key at all means the hint has been read, or at least overtaken.
     // Above the modifier check on purpose, so ⌘-anything dismisses it too.
     dismissHint();
-    // Modified keys belong to the menu bar (⌘F, ⌥⌘S, …) and to the browser.
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // ⌘ and ⌥ belong to the menu bar (⌘O, ⌘F, ⌘R) and to the browser. ⌃ does
+    // not: menu.rs installs no ⌃ equivalent and asserts it, so the scroll keys
+    // ⌃d ⌃u ⌃f ⌃b are the page's to claim. Any other ⌃ combo is handed straight
+    // back -- WebKit and AppKit have their own uses for it.
+    if (event.metaKey || event.altKey) return;
+    if (event.ctrlKey && !isCtrlBound(event.key)) return;
     // The lightbox is modal and owns the keyboard while it is up; its own
     // listener handles those keys.
     if (zoomState) return;
@@ -2467,32 +3477,59 @@
       return;
     }
 
-    // The find field and the palette's search box are the only places in this
-    // page where a letter is a letter.
+    // So is a jump in progress: every key is either the character being
+    // searched for or the label being picked, and nothing else runs until it
+    // resolves or is cancelled.
+    if (jumpIsActive()) {
+      onJumpKey(event);
+      return;
+    }
+
+    // The find field, the comment input and the palette's search box are the
+    // only places in this page where a letter is a letter. This guard has to
+    // stay ABOVE the "Ctrl+" naming below: macOS binds ⌃d ⌃u ⌃a ⌃e as emacs
+    // editing keys inside a text field, and the page must not steal them.
     if (isTextEntry(event.target) || isTextEntry(document.activeElement)) return;
 
     if (activatesOnKey(document.activeElement, event.key)) return;
 
+    // Canonical name first, then one lookup. ⇧enter steps the search back and
+    // arrives under the unshifted key with shiftKey set, so the shift is read
+    // here; ⌃ becomes part of the name the same way.
     var key = event.key;
-    // ⇧space pages back, the way it does in every pager, and ⇧enter steps the
-    // search back. Both arrive under the unshifted key with shiftKey set, so
-    // the shift is read here. "Shift+Space" is a name no event.key can take,
-    // which is what keeps it clear of b -- the bookmarks key.
-    if (key === " " && event.shiftKey) key = "Shift+Space";
     if (key === "Enter" && event.shiftKey) key = "N";
+    if (event.ctrlKey) key = "Ctrl+" + key.toLowerCase();
 
-    if (key === "g") {
+    // A live prefix owns the next key whether or not it completes a chord.
+    // With eight commands behind g, a mistyped "g" must not fall through and
+    // fire an unrelated one -- "g" then "x" used to delete a comment.
+    if (pendingPrefix && Date.now() - pendingPrefix.at < CHORD_MS) {
+      var chord = chordFor(pendingPrefix.key, key);
+      pendingPrefix = null;
+      // esc cancels the prefix and nothing else. It is deliberately not
+      // swallowed: the find bar and the comment bar have their own esc
+      // listeners and still have to see it.
+      if (key === "Escape") return;
       event.preventDefault();
-      if (pendingG && Date.now() - pendingG < G_CHORD_MS) {
-        pendingG = 0;
-        scrollToY(0);
-      } else {
-        pendingG = Date.now();
-      }
+      if (chord) chord.run();
       return;
     }
-    // Any other key ends a half-typed chord: "gj" must not scroll to the top.
-    pendingG = 0;
+    pendingPrefix = null;
+
+    // Below the modal blocks above, so a sheet or a palette still owns esc
+    // first; above nothing else, because find and the comment bar guard their
+    // own esc listeners on being open and are no-ops while this is what is up.
+    if (key === "Escape" && visualIsOn()) {
+      event.preventDefault();
+      exitVisual();
+      return;
+    }
+
+    if (isPrefix(key)) {
+      pendingPrefix = { key: key, at: Date.now() };
+      event.preventDefault();
+      return;
+    }
 
     var action = shortcutFor(key);
     if (!action) return;

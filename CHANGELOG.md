@@ -3,6 +3,91 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## Unreleased
+
+### What's new
+
+- **`s` jumps to any word you can see.** Press `s`, then the letter a word
+  starts with: every word on screen beginning with it takes a label, and typing
+  the label puts the cursor there. Two keystrokes to anywhere in view, and when
+  only one word matches there is no label to type — it just goes. In visual
+  mode the jump extends the selection rather than moving it, so selecting an
+  awkward phrase is `v` and one jump.
+- **Words, not characters.** A screen of prose holds a few hundred `e`s and a
+  few dozen words starting with one. Labelling every occurrence would bury the
+  text it is meant to help you read, and "the word beginning with t" is how you
+  were aiming anyway.
+- **`v` selects, and `c` comments on what it selected.** Commenting was the
+  one thing in MDView that a keyboard could not do: `c` was a key whose
+  precondition was a mouse gesture, because the only way to make a selection
+  was to drag one. `v` starts a selection at the cursor and every motion
+  extends it, `V` takes whole blocks, `o` swaps which end you are moving, `y`
+  copies, and esc leaves. `V` then `c` is how you comment on a paragraph.
+- **The selection is the real one.** It is the same selection a drag makes, so
+  `c` did not have to learn anything new — it reads what it has always read.
+  That also means nothing new is drawn on the document: the two highlight
+  layers already there, comments outside and find matches inside, are ordered
+  against each other so that closing find cannot strip a comment, and a third
+  layer would have had nowhere to sit.
+- **Opening find or the theme palette leaves the selection deliberately.**
+  Focusing a text field collapses the document selection, so rather than watch
+  it come apart, the commands that take focus stand the mode down first. `/`
+  after `v` opens an empty find box, the way it does in vim, while `/` after a
+  double-click still seeds from the words you picked.
+- **There is a cursor.** `h`, `j`, `k` and `l` move it, `w`, `e` and `b` move
+  it by the word — `W`, `E` and `B` by whitespace alone — and `^` and `$` go to
+  the ends of the line. The view follows it rather than the other way round, so
+  reading is now driving a position through the document rather than pushing a
+  page around; `⌃e` and `⌃y` scroll without taking the cursor with them when
+  you want to look ahead and come back.
+- **The cursor is a place in the document, not in the page.** It is held as an
+  offset into the document's text and re-found after every render, because
+  highlighting a comment or a find match splits the page's text nodes apart and
+  merges them back again — a cursor that pointed at one of those nodes would be
+  pointing at nothing the moment you searched. It is also remembered against
+  the section it sits in, the way a comment is, so saving an edit somewhere
+  else in the document leaves it where you left it.
+- **Words end where blocks do.** The text a motion walks is the document's
+  text run together, and nothing separates the cells of a table row: `| one |
+  two |` reads as `onetwo`. Motions now know where each block begins, so `w`
+  stops between two cells rather than stepping over the join as though it were
+  a single word.
+- **The keys moved to make room for a cursor.** `w`, `e` and `b` are how vim
+  moves by word and `s` is how it jumps, and all four were sitting on MDView
+  commands. So the commands moved instead, behind `g`: `g s` toggles the
+  sidebar, `g o` and `g b` are its panels, `g t` the themes, `g w` full width,
+  `g d` the diff and `g l` its layout, `g c` edits the comment you are looking
+  at. That is the answer vim itself gives for everything that does not fit on
+  one key, and it leaves the alphabet free for the document rather than the
+  chrome. `gg` stopped being a special case in the dispatcher at the same time
+  and became an ordinary row in the table with everything else.
+- **A pressed `g` waits, and swallows whatever follows it.** With eight
+  commands behind the prefix, a mistyped one must not fall through and fire an
+  unrelated command — `g` then `x` used to delete a comment. It waits a beat
+  for the key that completes it, and esc cancels it outright.
+- **Paging is `⌃f` and `⌃b`, half a page `⌃d` and `⌃u`.** Vim's own bindings.
+  This is the first time the page reads a modifier at all, so the find field
+  keeps ⌃d and ⌃u as the text-editing keys macOS makes them: the page only sees
+  them when the keyboard is not in a field. Space, `d` and `u` are now unbound
+  and stay that way — space is held back as a leader key, and `d` and `u` are
+  vim's delete and undo, which a viewer with no editing has no use for.
+
+### Fixes
+
+- **Commenting on more than one line said the selection crossed a paragraph
+  break, from well inside one paragraph.** A paragraph written across two
+  source lines — which is most of them — keeps that line break inside the
+  document as a real newline, while the selection reports the text as it is
+  drawn, with a space in its place. The words being anchored were therefore a
+  string the document did not contain, and the search for them failed. The
+  quote is now read out of the document's own text rather than out of the
+  selection, so it is findable by construction. A triple-clicked paragraph goes
+  the same way, matching whitespace to whitespace.
+- **A comment may now span a paragraph break.** It was never the intent that it
+  could not — the question a selection has to answer is whether its words can
+  be found again, and with the quote taken from the document that answer is now
+  yes. The refusal is kept for words that genuinely cannot be located.
+
 ## [v0.10.0](https://github.com/dautroc/mdview/releases/tag/v0.10.0) — 2026-09-01
 
 ### What's new

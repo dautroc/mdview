@@ -22,7 +22,8 @@ LaTeX math, and Mermaid diagrams.
 - **Outline** built from the document's headings, in a sidebar you can toggle
   and drag to resize; the width is remembered across launches.
 - **Bookmarks** for documents you come back to, kept across launches.
-- **Comments.** Select a phrase, press `c`, type a note. The note becomes a
+- **Comments.** Select a phrase — with the mouse, or with `v` and a motion —
+  press `c`, and type a note. The note becomes a
   card in the document's right margin, level with the passage it is about;
   clicking a highlighted passage brings its card forward, hovering a card lights
   up its passage and reveals its edit and delete buttons, and clicking one
@@ -35,13 +36,21 @@ LaTeX math, and Mermaid diagrams.
   If the review file ends up in a state MDView cannot wholly read, it says so
   and stops writing to it rather than saving over the part it did not
   understand.
-- **Themes** — three light, four dark, or follow the system. `t` opens a
+- **Themes** — three light, four dark, or follow the system. `g t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
 - **Find in page** with `/` or ⌘F: every match is highlighted as you type,
   `n` and `N` step through them, and esc clears the highlights.
-- **Keyboard navigation** in the vim idiom — `j`/`k` by the line, `d`/`u` by
-  the half page, `]`/`[` between headings, `/` to search. `?` lists the lot.
+- **A cursor, in the vim idiom.** `h`/`j`/`k`/`l` move it, `w`/`e`/`b` by the
+  word, `^`/`$` to the ends of the line, `]`/`[` between headings, `/` to
+  search, and `s` to jump anywhere on screen: type what you are looking at and
+  every occurrence lights up, the nearest ones labelled — keep typing to narrow
+  it down, or type a label to go there. A label is never a letter that could
+  continue what you are typing, so it is never ambiguous which you meant, and
+  the last match standing carries no label at all: enter takes it. The view follows the cursor rather than the other way round, and
+  `⌃e`/`⌃y` scroll without taking it with them. It holds its place across a
+  save, anchored to its section, so editing elsewhere in the document does not
+  move it. `?` lists the lot.
 - **Click to zoom** an image or a Mermaid diagram to fill the window, or press
   `z` for whichever one you are looking at.
 - **Live reload.** Save in your editor and the view updates, holding your
@@ -89,34 +98,43 @@ mdview --print-html notes.md  # render to stdout
 Or double-click a `.md` file in Finder, drop one on the window or the Dock
 icon, or press ⌘O.
 
-Everything is a single key, vim-flavoured, since nothing in a read-only viewer
-is expecting your typing. Press **?** for the full list, which the app also
-offers once on first launch.
+Vim-flavoured, since nothing in a read-only viewer is expecting your typing.
+Moving around is a single key; the commands that are not motion sit behind `g`,
+which keeps the vim alphabet free for the document itself. Press **?** for the
+full list, which the app also offers once on first launch.
 
 | Key | |
 | --- | --- |
-| j / k | Down / up a line |
-| d / u | Half a page down / up |
-| space / ⇧space | A page down / up |
-| gg / G | Top / bottom of the document |
+| h / j / k / l | Move the cursor left / down / up / right |
+| w / b | Forward / back a word (W / B by whitespace alone) |
+| e | To the end of the word (E by whitespace alone) |
+| s | Jump to anything on screen — type what you see, then its label |
+| ^ / $ | Start / end of the line |
+| v / V | Select from the cursor / whole blocks |
+| o | Swap which end of the selection you are moving |
+| y | Copy the selection |
+| g g / G | Top / bottom of the document |
+| ⌃d / ⌃u | Half a page down / up |
+| ⌃f / ⌃b | A page down / up |
+| ⌃e / ⌃y | A line down / up, leaving the cursor where it is |
 | ] / [ | Next / previous heading |
 | } / { | Next / previous top-level heading |
 | / | Find in this document |
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
-| s | Toggle the sidebar |
-| o / b | Outline / bookmarks in the sidebar |
+| g s | Toggle the sidebar |
+| g o / g b | Outline / bookmarks in the sidebar |
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |
 | ) / ( | Next / previous comment |
 | click | Focus the comment on a highlighted passage |
-| e / x | Edit / delete the comment you are looking at |
+| g c / x | Edit / delete the comment you are looking at |
 | C | Copy the review prompt for Claude |
-| t | Themes |
-| D | Diff, and back to Markdown (needs a tracked file) |
-| l | Diff layout, unified or split |
+| g t | Themes |
+| g d | Diff, and back to Markdown (needs a tracked file) |
+| g l | Diff layout, unified or split |
 | z | Zoom the nearest image or diagram |
-| w | Toggle fullwidth view |
+| g w | Toggle fullwidth view |
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |
 | ? | The list of all of them |

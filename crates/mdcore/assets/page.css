@@ -464,6 +464,78 @@ body.mdview-resizing #mdview-sidebar-resizer {
   text-decoration: line-through;
 }
 
+/* Jump labels. Their own layer on #mdview-main, in document coordinates like
+   the caret and the rail, so they scroll with the words they point at and the
+   live reload cannot take them. Ordinary spans, never <mark>: the two
+   highlight layers are ordered against each other and there is no third slot.
+
+   Drawn ON the character a word starts with rather than beside it, so a label
+   never pushes the text around -- the layer is out of flow and the labels are
+   gone again within two keystrokes. */
+#mdview-jump {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+/* A lit match. Drawn UNDER the words rather than over them -- the layer sits
+   behind nothing, so the box is translucent and the text reads through it,
+   the way the find highlight does. */
+.mdview-jump-hit {
+  position: absolute;
+  background: var(--find-hit-bg);
+  border-radius: 2px;
+  opacity: .55;
+}
+/* The label, sitting just after its match. After, not on top: a label over the
+   words would hide the very text you are reading to aim at. */
+.mdview-jump-label {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: .95em;
+  padding: 0 .15em;
+  box-sizing: border-box;
+  background: var(--accent, var(--link));
+  color: var(--bg);
+  border-radius: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .8125rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* The cursor. Absolutely positioned inside #mdview-main for the same reason
+   the rail is: main is position:relative and as tall as the document, so a
+   document-coordinate offset scrolls with the text on its own. Its width and
+   height come from the character it is sitting on, measured in JS.
+
+   Deliberately not blinking: a blink is a repaint loop that never stops, and
+   this is a reader rather than an editor.
+
+   The block INVERTS the character underneath instead of covering it, which is
+   what a terminal block cursor does and the only way to keep the letter
+   readable. `difference` against white flips light on dark and dark on light,
+   so one rule serves every theme without knowing which one is showing. The
+   fallback below it is a translucent wash, for anything without blend modes. */
+#mdview-caret {
+  position: absolute;
+  background: var(--accent, var(--link));
+  opacity: .32;
+  pointer-events: none;
+  border-radius: 2px;
+}
+@supports (mix-blend-mode: difference) {
+  #mdview-caret {
+    background: #fff;
+    opacity: 1;
+    mix-blend-mode: difference;
+    border-radius: 1px;
+  }
+}
+#mdview-caret[hidden] { display: none; }
+
 /* The comment rail. Absolutely positioned inside #mdview-main, which is
    position:relative and as tall as the document, so the cards scroll with the
    passages they are about without anything syncing them. */
@@ -723,7 +795,7 @@ body.mdview-resizing #mdview-sidebar-resizer {
 /* A fixed keys column rather than max-content: each group is its own grid, so
    sizing to content would give every group a different column width and the
    labels would step in and out down the sheet. 6.5rem clears the widest hint
-   ("b  ⇧space"). */
+   ("N  ⇧enter"). */
 .mdview-shortcuts-groups dl {
   align-items: baseline;
   display: grid;

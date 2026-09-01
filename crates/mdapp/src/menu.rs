@@ -9,8 +9,8 @@ use objc2_foundation::{MainThreadMarker, NSString};
 
 // Only three of MDView's own commands keep a key equivalent: ⌘O, ⌘F and ⌘R,
 // the ones whose muscle memory predates this app. Everything else the app
-// does has a single key in the page (see the ? sheet), so a second shortcut
-// for it would be a second thing to keep in sync. The macOS standards -- ⌘C,
+// does has a key or a two-key `g` sequence in the page (see the ? sheet), so a
+// second shortcut for it would be a second thing to keep in sync. The macOS standards -- ⌘C,
 // ⌘A, ⌘Q, ⌘W, ⌘M, ⌘H -- stay: they are not duplicates of anything, and ⌘C is
 // the only way to copy out of the web view.
 const FULL_WIDTH_TITLE: &str = "Full Width";
@@ -221,10 +221,11 @@ mod tests {
     use super::*;
 
     /// The whole shortcut policy in one place. Every command the page can do
-    /// has a single key (the ? sheet is the list), so a modifier shortcut for
-    /// it would be a second binding to keep in sync with the first. Only three
-    /// of MDView's own commands keep one, because their muscle memory predates
-    /// this app and no single key can replace them: ⌘O opens a native panel,
+    /// has a key or a two-key `g` sequence (the ? sheet is the list), so a
+    /// modifier shortcut for it would be a second binding to keep in sync with
+    /// the first. Only three of MDView's own commands keep one, because their
+    /// muscle memory predates this app and no page key can replace them: ⌘O
+    /// opens a native panel,
     /// and ⌘F / ⌘R are what hands reach for without looking.
     #[test]
     fn only_open_find_and_reload_keep_a_key_equivalent() {

@@ -501,12 +501,18 @@ mod tests {
     #[test]
     fn every_advertised_single_key_binding_is_still_bound() {
         for key in [
-            "\"j\"", "\"k\"", "\"d\"", "\"u\"", "\" \"", "\"Shift+Space\"", "\"G\"",
+            "\"j\"", "\"k\"", "\"G\"",
+            "\"Ctrl+d\"", "\"Ctrl+u\"", "\"Ctrl+f\"", "\"Ctrl+b\"",
             "\"]\"", "\"[\"", "\"}\"", "\"{\"",
             "\"/\"", "\"n\"", "\"N\"",
-            "\"s\"", "\"o\"", "\"b\"", "\"m\"", "\"t\"",
-            "\"D\"", "\"l\"", "\"z\"", "\"w\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
-            "\"c\"", "\"e\"", "\"x\"", "\"C\"", "\"(\"", "\")\"",
+            "\"g g\"", "\"g s\"", "\"g o\"", "\"g b\"", "\"g t\"",
+            "\"g c\"", "\"g d\"", "\"g l\"", "\"g w\"",
+            "\"h\"", "\"l\"", "\"^\"", "\"$\"",
+            "\"v\"", "\"V\"", "\"o\"", "\"y\"", "\"s\"",
+            "\"w\"", "\"W\"", "\"e\"", "\"E\"", "\"b\"", "\"B\"",
+            "\"Ctrl+e\"", "\"Ctrl+y\"",
+            "\"m\"", "\"z\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
+            "\"c\"", "\"x\"", "\"C\"", "\"(\"", "\")\"",
         ] {
             let needle = format!("keys: [{}", key);
             let alt = format!(", {}]", key);
@@ -515,14 +521,330 @@ mod tests {
                 "no binding for {key} in the SHORTCUTS table"
             );
         }
-        // "gg" is a chord, so it is dispatched by hand rather than from the
-        // table; it still has to be documented there.
-        assert!(assets::INIT_JS.contains("hint: \"g g\""));
-        // b opens the bookmarks list, so it must not also be paging: the two
-        // would fight and only whichever the table lists last would run.
+        // The keys held back. space is reserved as a future leader; d and u
+        // are vim's delete and undo, which a read-only viewer has no use for,
+        // so half-paging is ⌃d / ⌃u alone. Guarded the way retired keys always
+        // have been -- note "Ctrl+d" does not contain `keys: ["d"`, so these
+        // assertions stay exact once the control keys are bound.
+        for held in ["keys: [\" \"", "keys: [\"d\"", "keys: [\"u\"", "Shift+Space"] {
+            assert!(
+                !assets::INIT_JS.contains(held),
+                "{held} is meant to be unbound: paging is ⌃f / ⌃b, half-paging ⌃d / ⌃u"
+            );
+        }
+    }
+
+    /// Chords are table-driven now, not hand-dispatched: `gg` lost its
+    /// special case in the dispatcher when eight more commands moved behind
+    /// `g`, and the prefix set is derived from the table so a new one needs no
+    /// dispatcher change.
+    #[test]
+    fn chords_are_driven_from_the_table() {
+        assert!(!assets::INIT_JS.contains("pendingG"), "the gg special case survived");
+        for hook in ["function chordFor(", "function isPrefix(", "function buildKeyMaps("] {
+            assert!(assets::INIT_JS.contains(hook), "missing {hook}");
+        }
+        // A prefix swallows the key after it, so a bare binding on the same
+        // letter could never fire -- it would read as a dead key rather than
+        // as a conflict, which is the kind of thing only a test notices.
         assert!(
-            !assets::INIT_JS.contains("keys: [\"f\""),
-            "f is unbound; paging is space and ⇧space"
+            !assets::INIT_JS.contains("keys: [\"g\"]"),
+            "g is a prefix; a bare g binding would be unreachable"
+        );
+    }
+
+    /// The cursor is a position in the DOCUMENT, not in the DOM. Both
+    /// highlight layers split text nodes and call normalize() to merge them
+    /// back, so every (node, offset) pair in the page is invalidated on any
+    /// render -- while the string those offsets index into is untouched. A
+    /// cursor held as a node reference would be a use-after-free waiting for
+    /// the next save.
+    #[test]
+    fn the_cursor_is_an_offset_not_a_node() {
+        assert!(assets::INIT_JS.contains("var cursorAt = null;"));
+        for banned in ["cursorNode", "cursorRange", "cursorContainer"] {
+            assert!(
+                !assets::INIT_JS.contains(banned),
+                "{banned} would not survive a render: normalize() invalidates node references"
+            );
+        }
+        // Resolved back to nodes only at paint time, through the existing map.
+        assert!(assets::INIT_JS.contains("runsFor(index, from, from + 1)"));
+    }
+
+    /// Every function that splits or merges a text node has to drop the cached
+    /// index with it. Call-site discipline is exactly what a test is better at
+    /// than a reviewer, and getting it wrong makes the cursor land a word or
+    /// two off only after a find has been opened and closed.
+    #[test]
+    fn every_text_splitting_function_drops_the_index_cache() {
+        for name in [
+            "function clearFindHighlights(",
+            "function highlightFindMatches(",
+            "function wrapRuns(",
+            "function clearCommentAnchors(",
+        ] {
+            let from = assets::INIT_JS.find(name).unwrap_or_else(|| panic!("missing {name}"));
+            let body = &assets::INIT_JS[from..];
+            let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+            assert!(
+                body[..end].contains("invalidateTextIndex()"),
+                "{name} splits or merges text nodes without dropping the index cache"
+            );
+        }
+    }
+
+    /// The caret hangs off #mdview-main, never off #mdview-content: the live
+    /// reload replaces that div's innerHTML wholesale and would take the caret
+    /// with it. Absolute inside a relative main is also what lets it scroll
+    /// with the text without a scroll listener.
+    #[test]
+    fn the_caret_lives_outside_the_reloaded_body() {
+        let from = assets::INIT_JS.find("function caretEl(").expect("caretEl missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        let body = &body[..end];
+        assert!(body.contains("mainEl()"), "the caret must hang off #mdview-main");
+        assert!(!body.contains("contentEl()"), "the body swap would take the caret");
+        assert!(assets::PAGE_CSS.contains("#mdview-caret {"), "the caret has no styling");
+    }
+
+    /// index.text is a raw nodeValue concatenation. The renderer separates
+    /// top-level blocks with a newline, but nothing separates the cells of a
+    /// table row: "<td>one</td><td>two</td>" reads as "onetwo". Without block
+    /// boundaries a word motion steps over that join as though it were a word.
+    #[test]
+    fn word_motions_stop_at_block_boundaries() {
+        assert!(assets::INIT_JS.contains("function blockBoundaries("));
+        for motion in ["function wordForward(", "function wordEnd(", "function wordBack("] {
+            let from = assets::INIT_JS.find(motion).unwrap();
+            let body = &assets::INIT_JS[from..];
+            let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+            let body = &body[..end];
+            assert!(
+                body.contains("blockEndAfter(") || body.contains("blockStartAt("),
+                "{motion} runs past the edge of its block"
+            );
+        }
+    }
+
+    /// The caret is placed from the one highlight funnel and nowhere else, and
+    /// last within it: the wrapping above has to finish splitting text nodes
+    /// before an offset can be turned back into a rectangle.
+    #[test]
+    fn the_caret_is_placed_from_the_one_funnel() {
+        let from = assets::INIT_JS.find("function refreshHighlights(").expect("funnel missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        let body = &body[..end];
+        let rail = body.find("layoutCommentRail()").expect("rail missing");
+        let caret = body.find("placeCaret()").expect("caret never placed");
+        assert!(rail < caret, "the caret has to be placed after the marks are rebuilt");
+        assert!(body.contains("restoreCursor("), "the cursor is not re-anchored after a render");
+    }
+
+    /// Visual mode paints a real DOM Selection, never a third <mark> layer.
+    /// The two wrapping layers already here are ordered against each other --
+    /// comment anchors outside, find hits inside -- because
+    /// clearFindHighlights unwraps a mark into a flat text node and deletes
+    /// whatever was nested in it. A third wrapper would either be destroyed by
+    /// find's teardown or destroy find's marks with its own.
+    #[test]
+    fn visual_mode_paints_a_selection_not_marks() {
+        let from = assets::INIT_JS.find("function paintVisual(").expect("paintVisual missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        let body = &body[..end];
+        assert!(body.contains("addRange("), "the selection is not a real Selection");
+        for banned in ["wrapRuns(", "createElement(\"mark\")"] {
+            assert!(!body.contains(banned), "visual mode must not wrap: {banned}");
+        }
+    }
+
+    /// WebKit collapses the document selection whenever an input takes focus,
+    /// so every command that focuses one leaves visual mode deliberately
+    /// rather than watching the selection be dismantled underneath it.
+    #[test]
+    fn every_command_that_takes_focus_leaves_visual_first() {
+        for opener in [
+            "window.mdviewOpenFind = function () {",
+            "function openCommentBar(",
+            "function openThemePalette(",
+        ] {
+            let from = assets::INIT_JS.find(opener).unwrap_or_else(|| panic!("missing {opener}"));
+            let body = &assets::INIT_JS[from..];
+            let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+            assert!(
+                body[..end].contains("exitVisual()"),
+                "{opener} focuses an input without leaving visual mode"
+            );
+        }
+    }
+
+    /// exitVisual has to return early when nothing is painted. Find seeds its
+    /// query from the document selection, and a selection made with the MOUSE
+    /// must survive being asked -- only one this page painted is cleared.
+    #[test]
+    fn a_mouse_selection_still_seeds_the_find_box() {
+        let from = assets::INIT_JS.find("function exitVisual(").expect("exitVisual missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        assert!(
+            body[..end].contains("if (!visual) return false;"),
+            "exitVisual would clear a mouse selection too"
+        );
+        assert!(assets::INIT_JS.contains("String(window.getSelection() || \"\").trim()"));
+    }
+
+    /// `c` needs no special case in visual mode, and that is load-bearing:
+    /// captureSelection must run BEFORE anything focuses the comment input,
+    /// because focusing it collapses the selection it is about to read.
+    #[test]
+    fn comment_capture_still_runs_before_the_input_is_focused() {
+        let from = assets::INIT_JS.find("function commentKey(").expect("commentKey missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        let body = &body[..end];
+        let capture = body.find("captureSelection()").expect("no capture");
+        let open = body.find("openCommentBar(").expect("no bar");
+        assert!(capture < open, "the selection is read after the focus that collapses it");
+    }
+
+    /// Jump labels are ordinary spans in their own layer on #mdview-main:
+    /// never <mark>, for the same reason visual mode paints a Selection, and
+    /// never on #mdview-content, which the live reload replaces wholesale.
+    #[test]
+    fn jump_labels_are_spans_outside_the_reloaded_body() {
+        for name in ["function drawJump(", "function jumpLayerEl("] {
+            let from = assets::INIT_JS.find(name).unwrap_or_else(|| panic!("missing {name}"));
+            let body = &assets::INIT_JS[from..];
+            let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+            let body = &body[..end];
+            assert!(
+                !body.contains("createElement(\"mark\")"),
+                "{name} would need a third highlight layer, and there is no slot for one"
+            );
+            assert!(!body.contains("contentEl()"), "{name} hangs labels off the reloaded body");
+        }
+        assert!(assets::INIT_JS.contains("main.appendChild(layer)"));
+        assert!(assets::PAGE_CSS.contains(".mdview-jump-label {"), "labels have no styling");
+    }
+
+    /// A cap on how many matches are DRAWN, not on what can be jumped to --
+    /// FIND_MATCH_LIMIT exists for the same reason and says so.
+    #[test]
+    fn the_jump_caps_how_many_matches_it_draws() {
+        assert!(assets::INIT_JS.contains("JUMP_MATCH_MAX = 300"));
+        let from = assets::INIT_JS.find("function collectJumpMatches(").expect("missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        assert!(body[..end].contains("JUMP_MATCH_MAX"), "the match scan is unbounded");
+    }
+
+    /// Narrowing must never jump by itself. Jumping the moment a query
+    /// happened to be unique ended the mode mid-word, and every remaining
+    /// letter of the word being typed then fell through to the dispatcher and
+    /// ran as a command -- which reads exactly like the search resetting.
+    /// Only a label or enter commits, and both live in onJumpKey.
+    #[test]
+    fn narrowing_to_one_match_does_not_jump_on_its_own() {
+        let from = assets::INIT_JS.find("function setJumpQuery(").expect("missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        assert!(
+            !body[..end].contains("jumpTo("),
+            "narrowing the search must not commit it; typing has to stay possible"
+        );
+        // And a lone match carries no label to read instead of typing.
+        let pick = assets::INIT_JS.find("function collectJumpMatches(").expect("missing");
+        let picked = &assets::INIT_JS[pick..];
+        let pend = picked[1..].find("\n  function ").map(|i| i + 1).unwrap_or(picked.len());
+        assert!(picked[..pend].contains("if (out.length > 1)"), "a lone match still gets a label");
+    }
+
+    /// The idea the whole interaction rests on: a label can never be a
+    /// character that would continue the search, so one keystroke means
+    /// "narrow" or "go" with nothing left to guess. Lose this and typing a
+    /// label would sometimes extend the query instead of jumping.
+    #[test]
+    fn a_label_is_never_a_character_that_continues_the_search() {
+        let from = assets::INIT_JS.find("function collectJumpMatches(").expect("missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        let body = &body[..end];
+        // The character after each match is struck out of the label pool.
+        assert!(body.contains("index.text.charAt(out[t].end)"), "next characters are not read");
+        assert!(body.contains("continues"), "the label pool is not filtered");
+        // And labels are only consulted before the query is extended.
+        let key = assets::INIT_JS.find("function onJumpKey(").expect("missing");
+        let keybody = &assets::INIT_JS[key..];
+        let keyend = keybody[1..].find("\n  function ").map(|i| i + 1).unwrap_or(keybody.len());
+        let keybody = &keybody[..keyend];
+        let label = keybody.find(".label === lower").expect("labels never checked");
+        let extend = keybody.find("setJumpQuery(jumpQuery + key)").expect("query never extended");
+        assert!(label < extend, "a label keystroke would extend the query instead of jumping");
+    }
+
+    /// A jump in progress owns the keyboard: every key is the character being
+    /// searched for or the label being picked. If the table were consulted
+    /// first, typing a label would fire whatever else that letter is bound to.
+    #[test]
+    fn the_jump_is_modal_in_the_dispatcher() {
+        let from = assets::INIT_JS
+            .find("function onDocumentKeyDown(")
+            .expect("dispatcher missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        let body = &body[..end];
+        let jump = body.find("jumpIsActive()").expect("the jump is not modal");
+        let table = body.find("shortcutFor(key)").expect("no table dispatch");
+        assert!(jump < table, "a label keystroke would fire its own binding instead");
+    }
+
+    /// Not every offset is a place the cursor can be. The markup puts a
+    /// newline between one block and the next -- "</p>\n<h2>" -- and that
+    /// newline is a real text node holding a real offset that renders NOTHING:
+    /// getClientRects() on it comes back empty. A cursor landing there could
+    /// not be drawn and could not get off again, because every motion that
+    /// needs geometry starts by asking for the rectangle it does not have.
+    /// That was a cursor that vanished at a heading and stayed vanished.
+    ///
+    /// The fix only holds while every assignment goes through setCursor, so
+    /// that is what this pins.
+    #[test]
+    fn the_cursor_only_rests_where_something_is_painted() {
+        assert!(assets::INIT_JS.contains("function renderableAt("));
+        assert!(assets::INIT_JS.contains("function setCursor("));
+        // One assignment, inside setCursor, plus the declaration.
+        let writes = assets::INIT_JS.matches("cursorAt = ").count();
+        assert_eq!(
+            writes, 2,
+            "cursorAt must be assigned only in setCursor (plus its declaration); \
+             a new call site would skip the snap and could park the cursor on an \
+             offset that paints nothing"
+        );
+        let from = assets::INIT_JS.find("function setCursor(").unwrap();
+        let body = &assets::INIT_JS[from..];
+        let end = body[1..].find("\n  function ").map(|i| i + 1).unwrap_or(body.len());
+        assert!(body[..end].contains("renderableAt("), "setCursor does not snap");
+    }
+
+    /// macOS binds ⌃d, ⌃u, ⌃a and ⌃e as emacs editing keys inside a text
+    /// field. The page reads ⌃ combos now, so the text-entry guard has to run
+    /// BEFORE a "Ctrl+" name is built, or the find box would lose them.
+    #[test]
+    fn the_control_keys_are_read_below_the_text_entry_guard() {
+        let from = assets::INIT_JS
+            .find("function onDocumentKeyDown(")
+            .expect("dispatcher missing");
+        let body = &assets::INIT_JS[from..];
+        let end = body.find("\n  function ").unwrap_or(body.len());
+        let body = &body[..end];
+        let guard = body.find("isTextEntry(").expect("no text-entry guard");
+        let naming = body.find("\"Ctrl+\" +").expect("no Ctrl naming");
+        assert!(
+            guard < naming,
+            "the text-entry guard must precede the Ctrl+ naming, or ⌃d in the find box scrolls"
         );
     }
 

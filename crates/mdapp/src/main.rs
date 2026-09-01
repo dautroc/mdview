@@ -99,7 +99,7 @@ mod bundle_version_tests {
         for gone in ["⌥⌘F", "⌥⌘S", "⌥⌘D", "⌘G", "⇧⌘/", "| ⌘D |"] {
             assert!(!readme.contains(gone), "README still advertises {gone}");
         }
-        assert!(readme.contains("| w | Toggle fullwidth view |"));
+        assert!(readme.contains("| g w | Toggle fullwidth view |"));
     }
 
     /// Themes have no other native home now that the in-page picker is a
@@ -296,8 +296,8 @@ mod bundle_version_tests {
     fn readme_lists_the_cheat_sheet_shortcut() {
         let readme = include_str!("../../../README.md");
         assert!(readme.contains("| ? | The list of all of them |"));
-        // The picker is gone; t opens a palette.
-        assert!(readme.contains("| t | Themes |"));
+        // The picker is gone; g t opens a palette.
+        assert!(readme.contains("| g t | Themes |"));
         assert!(!readme.contains("Theme picker"));
     }
 

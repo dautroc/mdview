@@ -79,7 +79,7 @@ mod tests {
         assert!(super::PAGE_CSS.contains("#mdview-comment.is-railed {"));
     }
 
-    /// The card's buttons and the e and x keys must reach the same two
+    /// The card's buttons and the `g c` and `x` keys must reach the same two
     /// functions. A second copy of either would be a comment that behaves one
     /// way from the keyboard and another from the mouse.
     #[test]
