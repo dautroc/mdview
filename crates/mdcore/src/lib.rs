@@ -20,6 +20,7 @@ pub use chrome::Rgb;
 pub use document::{Document, DocumentError};
 pub use diff::{DiffAvailability, DiffError, DiffHunk, DiffLayout, DiffLine, DiffLineKind, GitDiff, SplitRow};
 pub use highlight::Highlighter;
+pub use render::headings;
 pub use theme::Theme;
 
 /// A document rendered and ready to hand to a web view.

@@ -171,6 +171,12 @@ pub enum Message {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    /// A new comment on the current document. `heading` and `nth` are its
+    /// anchor; see `crate::review::Comment`.
+    AddComment { heading: usize, nth: usize, quote: String, note: String },
+    EditComment { id: String, note: String },
+    DeleteComment { id: String },
+    CopyReview,
 }
 
 /// Parse a bridge message. Returns `None` for anything unrecognised or
@@ -197,6 +203,9 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     if raw == "zoomReset" {
         return Some(Message::ZoomReset);
+    }
+    if raw == "copyReview" {
+        return Some(Message::CopyReview);
     }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
@@ -235,14 +244,208 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             let px = rest.parse::<u32>().ok()?;
             Some(Message::SetSidebarWidth(px))
         }
+        // A comment carries two free-text fields, and `openPath` only gets
+        // away with one because it is last. The page percent-encodes both, so
+        // every field here is delimiter-free by construction.
+        "addComment" => {
+            let parts: Vec<&str> = rest.splitn(4, ':').collect();
+            let [heading, nth, quote, note] = parts.as_slice() else {
+                return None;
+            };
+            Some(Message::AddComment {
+                heading: heading.parse().ok()?,
+                nth: nth.parse().ok()?,
+                quote: percent_decode(quote)?,
+                note: percent_decode(note)?,
+            })
+        }
+        "editComment" => {
+            let (id, note) = rest.split_once(':')?;
+            if id.is_empty() {
+                return None;
+            }
+            Some(Message::EditComment { id: id.to_string(), note: percent_decode(note)? })
+        }
+        "deleteComment" => {
+            if rest.is_empty() {
+                None
+            } else {
+                Some(Message::DeleteComment { id: rest.to_string() })
+            }
+        }
         _ => None,
     }
+}
+
+/// Decode one percent-encoded field from the page.
+///
+/// Bytes are collected and validated as UTF-8 only at the end, never decoded a
+/// `char` at a time: `encodeURIComponent` emits UTF-8 as percent bytes, so a
+/// char-wise decoder turns every emoji and accented letter into mojibake.
+/// `None` for a truncated or non-hex escape, so a malformed message is dropped
+/// rather than half-read.
+#[allow(dead_code)]
+pub fn percent_decode(text: &str) -> Option<String> {
+    fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let high = hex(*bytes.get(at + 1)?)?;
+            let low = hex(*bytes.get(at + 2)?)?;
+            out.push(high * 16 + low);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// The file name a document's review is stored under: FNV-1a of its
+/// canonicalized path, in hex.
+///
+/// Deliberately not `DefaultHasher`, which `page.rs` uses for the CSP nonce
+/// precisely because `RandomState` seeds it per process. A file name built on
+/// that would point somewhere new on every launch, losing every comment.
+#[allow(dead_code)]
+pub fn review_file_name(canonical_path: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in canonical_path.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}.md")
+}
+
+/// The one line `C` puts on the pasteboard. Absolute paths on purpose: it is
+/// pasted into a Claude session whose working directory is unknown here.
+#[allow(dead_code)]
+pub fn review_prompt(review_path: &str, doc_path: &str) -> String {
+    format!("Please address the review comments in {review_path} — they are my notes on {doc_path}.")
+}
+
+/// Hand the page its comment list. Built here rather than in `app.rs` because
+/// it is a pure function of pure inputs, and the objc layer has no tests.
+#[allow(dead_code)]
+pub fn comments_script(comments: &[crate::review::Comment]) -> String {
+    let items: Vec<String> = comments
+        .iter()
+        .map(|comment| {
+            format!(
+                "{{id:{},heading:{},nth:{},quote:{},note:{}}}",
+                mdcore::escape::js_string_literal(&comment.id),
+                comment.heading,
+                comment.nth,
+                mdcore::escape::js_string_literal(&comment.quote),
+                mdcore::escape::js_string_literal(&comment.note),
+            )
+        })
+        .collect();
+    // Guarded like every other injected call: the error page has no init.js.
+    format!("window.mdviewSetComments && window.mdviewSetComments([{}]);", items.join(","))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use mdcore::Theme;
+
+    /// The two fields the wire could not carry unencoded. A quote lifted out
+    /// of a document is full of colons, and `parse_message` splits on them.
+    #[test]
+    fn a_quote_containing_a_colon_and_a_newline_survives_the_wire() {
+        let raw = "addComment:3:1:note%3A%20line%201%0Aand%20line%202:why%3F";
+        assert_eq!(
+            parse_message(raw),
+            Some(Message::AddComment {
+                heading: 3,
+                nth: 1,
+                quote: "note: line 1\nand line 2".to_string(),
+                note: "why?".to_string(),
+            })
+        );
+    }
+
+    /// `encodeURIComponent` emits UTF-8 as percent bytes, so a decoder working
+    /// a `char` at a time returns mojibake for anything outside ASCII.
+    #[test]
+    fn an_emoji_survives_the_wire() {
+        assert_eq!(percent_decode("%F0%9F%8E%AF").as_deref(), Some("🎯"));
+        assert_eq!(percent_decode("caf%C3%A9").as_deref(), Some("café"));
+        assert_eq!(percent_decode("100%25%20done").as_deref(), Some("100% done"));
+    }
+
+    #[test]
+    fn a_malformed_percent_escape_is_ignored_not_fatal() {
+        for bad in ["%", "%4", "%ZZ", "%2", "a%", "%C3"] {
+            assert_eq!(percent_decode(bad), None, "{bad:?} should not decode");
+        }
+        // And the message carrying one is dropped rather than half-read.
+        assert_eq!(parse_message("addComment:1:0:%ZZ:note"), None);
+    }
+
+    #[test]
+    fn a_comment_message_needs_all_four_of_its_fields() {
+        assert_eq!(parse_message("addComment:1:0:quote"), None);
+        assert_eq!(parse_message("addComment:x:0:q:n"), None);
+        assert_eq!(parse_message("editComment:"), None);
+        assert_eq!(parse_message("editComment::note"), None);
+        assert_eq!(parse_message("deleteComment:"), None);
+    }
+
+    /// The name is a path that has to point at the same file next launch. The
+    /// literal is the guard: a seeded hasher would satisfy every property you
+    /// could state about this function and still lose every comment on quit.
+    #[test]
+    fn review_file_name_is_stable_across_processes() {
+        assert_eq!(review_file_name(""), "cbf29ce484222325.md");
+        assert_eq!(review_file_name("/tmp/notes.md").len(), "cbf29ce484222325.md".len());
+        assert_eq!(review_file_name("/tmp/notes.md"), review_file_name("/tmp/notes.md"));
+    }
+
+    #[test]
+    fn two_documents_do_not_share_a_review_file() {
+        assert_ne!(review_file_name("/tmp/a.md"), review_file_name("/tmp/b.md"));
+    }
+
+    #[test]
+    fn the_review_prompt_is_one_line_naming_both_absolute_paths() {
+        let prompt = review_prompt("/Users/x/Library/r/9.md", "/Users/x/notes.md");
+        assert!(prompt.contains("/Users/x/Library/r/9.md"));
+        assert!(prompt.contains("/Users/x/notes.md"));
+        assert!(!prompt.contains('\n'), "a pasted prompt has to be one line");
+    }
+
+    /// Same hazard as the bookmarks list: a quote is arbitrary document text,
+    /// and an unescaped `</script>` or newline in one would break the page.
+    #[test]
+    fn the_comments_script_escapes_every_field_and_is_guarded() {
+        let comments = [crate::review::Comment::new("1", 2, 0, "</script>\n\"q\"", "note")];
+        let script = comments_script(&comments);
+        assert!(script.contains("window.mdviewSetComments &&"));
+        assert!(!script.contains("</script>"), "the literal has to be escaped");
+        assert!(!script.contains('\n'), "a raw newline would break the literal");
+        assert!(script.contains("heading:2"));
+    }
+
+    #[test]
+    fn an_empty_comment_list_still_reaches_the_page() {
+        // Otherwise deleting the last comment would leave its highlight up.
+        assert_eq!(
+            comments_script(&[]),
+            "window.mdviewSetComments && window.mdviewSetComments([]);"
+        );
+    }
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -269,6 +472,9 @@ mod tests {
                 "setSidebarWidth:" => "setSidebarWidth:260".to_string(),
                 "setDiffLayout:" => "setDiffLayout:split".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),
+                "addComment:" => "addComment:1:0:a%20quote:a%20note".to_string(),
+                "editComment:" => "editComment:2f:a%20note".to_string(),
+                "deleteComment:" => "deleteComment:2f".to_string(),
                 other => other.to_string(),
             };
             assert!(

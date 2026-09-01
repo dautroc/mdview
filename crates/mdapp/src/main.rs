@@ -3,7 +3,9 @@ mod bridge;
 mod defaults;
 mod menu;
 mod navigation;
+mod review;
 mod state;
+mod store;
 mod watcher;
 mod window;
 

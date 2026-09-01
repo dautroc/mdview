@@ -122,3 +122,30 @@ fn transform_events<'a>(
 
     out
 }
+
+/// The document's headings, in document order, as plain text.
+///
+/// Used for the decorative labels in a review file. Headings written as raw
+/// HTML are not `Tag::Heading` events, so they render as elements but do not
+/// appear here; the label is cosmetic, and the anchor a comment actually uses
+/// is its quote, so a shifted label costs nothing.
+pub fn headings(markdown: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut depth = 0usize;
+    for event in Parser::new_ext(markdown, markdown_options()) {
+        match event {
+            Event::Start(Tag::Heading { .. }) => {
+                depth += 1;
+                out.push(String::new());
+            }
+            Event::End(TagEnd::Heading(_)) => depth = depth.saturating_sub(1),
+            Event::Text(text) | Event::Code(text) if depth > 0 => {
+                if let Some(last) = out.last_mut() {
+                    last.push_str(&text);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}

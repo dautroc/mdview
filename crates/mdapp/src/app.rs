@@ -549,6 +549,7 @@ impl AppDelegate {
             // document, and a ⌘D against that stale state would toggle the
             // wrong way.
             self.push_bookmarks_to_pages();
+            self.push_comments_to_pages();
             self.rebuild_recent_menu();
             self.maybe_queue_shortcuts_hint(&existing);
             return;
@@ -581,6 +582,7 @@ impl AppDelegate {
         let window = DocumentWindow::open(path, mtm, &state.highlighter, handler, on_message);
         state.windows.borrow_mut().push(window);
         self.push_bookmarks_to_pages();
+        self.push_comments_to_pages();
         self.rebuild_recent_menu();
         if let Some(window) = self.frontmost_window() {
             self.maybe_queue_shortcuts_hint(&window);
@@ -631,6 +633,7 @@ impl AppDelegate {
                 // reads as unbookmarked after a theme change, and ⌘D would then
                 // remove the entry instead of adding it back.
                 self.push_bookmarks_to_pages();
+                self.push_comments_to_pages();
                 // Only the window whose picker sent this carries a meaningful
                 // scroll offset; other windows just reload at the top. Queue
                 // after the sidebar-restore script (pushed by `reload` above),
@@ -652,6 +655,7 @@ impl AppDelegate {
                 );
                 crate::defaults::set_strings(crate::defaults::BOOKMARKS_KEY, &updated);
                 self.push_bookmarks_to_pages();
+                self.push_comments_to_pages();
             }
             Message::ToggleDiff => {
                 if let Some(window) = self.frontmost_window() {
@@ -685,8 +689,56 @@ impl AppDelegate {
                 if let Some(window) = self.frontmost_window() {
                     window.reload(&self.ivars().highlighter);
                     self.push_bookmarks_to_pages();
+                    self.push_comments_to_pages();
                 }
             }
+            Message::AddComment { heading, nth, quote, note } => {
+                let Some(window) = self.frontmost_window() else { return };
+                let doc = window.path.borrow().clone();
+                let key = doc.to_string_lossy().into_owned();
+                let mut comments = crate::store::load(&key);
+                if comments.len() >= crate::store::COMMENT_LIMIT {
+                    window.show_banner(
+                        "mdview-comments",
+                        "This document already has as many comments as MDView keeps.",
+                    );
+                    return;
+                }
+                let id = crate::review::fresh_id(&comments);
+                comments.push(crate::review::Comment::new(&id, heading, nth, &quote, &note));
+                self.write_review(&window, &doc, &comments);
+            }
+            Message::EditComment { id, note } => {
+                let Some(window) = self.frontmost_window() else { return };
+                let doc = window.path.borrow().clone();
+                let key = doc.to_string_lossy().into_owned();
+                let mut comments = crate::store::load(&key);
+                let Some(target) = comments.iter_mut().find(|c| c.id == id) else {
+                    // It went away under us — a hand-edit of the review file,
+                    // most likely. Re-push so the page stops showing it.
+                    self.push_comments_to_pages();
+                    return;
+                };
+                *target = crate::review::Comment::new(
+                    &target.id,
+                    target.heading,
+                    target.nth,
+                    &target.quote,
+                    &note,
+                );
+                self.write_review(&window, &doc, &comments);
+            }
+            Message::DeleteComment { id } => {
+                let Some(window) = self.frontmost_window() else { return };
+                let doc = window.path.borrow().clone();
+                let key = doc.to_string_lossy().into_owned();
+                // `x` has no undo, so the previous file is the recovery.
+                crate::store::backup(&key);
+                let mut comments = crate::store::load(&key);
+                comments.retain(|c| c.id != id);
+                self.write_review(&window, &doc, &comments);
+            }
+            Message::CopyReview => self.copy_review_prompt(),
             Message::ZoomIn => self.adjust_zoom(ZOOM_STEP),
             Message::ZoomOut => self.adjust_zoom(1.0 / ZOOM_STEP),
             Message::ZoomReset => {
@@ -695,6 +747,68 @@ impl AppDelegate {
                 }
             }
         }
+    }
+
+    /// Persist a document's comments and tell every page about them.
+    ///
+    /// A failed write raises a banner rather than passing in silence: the page
+    /// would otherwise go on showing a comment that is not stored, and the
+    /// next launch would lose it with no explanation.
+    fn write_review(
+        &self,
+        window: &Rc<DocumentWindow>,
+        doc: &std::path::Path,
+        comments: &[crate::review::Comment],
+    ) {
+        let key = doc.to_string_lossy().into_owned();
+        let headings = crate::store::headings_of(doc);
+        match crate::store::save(&key, &headings, comments) {
+            Ok(()) => self.push_comments_to_pages(),
+            Err(err) => {
+                window.show_banner("mdview-comments", &format!("Could not save the review: {err}"))
+            }
+        }
+    }
+
+    /// Send each page ITS OWN document's comments. Unlike the bookmark list,
+    /// which is global, a review belongs to one document — pushing one
+    /// window's comments to all of them would anchor them in the wrong text.
+    pub(crate) fn push_comments_to_pages(&self) {
+        for window in self.ivars().windows.borrow().iter() {
+            let key = window.path.borrow().to_string_lossy().into_owned();
+            let script = crate::state::comments_script(&crate::store::load(&key));
+            // Queued, never evaluated. See push_bookmarks_to_pages.
+            window.pending_scripts.borrow_mut().push(script);
+        }
+    }
+
+    /// Put the review prompt on the pasteboard, for pasting into Claude.
+    fn copy_review_prompt(&self) {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+
+        let Some(window) = self.frontmost_window() else { return };
+        let doc = window.path.borrow().clone();
+        let key = doc.to_string_lossy().into_owned();
+        let comments = crate::store::load(&key);
+        if comments.is_empty() {
+            window.show_banner("mdview-comments", "No comments on this document yet.");
+            return;
+        }
+        // Write before copying, so the path in the prompt names a file that
+        // exists and is current even if an earlier write failed.
+        let headings = crate::store::headings_of(&doc);
+        let _ = crate::store::save(&key, &headings, &comments);
+        let Some(review) = crate::store::review_path(&key) else { return };
+        let prompt = crate::state::review_prompt(&review.to_string_lossy(), &key);
+
+        let pasteboard = NSPasteboard::generalPasteboard();
+        // Without clearContents the write is refused and returns false, with
+        // nothing else to say that nothing was copied.
+        unsafe {
+            pasteboard.clearContents();
+            pasteboard.setString_forType(&NSString::from_str(&prompt), NSPasteboardTypeString);
+        }
+        window.show_banner("mdview-comments", "Review prompt copied — paste it into Claude.");
     }
 
     /// Send the bookmark list, and whether the current document is among
