@@ -1154,7 +1154,6 @@
   var pendingComment = null;
   var editingCommentId = null;
   var COMMENT_QUOTE_MAX = 400;
-  var COMMENT_BLOCKS = "p,li,td,th,h1,h2,h3,h4,h5,h6,pre,blockquote,dd,dt,figcaption";
 
   function contentEl() {
     return document.getElementById("mdview-content");
@@ -1463,15 +1462,6 @@
 
   // ---- Capturing a selection ------------------------------------------------
 
-  function blockOf(node) {
-    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
-    while (el && el !== document.body) {
-      if (el.matches && el.matches(COMMENT_BLOCKS)) return el;
-      el = el.parentNode;
-    }
-    return null;
-  }
-
   function insideUnstableSubtree(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentNode;
     while (el && el !== document.body) {
@@ -1487,29 +1477,31 @@
     return false;
   }
 
-  // Where a range endpoint falls in the concatenated text. A selection anchored
-  // on an element rather than a text node -- a triple-click, or a drag that
-  // ended on a boundary -- is not in the span map at all, so fall back to the
-  // start of its block. Returning -1 here instead would silently file the
-  // comment under the preamble, anchoring it in the wrong section.
-  function offsetOfPoint(index, node, offset, block) {
+  // Where a range endpoint falls in the concatenated text, or -1 when the
+  // endpoint is not in a text node this indexes -- a word selection can start
+  // at the end of the node before the one you clicked in, and a triple-click
+  // anchors on the element. The caller recovers by searching for the words.
+  function offsetOfPoint(index, node, offset) {
     for (var i = 0; i < index.spans.length; i++) {
       if (index.spans[i].node === node) return index.spans[i].start + offset;
-    }
-    for (var j = 0; j < index.spans.length; j++) {
-      if (block && block.contains(index.spans[j].node)) return index.spans[j].start;
     }
     return -1;
   }
 
-  // What the selection is, or null with the reason shown. Called BEFORE the
-  // input is focused, because focusing collapses the selection in WebKit.
+  // What the selection is; null when there is nothing selected, and false when
+  // there is a selection this cannot anchor -- in which case the reason has
+  // already been shown. The caller has to tell those apart: with no selection
+  // c means "show me the comments", and turning a refusal into that as well
+  // would answer a complaint by opening a panel nobody asked for.
+  //
+  // Called BEFORE the input is focused, because focusing collapses the
+  // selection in WebKit.
   function captureSelection() {
     var content = contentEl();
     if (!content) return null;
     if (document.documentElement.getAttribute("data-view") === "diff") {
       showNote("Comments belong on the document, not the diff.");
-      return null;
+      return false;
     }
     var selection = null;
     try {
@@ -1520,42 +1512,51 @@
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
     var range = selection.getRangeAt(0);
     if (!content.contains(range.commonAncestorContainer)) return null;
-    var quote = String(selection);
-    if (!quote.trim()) return null;
+    // Trimmed, because a double-click takes the word and whatever whitespace
+    // follows it, and neither end of that is part of what you are commenting
+    // on. Anchoring on the trimmed words is also what makes the comment
+    // survive a reflow that moves the line break.
+    var quote = String(selection).replace(/^\s+|\s+$/g, "");
+    if (!quote) return null;
     if (quote.length > COMMENT_QUOTE_MAX) {
       showNote("That selection is too long to comment on.");
-      return null;
+      return false;
     }
     if (insideUnstableSubtree(range.startContainer)) {
       showNote("Maths and diagrams cannot hold a comment.");
-      return null;
-    }
-    var startBlock = blockOf(range.startContainer);
-    var endBlock = blockOf(range.endContainer);
-    if (!startBlock || startBlock !== endBlock) {
-      showNote("Select within a single paragraph.");
-      return null;
+      return false;
     }
     var index = textIndex(content);
     var starts = sectionStarts(index);
-    var absolute = offsetOfPoint(index, range.startContainer, range.startOffset, startBlock);
+    // The real question is not "is this one paragraph" but "can these words be
+    // found again", which is the same search `applyCommentAnchors` will run on
+    // every render -- so ask it directly rather than guessing from tag names.
+    // A selection that crosses a block boundary fails it, because
+    // Selection.toString() puts a newline at that boundary and the document's
+    // own text has none.
+    var at = offsetOfPoint(index, range.startContainer, range.startOffset);
+    if (at < 0 || index.text.substr(at, quote.length) !== quote) {
+      at = index.text.indexOf(quote);
+    }
+    if (at < 0) {
+      showNote("That selection crosses a paragraph break.");
+      return false;
+    }
     var heading = 0;
     for (var i = 0; i < starts.length; i++) {
-      if (absolute >= starts[i]) heading = i + 1;
+      if (at >= starts[i]) heading = i + 1;
     }
     var section = sectionRange(index, starts, heading);
     var body = index.text.slice(section.from, section.to);
     // Which occurrence of these words this is, counted within the section, so
     // two identical quotes under one heading stay told apart.
     var nth = 0;
-    if (absolute >= 0) {
-      var cursor = 0;
-      while (true) {
-        var hit = body.indexOf(quote, cursor);
-        if (hit < 0 || section.from + hit >= absolute) break;
-        nth++;
-        cursor = hit + 1;
-      }
+    var cursor = 0;
+    while (true) {
+      var hit = body.indexOf(quote, cursor);
+      if (hit < 0 || section.from + hit >= at) break;
+      nth++;
+      cursor = hit + 1;
     }
     return { heading: heading, nth: nth, quote: quote, top: range.getBoundingClientRect().top };
   }
@@ -1564,6 +1565,9 @@
 
   function commentKey() {
     var capture = captureSelection();
+    // Refused, and it has already said why. Opening the panel on top of that
+    // would be answering a complaint with something nobody asked for.
+    if (capture === false) return;
     if (!capture) {
       // No selection: c is then the third panel, the way o and b are.
       showSidebarTab("comments");

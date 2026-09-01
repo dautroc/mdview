@@ -22,6 +22,16 @@ the commits that introduced them. The newest release is listed first.
   too narrow — reserving space would re-wrap the text and move your place in
   the document every time a comment was added — and the sidebar panel is then
   the way to read them, as it always is for comments whose text was edited away.
+- **Any selection you can re-find can hold a comment.** `c` used to decide
+  whether a selection was anchorable by walking up the DOM for a paragraph-ish
+  tag and refusing when the two ends disagreed, which turned down ordinary
+  double-clicks — a word selection often starts at the end of the text node
+  before the one you clicked in. It now asks the question that actually
+  matters, and the one `applyCommentAnchors` will ask on every render: can
+  these words be found again in the document text? Whole paragraphs and
+  multi-line code now anchor too, and a selection that really does cross a
+  paragraph break says so. The words are trimmed first, so the whitespace a
+  double-click takes with them is not part of the anchor.
 - **Comments survive editing.** An anchor is re-found after every live reload
   by its quoted words, scoped to the section it was made in, so a save
   elsewhere in the document does not move it. A comment whose words were edited

@@ -40,6 +40,10 @@ mod tests {
             assert!(super::INIT_JS.contains(hook), "init.js is missing {hook}");
         }
         assert!(super::INIT_JS.contains("attachCommentListeners();"), "never attached");
+        // A selection c cannot anchor is refused with a reason; only the
+        // absence of a selection means "show me the comments". Sharing one
+        // return value for both answered a complaint by opening a panel.
+        assert!(super::INIT_JS.contains("if (capture === false) return;"));
         assert!(super::PAGE_CSS.contains(".mdview-comment-anchor {"));
         assert!(super::PAGE_CSS.contains("#mdview-comment-input {"));
     }
