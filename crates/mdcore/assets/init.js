@@ -908,10 +908,14 @@
 
   // ---- Document options ---------------------------------------------------
   window.mdviewDiffAvailable = false;
-  window.mdviewSetDiffAvailability = function (available) {
+  // Why not, in the host's words, so D can say something better than nothing.
+  // Null until the host has spoken, which is also while nothing is available.
+  var diffUnavailableReason = null;
+  window.mdviewSetDiffAvailability = function (available, reason) {
     window.mdviewDiffAvailable = !!available;
+    diffUnavailableReason = reason || null;
   };
-  window.mdviewSetViewState = function (view, layout, fullWidth, available) {
+  window.mdviewSetViewState = function (view, layout, fullWidth, available, reason) {
     var root = document.documentElement;
     if (view === "diff") root.setAttribute("data-view", "diff");
     else root.removeAttribute("data-view");
@@ -919,6 +923,7 @@
     if (fullWidth) root.setAttribute("data-fullwidth", "1");
     else root.removeAttribute("data-fullwidth");
     if (typeof available === "boolean") window.mdviewDiffAvailable = available;
+    if (arguments.length > 4) diffUnavailableReason = reason || null;
   };
 
   // ---- Theme palette --------------------------------------------------------
@@ -2182,11 +2187,17 @@
   }
 
   function toggleDiffKey() {
-    // Same condition the toolbar's own button is disabled under: a file with
-    // no Git diff to show has nothing to toggle to. Leaving Diff is always
-    // allowed, or an unavailable diff would be a one-way door.
+    // Same condition the View menu item is disabled under: a file with no Git
+    // diff to show has nothing to toggle to. Leaving Diff is always allowed,
+    // or an unavailable diff would be a one-way door.
     var inDiff = document.documentElement.getAttribute("data-view") === "diff";
-    if (!inDiff && !window.mdviewDiffAvailable) return;
+    if (!inDiff && !window.mdviewDiffAvailable) {
+      // Saying WHY. Refusing in silence made D read as a broken key, which is
+      // what it looks like on any file outside a Git repository -- and the
+      // menu item being greyed out is no help to someone using the keyboard.
+      showNote(diffUnavailableReason || "There is no Git diff for this file.");
+      return;
+    }
     postToHost("toggleDiff");
   }
 

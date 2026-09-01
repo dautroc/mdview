@@ -113,7 +113,9 @@ pub struct DocumentWindow {
     /// load makes a late completion from an older page harmless.
     expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
     view_mode: Cell<ViewMode>,
-    diff_available: Cell<bool>,
+    /// Not a bool: `D` has to say WHY it will not open the diff, and "no" on
+    /// its own cannot. See `state::diff_unavailable_note`.
+    diff_state: Cell<mdcore::DiffAvailability>,
 }
 
 impl DocumentWindow {
@@ -218,10 +220,7 @@ impl DocumentWindow {
             page_ready,
             expected_navigation,
             view_mode: Cell::new(ViewMode::Rendered),
-            diff_available: Cell::new(matches!(
-                mdcore::diff::availability(path),
-                mdcore::DiffAvailability::Available
-            )),
+            diff_state: Cell::new(mdcore::diff::availability(path)),
         });
 
         doc_window.reload(highlighter);
@@ -264,10 +263,7 @@ impl DocumentWindow {
             &crate::defaults::get_string(crate::defaults::THEME_KEY).unwrap_or_default(),
         );
         self.apply_window_chrome(theme);
-        self.diff_available.set(matches!(
-            mdcore::diff::availability(&path),
-            mdcore::DiffAvailability::Available
-        ));
+        self.diff_state.set(mdcore::diff::availability(&path));
         let rendered = match self.view_mode.get() {
             ViewMode::Rendered => mdcore::render_document_with(&path, highlighter, theme)
                 .map_err(|err| err.to_string()),
@@ -320,10 +316,13 @@ impl DocumentWindow {
                 );
                 let view = if self.view_mode.get() == ViewMode::Diff { "diff" } else { "rendered" };
                 let layout = crate::state::diff_layout_wire(self.diff_layout());
-                let available = self.diff_available.get();
                 self.pending_scripts.borrow_mut().push(format!(
-                    "window.mdviewSetViewState && window.mdviewSetViewState('{}', '{}', {}, {});",
-                    view, layout, full_width, available
+                    "window.mdviewSetViewState && window.mdviewSetViewState('{}', '{}', {}, {}, {});",
+                    view,
+                    layout,
+                    full_width,
+                    self.can_show_diff(),
+                    self.diff_reason_literal(),
                 ));
                 // Banners cannot be injected until the page has loaded; the
                 // watch tick raises anything pending on its next pass.
@@ -438,7 +437,8 @@ impl DocumentWindow {
     }
 
     pub fn can_show_diff(&self) -> bool {
-        self.diff_available.get() || self.view_mode.get() == ViewMode::Diff
+        self.diff_state.get() == mdcore::DiffAvailability::Available
+            || self.view_mode.get() == ViewMode::Diff
     }
 
     pub fn diff_layout(&self) -> mdcore::DiffLayout {
@@ -501,13 +501,11 @@ impl DocumentWindow {
         }
 
         let path = self.path.borrow().clone();
-        self.diff_available.set(matches!(
-            mdcore::diff::availability(&path),
-            mdcore::DiffAvailability::Available
-        ));
+        self.diff_state.set(mdcore::diff::availability(&path));
         self.eval_script(&format!(
-            "window.mdviewSetDiffAvailability && window.mdviewSetDiffAvailability({});",
-            self.diff_available.get()
+            "window.mdviewSetDiffAvailability && window.mdviewSetDiffAvailability({}, {});",
+            self.can_show_diff(),
+            self.diff_reason_literal(),
         ));
 
         let rendered = match self.view_mode.get() {
@@ -620,6 +618,16 @@ impl DocumentWindow {
     /// not reliably begun reporting that it is loading yet.
     pub fn set_full_width(&self, enabled: bool) {
         crate::state::queue_full_width_script(&mut self.pending_scripts.borrow_mut(), enabled);
+    }
+
+    /// The reason `D` cannot open the diff, as a JS literal — `null` when it
+    /// can. Escaped like every other string handed to the page, on principle
+    /// rather than need: these are fixed sentences today.
+    fn diff_reason_literal(&self) -> String {
+        match crate::state::diff_unavailable_note(self.diff_state.get()) {
+            Some(reason) => mdcore::escape::js_string_literal(reason),
+            None => "null".to_string(),
+        }
     }
 
     pub(crate) fn eval_script(&self, script: &str) {

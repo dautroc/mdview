@@ -354,6 +354,23 @@ pub fn review_prompt(review_path: &str, doc_path: &str) -> String {
     )
 }
 
+/// Why `D` will not open the diff, or `None` when it will.
+///
+/// The key refused in silence, which in this app means it reads as broken:
+/// every other refusal says why. The three reasons are worth telling apart —
+/// a file outside a repository, a file the repository is not tracking, and a
+/// repository with nothing to diff against are three different things to go
+/// and fix.
+#[allow(dead_code)]
+pub fn diff_unavailable_note(availability: mdcore::DiffAvailability) -> Option<&'static str> {
+    match availability {
+        mdcore::DiffAvailability::Available => None,
+        mdcore::DiffAvailability::GitUnavailable => Some("This file is not in a Git repository."),
+        mdcore::DiffAvailability::Untracked => Some("Git is not tracking this file."),
+        mdcore::DiffAvailability::NoHead => Some("This repository has no commits to diff against."),
+    }
+}
+
 /// The banner for a review file MDView could not wholly read, or `None` when
 /// it read cleanly.
 ///
@@ -497,6 +514,22 @@ mod tests {
         assert!(prompt.contains("mdview-note"));
         assert!(prompt.contains("fences included"), "a half-deleted record parses as nothing");
         assert!(prompt.contains("leave the rest of the file alone"));
+    }
+
+    /// `D` used to do nothing at all when there was no diff, which in an app
+    /// whose every other refusal explains itself reads as a broken key.
+    #[test]
+    fn every_reason_the_diff_is_unavailable_has_something_to_say() {
+        use mdcore::DiffAvailability::*;
+        assert_eq!(diff_unavailable_note(Available), None, "an available diff must not nag");
+        for unavailable in [GitUnavailable, Untracked, NoHead] {
+            let note = diff_unavailable_note(unavailable).expect("{unavailable:?} says nothing");
+            assert!(note.ends_with('.'), "{unavailable:?}: {note}");
+            assert!(note.len() < 60, "too long for the note strip: {note}");
+        }
+        // Three different things to go and fix, so three different sentences.
+        assert_ne!(diff_unavailable_note(GitUnavailable), diff_unavailable_note(Untracked));
+        assert_ne!(diff_unavailable_note(Untracked), diff_unavailable_note(NoHead));
     }
 
     /// A clean file must not raise anything: the banner is a condition someone

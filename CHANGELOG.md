@@ -5,6 +5,16 @@ the commits that introduced them. The newest release is listed first.
 
 ## Unreleased
 
+### Fixes
+
+- **`D` says why it will not open the diff.** It refused in silence whenever
+  there was no Git diff to show, which is every file outside a repository —
+  so on those files the key read as simply broken. In an app where `x`, `c` and
+  `C` all explain themselves, silence was the wrong answer, and the greyed-out
+  View menu item is no help to someone using the keyboard. It now names which
+  of the three it is: not in a repository, not tracked, or no commits yet.
+  Leaving the diff is still always allowed.
+
 ### What's new
 
 - **Comments.** Select a phrase, press `c`, type a note. The passage is

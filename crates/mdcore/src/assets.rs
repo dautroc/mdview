@@ -27,6 +27,21 @@ mod tests {
         assert!(super::INIT_JS.contains("window.mdviewNote = showNote;"));
     }
 
+    /// `D` refusing in silence made it read as a broken key -- it does nothing
+    /// on any file outside a Git repository, and the greyed-out View menu item
+    /// is no help to someone using the keyboard. The reason comes from the
+    /// host, so the two hooks have to keep taking it.
+    #[test]
+    fn the_diff_key_says_why_it_will_not_open_the_diff() {
+        let js = super::INIT_JS;
+        assert!(js.contains("showNote(diffUnavailableReason"), "D refuses in silence");
+        // Both hooks carry it: one runs on open, the other on live reload.
+        assert!(js.contains("mdviewSetDiffAvailability = function (available, reason)"));
+        assert!(js.contains("mdviewSetViewState = function (view, layout, fullWidth, available, reason)"));
+        // A page the host has not spoken to yet still says something.
+        assert!(js.contains("|| \"There is no Git diff for this file.\""));
+    }
+
     /// Same hazard, same guard: the comment layer is three hooks the host
     /// calls by name and two classes only the stylesheet defines. A rename on
     /// one side alone throws, or paints nothing, in silence.

@@ -113,7 +113,7 @@ offers once on first launch.
 | e / x | Edit / delete the comment you are looking at |
 | C | Copy the review prompt for Claude |
 | t | Themes |
-| D | Diff, and back to Markdown |
+| D | Diff, and back to Markdown (needs a tracked file) |
 | l | Diff layout, unified or split |
 | z | Zoom the nearest image or diagram |
 | w | Toggle fullwidth view |

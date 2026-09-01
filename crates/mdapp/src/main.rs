@@ -256,6 +256,27 @@ mod bundle_version_tests {
         assert!(push.contains("pending_banners"));
     }
 
+    /// The reason `D` cannot open the diff has to reach the page, or the key
+    /// falls back to a generic line and the three cases stop being told apart.
+    /// Both hooks carry it: `mdviewSetViewState` runs on open, and
+    /// `mdviewSetDiffAvailability` on every live reload, when a file can become
+    /// tracked or a repository can gain its first commit.
+    #[test]
+    fn the_reason_the_diff_is_unavailable_reaches_the_page() {
+        let window = include_str!("window.rs");
+        assert!(window.contains("fn diff_reason_literal"), "no single funnel for the reason");
+        assert!(window.contains("crate::state::diff_unavailable_note"));
+        assert!(
+            window.contains("diff_state: Cell<mdcore::DiffAvailability>"),
+            "a bool cannot carry a reason"
+        );
+        assert_eq!(
+            window.matches("self.diff_reason_literal()").count(),
+            2,
+            "both the open and the live-reload push must carry it"
+        );
+    }
+
     /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
     /// evaluating it directly would run against a page that does not exist yet.
     #[test]
