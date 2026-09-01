@@ -187,6 +187,36 @@ mod bundle_version_tests {
         assert!(body.contains("window.path.borrow()"));
     }
 
+    /// `C` asks Claude to delete the records it addressed, so something has
+    /// to notice the file changing. Nothing else does: comments are re-read on
+    /// open and after MDView's own writes, and an edit by anyone else would sit
+    /// unseen until the document happened to be reloaded. The watch is its own
+    /// per-window watcher, and it must be torn down with the document's --
+    /// a stale one would report the PREVIOUS document's review into this window.
+    #[test]
+    fn the_review_file_is_watched_and_a_change_re_reads_it() {
+        let window = include_str!("window.rs");
+        assert!(window.contains("pub review_watcher: RefCell<Option<crate::watcher::FileWatcher>>"));
+        assert!(window.contains("fn watch_review("), "the watch needs one funnel");
+        // Started before the first comment exists, so the directory has to be
+        // there: `save` does not make it until something is written.
+        assert!(window.contains("review_watch_path"));
+        let load = &window[window.find("pub fn load(").expect("load")..];
+        let load = &load[..load.find("\n    pub fn ").expect("end of load")];
+        assert!(load.contains("*self.review_watcher.borrow_mut() = None;"), "stale watch kept");
+        assert!(load.contains("watch_review(path)"), "the new document is not watched");
+
+        let app = include_str!("app.rs");
+        let start = app.find("fn watch_tick").expect("no tick");
+        let end = start + app[start..].find("\n        #[unsafe(method(").expect("end of tick");
+        let tick = &app[start..end];
+        assert!(tick.contains("review_watcher"), "nothing polls the review watch");
+        assert!(
+            tick.contains("push_comments_to_pages"),
+            "a changed review has to be re-read, not just noticed"
+        );
+    }
+
     /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
     /// evaluating it directly would run against a page that does not exist yet.
     #[test]

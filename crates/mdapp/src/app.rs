@@ -190,6 +190,27 @@ define_class!(
             for window in due {
                 window.live_update(&state.highlighter);
             }
+
+            // A review file that changed under us. `C` asks Claude to delete
+            // the records it has addressed, and this is the only thing that
+            // notices: without it the comment stays in the margin, struck
+            // through or not, until the document is reloaded for some
+            // unrelated reason. Collected before pushing, for the same
+            // reentrancy reason as above -- `push_comments_to_pages` borrows
+            // `windows` too. MDView's own writes come back through here as
+            // well; the push is idempotent, so that costs a rebuilt rail and
+            // nothing else.
+            let reviews_changed = state.windows.borrow().iter().any(|window| {
+                window
+                    .review_watcher
+                    .borrow_mut()
+                    .as_mut()
+                    .map(|w| w.poll(now))
+                    .unwrap_or(false)
+            });
+            if reviews_changed {
+                self.push_comments_to_pages();
+            }
         }
 
         #[unsafe(method(openDocument:))]

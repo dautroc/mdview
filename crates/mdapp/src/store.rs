@@ -28,6 +28,19 @@ pub fn review_path(canonical_doc: &str) -> Option<PathBuf> {
     Some(reviews_dir()?.join(crate::state::review_file_name(canonical_doc)))
 }
 
+/// The review path, with its directory created so a watch can be started on
+/// it before it exists.
+///
+/// A document's watch can lean on the document's own directory being there.
+/// This directory is MDView's, and `save` does not make it until the first
+/// comment is written -- so without this, watching a document nobody has
+/// commented on yet would fail, and the watch would never be retried.
+pub fn review_watch_path(canonical_doc: &str) -> Option<PathBuf> {
+    let path = review_path(canonical_doc)?;
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    Some(path)
+}
+
 /// This document's comments, or an empty list. A file that cannot be read is
 /// indistinguishable from one that does not exist yet, on purpose: the caller
 /// has nothing useful to do about either.
@@ -96,6 +109,16 @@ mod tests {
         assert!(text.contains("Library/Application Support/MDView/reviews"));
         assert!(!text.contains("/project/"), "must not be beside the document");
         assert!(text.ends_with(&crate::state::review_file_name("/Users/someone/project/notes.md")));
+    }
+
+    /// The watch has to be startable before anyone has commented, which is
+    /// the state every document is in the first time it is opened.
+    #[test]
+    fn a_review_can_be_watched_before_it_has_ever_been_written() {
+        let path = review_watch_path("/Users/someone/never/commented.md").expect("HOME is set");
+        assert!(!path.exists(), "watching must not create the file itself");
+        assert!(path.parent().expect("has a parent").is_dir(), "the directory must exist");
+        assert_eq!(path, review_path("/Users/someone/never/commented.md").expect("HOME is set"));
     }
 
     #[test]

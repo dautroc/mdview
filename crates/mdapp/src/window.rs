@@ -53,6 +53,14 @@ impl WindowCloseDelegate {
     }
 }
 
+/// Start a watch on this document's review file. `None` when there is no home
+/// directory to keep reviews in, which is also when there are no comments.
+fn watch_review(doc: &Path) -> Option<crate::watcher::FileWatcher> {
+    let key = doc.to_string_lossy().into_owned();
+    let path = crate::store::review_watch_path(&key)?;
+    crate::watcher::FileWatcher::start(&path).ok()
+}
+
 /// One window showing one document. Owns its web view and its own file
 /// watcher; closing a window tears down only that window's resources.
 pub struct DocumentWindow {
@@ -72,6 +80,12 @@ pub struct DocumentWindow {
     /// a weak property, so an unheld delegate would be silently dropped.
     _window_delegate: Retained<WindowCloseDelegate>,
     pub watcher: RefCell<Option<crate::watcher::FileWatcher>>,
+    /// The document's review file, watched separately. Deleting the records it
+    /// has addressed is what `C` asks Claude to do, and nothing else in the app
+    /// would ever notice: comments are re-read on open and after MDView's own
+    /// writes, and an edit made by anyone else would sit there unseen until the
+    /// next reload.
+    pub review_watcher: RefCell<Option<crate::watcher::FileWatcher>>,
     /// Banners raised by a load, drained once the page is ready to receive them.
     pub pending_banners: RefCell<Vec<(String, String)>>,
     /// Scripts queued by a load, injected once the page actually exists.
@@ -195,6 +209,7 @@ impl DocumentWindow {
             _bridge: bridge,
             _window_delegate: window_delegate,
             watcher: RefCell::new(crate::watcher::FileWatcher::start(path).ok()),
+            review_watcher: RefCell::new(watch_review(path)),
             pending_banners: RefCell::new(Vec::new()),
             pending_scripts: RefCell::new(Vec::new()),
             closed,
@@ -406,6 +421,10 @@ impl DocumentWindow {
         self.view_mode.set(ViewMode::Rendered);
         *self.watcher.borrow_mut() = None;
         *self.watcher.borrow_mut() = crate::watcher::FileWatcher::start(path).ok();
+        // Dropped first, for the reason above: a stale watch would keep
+        // reporting the PREVIOUS document's review into this window.
+        *self.review_watcher.borrow_mut() = None;
+        *self.review_watcher.borrow_mut() = watch_review(path);
         self.pending_banners.borrow_mut().clear();
         self.reload(highlighter);
         // Defensive: `reload` clears these banners, but make `load` correct on

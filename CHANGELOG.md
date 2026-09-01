@@ -39,6 +39,16 @@ the commits that introduced them. The newest release is listed first.
   uses the same short notice in the top-right corner that bookmarking and the
   other keys use, and it takes itself away. A review that could not be *written*
   is still a banner, because that one does want attention.
+- **A review Claude has acted on empties itself.** Addressing a comment usually
+  means rewriting the exact passage it quotes, so the natural end state of `C`
+  working was a document full of comments whose text no longer existed — struck
+  through, one `x` each to clear. The prompt now asks for each addressed record
+  to be deleted from the review file, spelling out which fenced blocks make one
+  up so a half-deleted record cannot end up unparseable. MDView watches the
+  review file, so a comment leaves the margin as soon as its record goes. It is
+  the only thing that would notice: comments were re-read on open and after
+  MDView's own writes, and an edit by anyone else sat unseen until the document
+  was reloaded for some unrelated reason.
 - **Comments survive editing.** An anchor is re-found after every live reload
   by its quoted words, scoped to the section it was made in, so a save
   elsewhere in the document does not move it. A comment whose words were edited

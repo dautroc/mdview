@@ -28,7 +28,10 @@ LaTeX math, and Mermaid diagrams.
   up its passage and reveals its edit and delete buttons, and clicking one
   jumps to the passage. When the window is too narrow for the margin the cards
   live in the sidebar instead. `C` copies a prompt that points Claude at the
-  review file holding them.
+  review file holding them, and asks it to delete each comment it has addressed
+  — MDView watches that file, so a comment leaves the margin as soon as it is
+  dealt with. A comment whose passage was rewritten instead stays in the
+  sidebar, struck through, rather than vanishing with the words it was about.
 - **Themes** — three light, four dark, or follow the system. `t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.

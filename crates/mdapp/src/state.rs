@@ -329,9 +329,29 @@ pub fn review_file_name(canonical_path: &str) -> String {
 
 /// The one line `C` puts on the pasteboard. Absolute paths on purpose: it is
 /// pasted into a Claude session whose working directory is unknown here.
+///
+/// It asks for the addressed records to be deleted, because otherwise the
+/// natural end state of a successful edit is a document full of comments whose
+/// quoted text no longer exists — addressing a comment usually means rewriting
+/// exactly the passage it points at, which orphans it. The app watches the
+/// review file, so a deleted record leaves the margin as soon as it is written.
+///
+/// The shape of a record is spelled out rather than left to be inferred: a
+/// half-deleted fence makes its record unparseable, and an unparseable record
+/// is skipped and then lost on the next write.
+///
+/// ONE LINE, always. Pasting into Claude Code submits on the first newline, so
+/// a prompt with one in it sends half of itself.
 #[allow(dead_code)]
 pub fn review_prompt(review_path: &str, doc_path: &str) -> String {
-    format!("Please address the review comments in {review_path} — they are my notes on {doc_path}.")
+    format!(
+        "Please address the review comments in {review_path} — they are my notes on \
+         {doc_path}. Each comment is a `~~~~ mdview-quote` fenced block holding the \
+         passage I selected, optionally followed by a `~~~~ mdview-note` block with my \
+         note. When you have addressed one, delete both of its fenced blocks from the \
+         review file, opening and closing fences included, and leave the rest of the \
+         file alone."
+    )
 }
 
 /// Hand the page its comment list. Built here rather than in `app.rs` because
@@ -423,7 +443,27 @@ mod tests {
         let prompt = review_prompt("/Users/x/Library/r/9.md", "/Users/x/notes.md");
         assert!(prompt.contains("/Users/x/Library/r/9.md"));
         assert!(prompt.contains("/Users/x/notes.md"));
+        // Claude Code submits on the first newline: a prompt containing one
+        // would send half of itself and act on an instruction cut in two.
         assert!(!prompt.contains('\n'), "a pasted prompt has to be one line");
+        // The line-continuations that keep this readable in the source must
+        // not leave doubled spaces in what is actually pasted.
+        assert!(!prompt.contains("  "), "the source wrapping leaked into the prompt");
+    }
+
+    /// Addressing a comment means rewriting the passage it quotes, which
+    /// orphans it — so a review that is acted on and never pruned leaves every
+    /// comment behind, struck through. Asking for the record to go is what
+    /// makes "done" mean something, and naming the fences is what stops a
+    /// half-deleted record from being silently dropped on the next write.
+    #[test]
+    fn the_review_prompt_asks_for_addressed_records_to_be_deleted() {
+        let prompt = review_prompt("/Users/x/Library/r/9.md", "/Users/x/notes.md");
+        assert!(prompt.contains("delete"), "nothing asks for the record to go");
+        assert!(prompt.contains("mdview-quote"), "the record shape is left to guesswork");
+        assert!(prompt.contains("mdview-note"));
+        assert!(prompt.contains("fences included"), "a half-deleted record parses as nothing");
+        assert!(prompt.contains("leave the rest of the file alone"));
     }
 
     /// Same hazard as the bookmarks list: a quote is arbitrary document text,
