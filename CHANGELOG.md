@@ -3,7 +3,57 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
-## Unreleased
+## [v0.10.0](https://github.com/dautroc/mdview/releases/tag/v0.10.0) — 2026-09-01
+
+### What's new
+
+- **Comments.** Select a phrase, press `c`, type a note. The passage is
+  highlighted where it sits, the note joins a list in the sidebar beside the
+  outline and bookmarks, and both come back next launch. `e` edits the comment
+  you are looking at and `x` deletes it — refusing when the nearest one is more
+  than a screen from centre, since there is no undo and you should not be able
+  to delete something you never saw. `)` and `(` step between them.
+- **Comments sit in the margin.** Each note is a card in the document's right
+  margin, level with the passage it is about and pushed down only where two
+  would overlap. Clicking a highlighted passage brings its card forward and
+  clicking a card jumps to the passage. The rail lives inside the document
+  column, which is as tall as the document, so the cards scroll with the text
+  rather than being fed a scroll position. It stands down when the margin is
+  too narrow — reserving space would re-wrap the text and move your place in
+  the document every time a comment was added — and the sidebar panel is then
+  the way to read them, as it always is for comments whose text was edited away.
+- **Anything you can select, you can comment on.** A comment is anchored by its
+  words, so the only question asked of a selection is whether those words can
+  be found again: a double-clicked word, a triple-clicked paragraph, a
+  multi-line code block, or a phrase running through bold, a link or inline
+  code all anchor. Only a selection crossing a paragraph break is refused, and
+  it says so. The words are trimmed first, so the whitespace a double-click
+  takes with them is not part of the anchor.
+- **Comments survive editing.** An anchor is re-found after every live reload
+  by its quoted words, scoped to the section it was made in, so a save
+  elsewhere in the document does not move it. A comment whose words were edited
+  away keeps its place in the list, struck through, rather than vanishing.
+- **`C` hands the whole review to Claude.** It copies a one-line prompt naming
+  the review file, and asks for each comment to be deleted from that file once
+  it has been addressed. That last part matters: addressing a comment usually
+  means rewriting the exact passage it quotes, which would otherwise leave every
+  comment behind, struck through, to be cleared one `x` at a time. MDView
+  watches the review file, so a comment leaves the margin as soon as its record
+  goes.
+- **A review MDView cannot wholly read is never written over.** Writing renders
+  the comment list and nothing else, so a record the parser had to skip would be
+  erased by the next save. Every write is gated on the file reading cleanly
+  instead, and a banner names the line, the reason and the consequence, clearing
+  itself as soon as the file parses again. Three things count as unreadable: a
+  `mdview-quote` line missing its numbers, a `mdview-note` block with no comment
+  to attach to, and a record whose closing fence is gone — which is invisible
+  from the outside, because the *next* record's fence closes it and the two
+  silently become one. A file cut short mid-write is still readable, and still
+  written to.
+- **Reviews are stored where MDView owns.** Under Application Support, keyed by
+  the document's path, not beside the document — MDView is pointed at files on
+  read-only volumes and inside app bundles, and a sibling file would land in
+  `git status` for every document anyone commented on.
 
 ### Fixes
 
@@ -14,71 +64,6 @@ the commits that introduced them. The newest release is listed first.
   View menu item is no help to someone using the keyboard. It now names which
   of the three it is: not in a repository, not tracked, or no commits yet.
   Leaving the diff is still always allowed.
-
-### What's new
-
-- **Comments.** Select a phrase, press `c`, type a note. The passage is
-  highlighted where it sits, the note joins a list in the sidebar beside the
-  outline and bookmarks, and both come back next launch. `e` edits the comment
-  you are looking at and `x` deletes it — refusing when the nearest one is off
-  screen, since there is no undo. `C` copies a one-line prompt naming the
-  review file, to paste into Claude.
-- **Comments sit in the margin.** Each note is a card in the document's right
-  margin, level with the passage it is about and pushed down only where two
-  would overlap. Clicking a highlighted passage brings its card forward and
-  clicking a card jumps to the passage. The rail lives inside the document
-  column, which is as tall as the document, so the cards scroll with the text
-  rather than being fed a scroll position. It stands down when the margin is
-  too narrow — reserving space would re-wrap the text and move your place in
-  the document every time a comment was added — and the sidebar panel is then
-  the way to read them, as it always is for comments whose text was edited away.
-- **Any selection you can re-find can hold a comment.** `c` used to decide
-  whether a selection was anchorable by walking up the DOM for a paragraph-ish
-  tag and refusing when the two ends disagreed, which turned down ordinary
-  double-clicks — a word selection often starts at the end of the text node
-  before the one you clicked in. It now asks the question that actually
-  matters, and the one `applyCommentAnchors` will ask on every render: can
-  these words be found again in the document text? Whole paragraphs and
-  multi-line code now anchor too, and a selection that really does cross a
-  paragraph break says so. The words are trimmed first, so the whitespace a
-  double-click takes with them is not part of the anchor.
-- **`C` says "copied" the way every other key does.** It first reported through
-  a banner, which is the app's way of raising a condition someone has to deal
-  with: it sits in the corner until it is clicked, so pressing the shortcut
-  twice left two of them stacked up. Copying is news that expires, so it now
-  uses the same short notice in the top-right corner that bookmarking and the
-  other keys use, and it takes itself away. A review that could not be *written*
-  is still a banner, because that one does want attention.
-- **A review Claude has acted on empties itself.** Addressing a comment usually
-  means rewriting the exact passage it quotes, so the natural end state of `C`
-  working was a document full of comments whose text no longer existed — struck
-  through, one `x` each to clear. The prompt now asks for each addressed record
-  to be deleted from the review file, spelling out which fenced blocks make one
-  up so a half-deleted record cannot end up unparseable. MDView watches the
-  review file, so a comment leaves the margin as soon as its record goes. It is
-  the only thing that would notice: comments were re-read on open and after
-  MDView's own writes, and an edit by anyone else sat unseen until the document
-  was reloaded for some unrelated reason.
-- **A review MDView cannot wholly read is never written over.** Writing renders
-  the comment list and nothing else, so a record the parser had to skip was
-  erased by the next save — silently, since skipping was the documented way to
-  survive a bad file. That was survivable while nothing else edited the file;
-  asking Claude to delete records makes a half-deleted one the likely failure,
-  and a half-deleted record is exactly what the parser skips. Every write is now
-  gated on the file reading cleanly, and a banner names the line, the reason and
-  the consequence. It clears itself as soon as the file parses again. Three
-  things count as unreadable: a `mdview-quote` line missing its numbers, a
-  `mdview-note` block with no comment to attach to, and a record whose closing
-  fence is gone — which is invisible from the outside, because the *next*
-  record's fence closes it and the two silently become one.
-- **Comments survive editing.** An anchor is re-found after every live reload
-  by its quoted words, scoped to the section it was made in, so a save
-  elsewhere in the document does not move it. A comment whose words were edited
-  away keeps its place in the list, struck through, rather than vanishing.
-- **Reviews are stored where MDView owns.** Under Application Support, keyed by
-  the document's path, not beside the document — MDView is pointed at files on
-  read-only volumes and inside app bundles, and a sibling file would land in
-  `git status` for every document anyone commented on.
 
 ## [v0.9.1](https://github.com/dautroc/mdview/releases/tag/v0.9.1) — 2026-09-01
 
