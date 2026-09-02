@@ -3492,8 +3492,8 @@
     {
       title: "Scrolling",
       items: [
-        { keys: ["Ctrl+d"], hint: "⌃d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
-        { keys: ["Ctrl+u"], hint: "⌃u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
+        { keys: ["d", "Ctrl+d"], hint: "d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
+        { keys: ["u", "Ctrl+u"], hint: "u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
         { keys: ["Ctrl+f"], hint: "⌃f", label: "A page down", run: function () { scrollLines(pageStep()); } },
         { keys: ["Ctrl+b"], hint: "⌃b", label: "A page up", run: function () { scrollLines(-pageStep()); } },
         { keys: ["Ctrl+e"], hint: "⌃e", label: "A line down, leaving the cursor", run: function () { scrollLines(SCROLL_LINE); } },

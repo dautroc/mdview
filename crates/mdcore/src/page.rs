@@ -502,6 +502,7 @@ mod tests {
     fn every_advertised_single_key_binding_is_still_bound() {
         for key in [
             "\"j\"", "\"k\"", "\"G\"",
+            "\"d\"", "\"u\"",
             "\"Ctrl+d\"", "\"Ctrl+u\"", "\"Ctrl+f\"", "\"Ctrl+b\"",
             "\"]\"", "\"[\"", "\"}\"", "\"{\"",
             "\"/\"", "\"n\"", "\"N\"",
@@ -521,15 +522,13 @@ mod tests {
                 "no binding for {key} in the SHORTCUTS table"
             );
         }
-        // The keys held back. space is reserved as a future leader; d and u
-        // are vim's delete and undo, which a read-only viewer has no use for,
-        // so half-paging is ⌃d / ⌃u alone. Guarded the way retired keys always
-        // have been -- note "Ctrl+d" does not contain `keys: ["d"`, so these
-        // assertions stay exact once the control keys are bound.
-        for held in ["keys: [\" \"", "keys: [\"d\"", "keys: [\"u\"", "Shift+Space"] {
+        // The keys held back. space is reserved as a future leader, and is the
+        // only one left: d and u were vim's delete and undo, which a read-only
+        // viewer has no use for, so they now half-page alongside ⌃d / ⌃u.
+        for held in ["keys: [\" \"", "Shift+Space"] {
             assert!(
                 !assets::INIT_JS.contains(held),
-                "{held} is meant to be unbound: paging is ⌃f / ⌃b, half-paging ⌃d / ⌃u"
+                "{held} is meant to be unbound: space is held back as a leader key"
             );
         }
     }

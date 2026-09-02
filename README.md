@@ -125,7 +125,7 @@ full list, which the app also offers once on first launch.
 | o | Swap which end of the selection you are moving |
 | y | Copy the selection |
 | g g / G | Top / bottom of the document |
-| ⌃d / ⌃u | Half a page down / up |
+| d / u | Half a page down / up (⌃d / ⌃u too) |
 | ⌃f / ⌃b | A page down / up |
 | ⌃e / ⌃y | A line down / up, leaving the cursor where it is |
 | ] / [ | Next / previous heading |
