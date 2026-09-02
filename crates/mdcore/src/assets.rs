@@ -42,6 +42,35 @@ mod tests {
         assert!(js.contains("|| \"There is no Git diff for this file.\""));
     }
 
+    /// The cursor and the view each follow the other, and the second half is
+    /// three guards deep: a follow that fired in visual mode would rewrite the
+    /// selection `c` is about to act on, one that fired for a reader who has
+    /// never used the cursor would hand them a caret they did not ask for, and
+    /// one that fired mid-`g g` would drop the cursor wherever the animation
+    /// had reached. Each is a line that would be easy to lose and impossible
+    /// to notice.
+    #[test]
+    fn the_cursor_follows_the_view_and_the_view_the_cursor() {
+        let js = super::INIT_JS;
+        assert!(js.contains("function scrollCursorIntoView("), "the view must follow the cursor");
+        assert!(js.contains("function followScrollWithCursor("), "the cursor must follow the view");
+        let start = js
+            .find("function followScrollWithCursor(")
+            .expect("follow function");
+        let end = start + js[start..].find("\n  }").expect("follow must close");
+        let body = &js[start..end];
+        for guard in ["if (cursorAt === null) return;", "if (visual) return;", "cursorLedScrollUntil"] {
+            assert!(body.contains(guard), "the follow has lost its guard: {guard}");
+        }
+        // Dragged to the margin it crossed, never recentred: a scroll of two
+        // lines must not move the cursor at all.
+        assert!(body.contains("CURSOR_MARGIN"), "the follow must fire only at the edges");
+        assert!(
+            js.contains("followScrollWithCursor();"),
+            "nothing calls the follow on a scroll"
+        );
+    }
+
     /// Same hazard again. The minimap is a canvas, so nothing about it is
     /// styled by the rules it draws with: a renamed function paints nothing,
     /// and a renamed id paints somewhere nobody can see.

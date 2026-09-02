@@ -70,8 +70,11 @@ file that never closes it.
   every occurrence lights up, the nearest ones labelled — keep typing to narrow
   it down, or type a label to go there. A label is never a letter that could
   continue what you are typing, so it is never ambiguous which you meant, and
-  the last match standing carries no label at all: enter takes it. The view follows the cursor rather than the other way round, and
-  `⌃e`/`⌃y` scroll without taking it with them. It holds its place across a
+  the last match standing carries no label at all: enter takes it. The view follows the cursor, and
+  the cursor follows the view: `⌃e`/`⌃y` leave it where it is while it is
+  still on screen, and a scroll that would carry it off — a wheel, a half
+  page, a drag on the minimap — brings it to the edge you scrolled towards,
+  so `j` carries on from what you are reading. It holds its place across a
   save, anchored to its section, so editing elsewhere in the document does not
   move it. `?` lists the lot.
 - **Click to zoom** an image or a Mermaid diagram to fill the window, or press

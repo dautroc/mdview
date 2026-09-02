@@ -998,6 +998,7 @@
     outlineSyncPending = true;
     requestAnimationFrame(function () {
       outlineSyncPending = false;
+      followScrollWithCursor();
       syncOutline();
       placeMinimapWindow();
     });
@@ -3035,6 +3036,10 @@
   var cursorAt = null;      // offset into cachedIndex().text; null before first use
   var cursorAnchor = null;  // { heading, offset } -- survives a reload
   var cursorGoalX = null;   // desired x for j/k; vim's curswant
+  // Until when a scroll the cursor itself asked for is still animating. Only
+  // g g and G need it: every other cursor scroll is instant, and lands with
+  // the cursor already inside the margins, where the follow is a no-op.
+  var cursorLedScrollUntil = 0;
   var indexCache = null;
   var blockCache = null;
   var sectionCache = null;
@@ -3299,6 +3304,48 @@
     else if (rect.top > bottom) window.scrollBy(0, rect.top - bottom);
   }
 
+  // The other half of scrollCursorIntoView: there, the cursor moved and the
+  // view followed; here the view moved and the cursor follows it. Vim's ⌃d and
+  // ⌃e carry the cursor along rather than leaving it behind, and a wheel, a
+  // half page or a drag on the minimap is the same movement by another means --
+  // after any of them, j should carry on from what you are looking at rather
+  // than from a paragraph you scrolled past a page ago.
+  //
+  // Only from the edges: the cursor is dragged to the margin it crossed, never
+  // recentred, so a scroll of two lines does not move it at all.
+  function followScrollWithCursor() {
+    // Not for a reader who has not used the cursor. The caret is opt-in, and a
+    // scroll is not the moment to hand somebody one.
+    if (cursorAt === null) return;
+    // Not in visual mode: scrolling to see where a selection reaches must not
+    // extend it. That selection is what c and y are about to act on.
+    if (visual) return;
+    // Not behind the lightbox, which owns the screen and the scroll both.
+    var overlay = document.getElementById("mdview-lightbox");
+    if (overlay && !overlay.hidden) return;
+    // Not while g g or G is in flight: those set the offset FIRST and animate
+    // the view to it, so a follow mid-animation would drop the cursor wherever
+    // the scroll had got to.
+    if (Date.now() < cursorLedScrollUntil) return;
+    var index = cachedIndex();
+    var rect = index === null ? null : rectFor(index, cursorAt);
+    if (!rect) return;
+    var top = CURSOR_MARGIN;
+    var bottom = window.innerHeight - CURSOR_MARGIN - rect.height;
+    var y;
+    if (rect.top < top) y = top;
+    else if (rect.top > bottom) y = bottom;
+    else return;
+    // Probed at the column it already had, so a cursor dragged down a page
+    // comes back on the same side of the text it left on -- and at the middle
+    // of the line, which is where caretRangeFromPoint has something to hit.
+    var at = offsetFromPoint(index, rect.left, y + rect.height / 2);
+    if (at < 0) return;
+    if (!setCursor(index, at, at < cursorAt ? -1 : 1)) return;
+    rememberCursor(index);
+    placeCaret();
+  }
+
   // ---- Motions -------------------------------------------------------------
   //
   // Every motion is (index, at) -> new offset, or -1 for "nothing to do". The
@@ -3442,6 +3489,9 @@
       cursorGoalX = null;
       rememberCursor(index);
     }
+    // Long enough to outlast the smooth scroll, and the same window the
+    // heading chain uses for the same reason.
+    cursorLedScrollUntil = Date.now() + HEADING_CHAIN_MS;
     scrollToY(toEnd ? maxScrollY() : 0);
     placeCaret();
   }
