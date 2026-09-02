@@ -881,11 +881,13 @@
           var a = document.createElement("a");
           a.href = "#";
           // textContent, never innerHTML: both fields are document text.
-          a.textContent = comment.note || comment.quote;
-          a.title = comment.quote;
+          // Elided on both: the row is a jump target in a column around 260px
+          // wide, and a tooltip holding a whole section is not a tooltip.
+          a.textContent = excerpt(comment.note || comment.quote, 120);
+          a.title = excerpt(comment.quote, 300);
           if (commentOrphans[comment.id]) {
             li.classList.add("is-orphaned");
-            a.title = "The text this quoted is gone:\n" + comment.quote;
+            a.title = "The text this quoted is gone:\n" + excerpt(comment.quote, 300);
           }
           a.addEventListener("click", function (event) {
             event.preventDefault();
@@ -1182,7 +1184,28 @@
   var commentOrphans = {};
   var pendingComment = null;
   var editingCommentId = null;
-  var COMMENT_QUOTE_MAX = 400;
+  // A sanity bound, not an anchoring constraint. indexOf does not care how
+  // long the quote is and fence_for wraps a payload of any size, so the old
+  // 400 refused selections the machinery would have anchored fine. What a long
+  // quote actually costs is the overlap rule in applyCommentAnchors -- it
+  // claims a span no finer comment can then sit inside -- and that is a
+  // judgement the person selecting is entitled to make. The cap is now only
+  // where a selection stops being a passage and starts being the document.
+  var COMMENT_QUOTE_MAX = 4000;
+
+  // The one place a quote is cut down for display. Three surfaces show one --
+  // the draft label, the sidebar row, the note strip -- and each used to decide
+  // for itself, or not at all, which is what made the cap load-bearing for
+  // layout as well as for anchoring.
+  //
+  // Whitespace is flattened first so the budget is spent on words rather than
+  // on a code block's indentation, and so a quote spanning several lines
+  // cannot turn a one-line row or a tooltip into a wall.
+  function excerpt(text, max) {
+    if (!text) return "";
+    var flat = text.replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+    return flat.length > max ? flat.slice(0, max) + "…" : flat;
+  }
 
   function contentEl() {
     return document.getElementById("mdview-content");
@@ -1298,9 +1321,9 @@
 
   // Re-find every comment and highlight it.
   //
-  // Ranges are resolved against ONE pristine index and then wrapped in
-  // descending order, because wrapping splits text nodes: going backwards means
-  // a split can only ever affect offsets we have already used.
+  // Ranges are resolved against ONE pristine index, then settled between where
+  // they overlap, and only then wrapped -- three passes with two different
+  // orderings, which is why they are separate loops. See each one.
   function applyCommentAnchors() {
     clearCommentAnchors();
     commentOrphans = {};
@@ -1333,30 +1356,57 @@
       }
       found.push({
         comment: comment,
+        order: i,
         from: range.from + at,
         to: range.from + at + comment.quote.length,
       });
     }
-    found.sort(function (a, b) {
-      return b.from - a.from;
+    // Which overlapping anchor gets the highlight. Nested marks would destroy
+    // each other on the next clear -- clearCommentAnchors replaces a mark with
+    // a flat text node, taking anything inside it with it -- so of two comments
+    // whose spans overlap, exactly one can be drawn and the other shows in the
+    // list without a highlight.
+    //
+    // The ENCLOSING one wins. A comment on a whole passage and a comment on
+    // three words inside it are not rivals: the wide one is the reason the
+    // narrow one has a context at all, and letting the narrow one win strikes
+    // through the comment about the section on the strength of an aside. Widest
+    // first is what makes that fall out, because an enclosing span is strictly
+    // longer than anything it contains. Partial overlaps, where neither
+    // encloses the other, go the same way -- the wider span is the one more of
+    // the document loses with it.
+    //
+    // Ties: two spans of one width by position, and two comments on the very
+    // same words by the order they arrived in, so the winner is never left to
+    // sort stability.
+    var byWidth = found.slice().sort(function (a, b) {
+      return b.to - b.from - (a.to - a.from) || a.from - b.from || a.order - b.order;
     });
     var claimed = [];
-    for (var f = 0; f < found.length; f++) {
-      var entry = found[f];
+    for (var f = 0; f < byWidth.length; f++) {
+      var entry = byWidth[f];
       var overlaps = false;
       for (var c = 0; c < claimed.length; c++) {
         if (entry.from < claimed[c].to && claimed[c].from < entry.to) overlaps = true;
       }
-      // Nested anchors would destroy each other on the next clear, so the
-      // second comment on the same words shows in the list without a highlight.
       if (overlaps) {
         commentOrphans[entry.comment.id] = true;
         continue;
       }
       claimed.push(entry);
-      var marks = wrapRuns(runsFor(index, entry.from, entry.to), entry.comment.id);
-      if (marks.length) commentAnchors.push({ id: entry.comment.id, marks: marks });
-      else commentOrphans[entry.comment.id] = true;
+    }
+    // Back to front, which is a different order for a different reason and not
+    // the one above: wrapRuns splits the very text nodes this index was built
+    // from, so wrapping a span invalidates the runs of everything after it.
+    // Descending, a split can only ever touch offsets already spent.
+    claimed.sort(function (a, b) {
+      return b.from - a.from;
+    });
+    for (var w = 0; w < claimed.length; w++) {
+      var winner = claimed[w];
+      var marks = wrapRuns(runsFor(index, winner.from, winner.to), winner.comment.id);
+      if (marks.length) commentAnchors.push({ id: winner.comment.id, marks: marks });
+      else commentOrphans[winner.comment.id] = true;
     }
   }
 
@@ -1441,7 +1491,10 @@
     // special case at all: the words are captured, then the mode is left.
     exitVisual();
     var label = document.getElementById("mdview-comment-quote");
-    if (label) label.textContent = quote;
+    // The stylesheet clamps this to one ellipsised line, but the node would
+    // still HOLD the whole passage -- which is what the accessibility tree
+    // reads out and what a copy taken out of the bar would carry.
+    if (label) label.textContent = excerpt(quote, 200);
     input.value = note || "";
     var geometry = viewportTop == null ? null : railGeometry();
     if (geometry) {
@@ -1679,9 +1732,10 @@
   }
 
   function removeComment(comment) {
-    var excerpt = comment.quote.length > 40 ? comment.quote.slice(0, 40) + "…" : comment.quote;
+    // `shown`, not `excerpt`: that name is the funnel above now.
+    var shown = excerpt(comment.quote, 40);
     postToHost("deleteComment:" + comment.id);
-    showNote("Deleted the comment on “" + excerpt + "”");
+    showNote("Deleted the comment on “" + shown + "”");
   }
 
   // Anchored comments in the order they appear on the page. commentAnchors is

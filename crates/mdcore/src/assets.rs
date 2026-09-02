@@ -65,6 +65,58 @@ mod tests {
         assert!(super::PAGE_CSS.contains("#mdview-comment-input {"));
     }
 
+    /// A quote is arbitrary document text of arbitrary length, and the length
+    /// cap is no longer short enough to keep it out of the layout by accident.
+    /// Every surface that shows one has to go through the one elider, or a
+    /// section-length selection becomes a sidebar row of a thousand words and
+    /// a tooltip nobody can dismiss.
+    #[test]
+    fn every_displayed_quote_goes_through_the_elider() {
+        let js = super::INIT_JS;
+        assert!(js.contains("function excerpt(text, max)"), "the elider is gone");
+        // The three surfaces, by their assignments rather than by eye.
+        for shown in [
+            "a.textContent = excerpt(comment.note || comment.quote,",
+            "a.title = excerpt(comment.quote,",
+            "label.textContent = excerpt(quote,",
+            "var shown = excerpt(comment.quote,",
+        ] {
+            assert!(js.contains(shown), "init.js shows a quote raw: {shown}");
+        }
+        // The refusal is a backstop now, not the thing holding the layout up.
+        assert!(js.contains("var COMMENT_QUOTE_MAX = 4000;"));
+    }
+
+    /// Two comments cannot both highlight an overlapping span -- clearing a
+    /// mark replaces it with flat text, taking anything nested inside it -- so
+    /// one of the pair is orphaned. The enclosing one has to be the survivor:
+    /// the other way round strikes through the comment about a whole passage
+    /// on the strength of an aside three words wide inside it.
+    ///
+    /// That is a WIDEST-FIRST claim, and it is not the order the wrapping
+    /// needs: wrapRuns splits the very text nodes the index was built from, so
+    /// the marks still have to go on back to front. Two orderings, two passes.
+    /// Collapsing them into one loop again is the regression this guards, and
+    /// it fails in whichever direction it is collapsed -- it either restores
+    /// the old winner or corrupts every anchor but the last.
+    #[test]
+    fn the_enclosing_comment_wins_an_overlap_and_wrapping_still_runs_backwards() {
+        let js = super::INIT_JS;
+        // Widest, then leftmost, then first to arrive: no tie is left to sort
+        // stability, which is not guaranteed to be the same across engines.
+        assert!(js.contains("order: i,"), "arrival order is not recorded");
+        assert!(
+            js.contains("return b.to - b.from - (a.to - a.from) || a.from - b.from || a.order - b.order;"),
+            "the claim is no longer widest-first"
+        );
+        // And the winners wrapped back to front, in a pass of their own.
+        assert!(
+            js.contains("claimed.sort(function (a, b) {\n      return b.from - a.from;\n    });"),
+            "wrapping no longer runs backwards"
+        );
+        assert!(js.contains("wrapRuns(runsFor(index, winner.from, winner.to)"), "wrapping is not a separate pass");
+    }
+
     /// The rail is built entirely in JS, so nothing in the emitted markup
     /// would notice if it stopped being wired up.
     #[test]
