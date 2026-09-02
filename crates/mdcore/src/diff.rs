@@ -457,16 +457,27 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    /// A repository of this test's own. The three tests that want one run as
+    /// parallel threads of ONE process, so the pid does not separate them and
+    /// the clock cannot be relied on to: two threads inside the same tick got
+    /// the same name, `create_dir_all` was happy to hand both of them the same
+    /// directory, and the second `git init` died on a file the first had
+    /// already written. The counter is what actually makes the name unique;
+    /// the pid and the clock only keep one run's directories clear of the
+    /// last's. `create_dir` rather than `create_dir_all` so that a collision
+    /// is a failure here, where the name is decided, and not inside git.
     fn temp_repo() -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "mdview-diff-{}-{}",
+            "mdview-diff-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir(&dir).unwrap();
         let run = |args: &[&str]| {
             let status = Command::new("git")
                 .current_dir(&dir)
