@@ -721,6 +721,17 @@ body.mdview-resizing #mdview-sidebar-resizer {
 #mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }
 #mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
 #mdview-sidebar-body a:hover { color: var(--link); }
+/* Room for the marker the current heading wears, taken by every row so that
+   lighting one does not shift its words sideways. */
+#mdview-sidebar-body a[data-outline-id] { border-radius: 2px; padding-left: .4rem; }
+/* Where the reader is standing, in the idiom the palette uses for the row it
+   is on: this is where you are, in a list of places you could be. The marker
+   sits at the row's own indent, so the heading level still reads. */
+#mdview-sidebar-body a[data-outline-id].is-current {
+  background: var(--code-bg);
+  box-shadow: inset 2px 0 0 var(--link);
+  color: var(--link);
+}
 .mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }
 
 /* The ? cheat sheet. Above the lightbox's own z-index is deliberate: the two

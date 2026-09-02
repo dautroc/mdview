@@ -42,6 +42,29 @@ mod tests {
         assert!(js.contains("|| \"There is no Git diff for this file.\""));
     }
 
+    /// The outline is a map, and a map that does not mark where you are
+    /// standing is half a map. The rule it uses is the one `]` and `[` use --
+    /// asserted here, because two rules for "the heading you are on" would
+    /// disagree the first time either moved.
+    #[test]
+    fn the_outline_follows_the_reader() {
+        let js = super::INIT_JS;
+        assert!(js.contains("function currentHeadingId("), "no current-heading rule");
+        assert!(js.contains("function syncOutline("), "nothing applies it");
+        assert!(
+            js.contains("headings[i].getBoundingClientRect().top > HEADING_EPSILON"),
+            "the outline must stand on the same line the heading keys do"
+        );
+        assert!(
+            js.contains("scheduleOutlineSync, { passive: true }"),
+            "the mark has to follow the scroll to be worth anything"
+        );
+        assert!(
+            super::PAGE_CSS.contains("#mdview-sidebar-body a[data-outline-id].is-current"),
+            "page.css never lights the row"
+        );
+    }
+
     /// Same hazard, same guard: the comment layer is three hooks the host
     /// calls by name and two classes only the stylesheet defines. A rename on
     /// one side alone throws, or paints nothing, in silence.

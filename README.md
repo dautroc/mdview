@@ -25,7 +25,9 @@ file that never closes it.
   macOS menu bar carries the same commands for a mouse. Press **?** for the
   list; the app offers it once, on first launch.
 - **Outline** built from the document's headings, in a sidebar you can toggle
-  and drag to resize; the width is remembered across launches.
+  and drag to resize; the width is remembered across launches. The heading you
+  are reading is lit as you scroll, and the list keeps it in view, so the
+  outline says where you are and not just what there is.
 - **Bookmarks** for documents you come back to, kept across launches.
 - **Comments.** Select a phrase — with the mouse, or with `v` and a motion —
   press `c`, and type a note. The note becomes a

@@ -867,6 +867,9 @@
           if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
         });
       }
+      // The list is rebuilt wholesale, so the mark saying where the reader is
+      // standing has to be put back on the new rows every time.
+      syncOutline();
     } else if (sidebarTab === "comments") {
       if (!comments.length) {
         body.innerHTML = "<p class=\"mdview-sidebar-empty\">No comments yet.</p>";
@@ -921,6 +924,75 @@
         })(bookmarks[k]);
       }
     }
+  }
+
+  // ---- The outline follows the reader --------------------------------------
+  //
+  // A map that does not say where you are standing is half a map. The section
+  // you are in is the last heading above the line a heading jump lands on, so
+  // ] and this agree about which heading you are "on" -- pressing ] lights the
+  // row it took you to, rather than the one after it. Above the first heading
+  // the first row is lit: a preamble reads as the document's opening, not as
+  // nowhere.
+
+  var outlineCurrentId = null;
+  var outlineSyncPending = false;
+
+  function currentHeadingId() {
+    var content = contentEl();
+    if (!content) return null;
+    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    if (!headings.length) return null;
+    var found = null;
+    for (var i = 0; i < headings.length; i++) {
+      if (headings[i].getBoundingClientRect().top > HEADING_EPSILON) break;
+      found = headings[i];
+    }
+    return (found || headings[0]).id || null;
+  }
+
+  // The sidebar's own scrollTop, never scrollIntoView: that one walks up to the
+  // window and would scroll the document out from under the reader whose
+  // scrolling is what called this in the first place.
+  function revealOutlineRow(link, sidebar) {
+    var pad = 24;
+    var row = link.getBoundingClientRect();
+    var box = sidebar.getBoundingClientRect();
+    if (row.top < box.top + pad) sidebar.scrollTop += row.top - box.top - pad;
+    else if (row.bottom > box.bottom - pad) sidebar.scrollTop += row.bottom - box.bottom + pad;
+  }
+
+  function syncOutline() {
+    var sidebar = document.getElementById("mdview-sidebar");
+    var body = document.getElementById("mdview-sidebar-body");
+    if (!sidebar || !body || sidebar.hidden || sidebarTab !== "outline") {
+      // Forgotten rather than remembered, so re-opening the panel scrolls the
+      // row you are on back into view instead of assuming it stayed there.
+      outlineCurrentId = null;
+      return;
+    }
+    var id = currentHeadingId();
+    var links = body.querySelectorAll("a[data-outline-id]");
+    var current = null;
+    for (var i = 0; i < links.length; i++) {
+      var match = id !== null && links[i].getAttribute("data-outline-id") === id;
+      links[i].classList.toggle("is-current", match);
+      if (match) current = links[i];
+    }
+    // Only when it moves. A document long enough to need this has an outline
+    // long enough to scroll, and nudging that list on every frame would fight
+    // the reader who has just scrolled it by hand to look somewhere else.
+    if (current && id !== outlineCurrentId) revealOutlineRow(current, sidebar);
+    outlineCurrentId = id;
+  }
+
+  function scheduleOutlineSync() {
+    if (outlineSyncPending) return;
+    outlineSyncPending = true;
+    requestAnimationFrame(function () {
+      outlineSyncPending = false;
+      syncOutline();
+    });
   }
 
   window.mdviewSetSidebar = setSidebar;
@@ -2577,6 +2649,9 @@
       clearTimeout(railResizeTimer);
       railResizeTimer = setTimeout(function () {
         layoutCommentRail();
+        // The text re-wrapped, so a different heading may be the one above the
+        // line even though nobody scrolled.
+        scheduleOutlineSync();
         // The text re-wrapped, so the offset the caret sits on is somewhere
         // else on screen even though it is the same offset.
         placeCaret();
@@ -4144,6 +4219,9 @@
   }
 
   function attachSidebarListeners() {
+    // Before the resizer check: the outline follows the reader whether or not
+    // the panel can be dragged.
+    window.addEventListener("scroll", scheduleOutlineSync, { passive: true });
     var resizerEl = document.getElementById("mdview-sidebar-resizer");
     if (!resizerEl) return;
     resizerEl.addEventListener("mousedown", onSidebarResizerPointerDown);
