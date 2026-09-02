@@ -3,6 +3,42 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.14.0](https://github.com/dautroc/mdview/releases/tag/v0.14.0) — 2026-09-02
+
+### What's new
+
+- **`:` opens the commands in a palette.** A single-key app has one thing it
+  cannot do: be searched. `?` answers "what does this key do" and nothing
+  answered "what is the key for this", so a command you had not memorised was
+  findable only by reading the whole sheet. `:` — vim's own key for typing a
+  command name — opens a palette on the shell the themes and the recent files
+  already use: type a few letters of what you want, enter runs it, and the key
+  is printed beside every row, so you leave knowing it.
+- **Its rows are the cheat sheet's rows.** The palette walks the same table the
+  `?` sheet prints, when it opens. A command is in it because it is documented,
+  and the two cannot disagree about what exists.
+- **The vim alphabet is not in it.** `j`, `w`, `/`, `y` and the rest are keys
+  you already have; twenty-five rows of vim would bury the twenty-eight
+  commands that are MDView's own. They are marked in the table and skipped
+  there, and the `?` sheet still prints every one — it is the map of the whole
+  keyboard, and the palette is the list of things you might not know exist.
+  What stays in is what this app invented, even where the idea is vim-shaped:
+  `d` and `u`, `s`, and the heading keys.
+- **Typing narrows on the group as well as the label.** "scroll" finds the six
+  scrolling commands, none of which have the word in their name. The heading is
+  searched without being printed, because printing "Scrolling" on four adjacent
+  rows would spend the width the labels need.
+- **A command still acts on your selection.** A window has exactly one
+  selection and the palette's search field destroys it by taking the focus, so
+  the palette paints it back on the way out — `v`, then `:`, then "Copy the
+  selection" copies what `y` would have.
+- **`d` and `u` are half a page down and up.** They were held back on the
+  argument that they are vim's delete and undo, which does not survive contact
+  with a viewer that has no editing: neither key meant anything, and the
+  half-paging they were kept clear for was sitting on `⌃d` and `⌃u` — a
+  modifier, in an app whose premise is that a command is one key. `⌃d` and `⌃u`
+  still work.
+
 ## [v0.13.0](https://github.com/dautroc/mdview/releases/tag/v0.13.0) — 2026-09-02
 
 ### What's new
