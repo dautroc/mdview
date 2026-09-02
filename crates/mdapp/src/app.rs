@@ -372,6 +372,7 @@ define_class!(
         fn clear_recent_action(&self, _sender: Option<&NSObject>) {
             crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &[]);
             self.rebuild_recent_menu();
+            self.push_recents_to_pages();
         }
     }
 );
@@ -583,6 +584,7 @@ impl AppDelegate {
             // wrong way.
             self.push_bookmarks_to_pages();
             self.push_comments_to_pages();
+            self.push_recents_to_pages();
             self.rebuild_recent_menu();
             self.maybe_queue_shortcuts_hint(&existing);
             return;
@@ -616,6 +618,7 @@ impl AppDelegate {
         state.windows.borrow_mut().push(window);
         self.push_bookmarks_to_pages();
         self.push_comments_to_pages();
+        self.push_recents_to_pages();
         self.rebuild_recent_menu();
         if let Some(window) = self.frontmost_window() {
             self.maybe_queue_shortcuts_hint(&window);
@@ -667,6 +670,7 @@ impl AppDelegate {
                 // remove the entry instead of adding it back.
                 self.push_bookmarks_to_pages();
                 self.push_comments_to_pages();
+                self.push_recents_to_pages();
                 // Only the window whose picker sent this carries a meaningful
                 // scroll offset; other windows just reload at the top. Queue
                 // after the sidebar-restore script (pushed by `reload` above),
@@ -723,6 +727,7 @@ impl AppDelegate {
                     window.reload(&self.ivars().highlighter);
                     self.push_bookmarks_to_pages();
                     self.push_comments_to_pages();
+                    self.push_recents_to_pages();
                 }
             }
             Message::AddComment { heading, nth, quote, note } => {
@@ -926,6 +931,26 @@ impl AppDelegate {
             // here would be reading it in the very window where it is
             // unreliable — between loadHTMLString returning and WebKit
             // starting the navigation.
+            window.pending_scripts.borrow_mut().push(script);
+        }
+    }
+
+    /// Send the recent-files list to every open page, each window getting the
+    /// list with ITS OWN document taken out. The palette is a way to somewhere
+    /// else, and the document already on screen is the one row that could do
+    /// nothing -- leaving it in would put it under the highlight the moment
+    /// the palette opens, which is where enter lands.
+    ///
+    /// Entries whose file has gone are filtered out of the DISPLAY only, the
+    /// rule Open Recent already follows: an unmounted volume must not silently
+    /// erase the history.
+    pub(crate) fn push_recents_to_pages(&self) {
+        let live = self.live_history();
+        let home = std::env::var("HOME").ok();
+        for window in self.ivars().windows.borrow().iter() {
+            let current = window.path.borrow().to_string_lossy().into_owned();
+            let script = crate::state::recents_script(&live, &current, home.as_deref());
+            // Queued, never evaluated. See push_bookmarks_to_pages.
             window.pending_scripts.borrow_mut().push(script);
         }
     }

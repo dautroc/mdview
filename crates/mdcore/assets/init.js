@@ -1168,6 +1168,242 @@
     }
   }
 
+  // ---- Recent files palette -------------------------------------------------
+  //
+  // The same shell as the theme palette, and there for the reason File > Open
+  // Recent is not enough: the history is fifty documents long, a native menu
+  // shows it one item at a time to a mouse, and the thing you actually know
+  // about the file you want is a few letters of its name.
+  //
+  // Its rows, unlike the theme list's, are rebuilt every time it opens. The
+  // themes are fixed at build time; the history changes on every open, and the
+  // host pushes a new list each time.
+
+  var recents = [];         // [{ name, dir, path }], newest first
+  var recentRows = [];      // every row, in list order
+  var recentMatches = [];   // the rows currently passing the filter
+  var recentIndex = -1;     // which of recentMatches is highlighted
+
+  // The host sends each window the list with its own document taken out, so
+  // there is nothing to filter here.
+  window.mdviewSetRecents = function (items) {
+    recents = items || [];
+    // A push while the palette is up (another window opened something) has to
+    // reach the list, or it would be showing history that has moved on.
+    if (recentPaletteIsOpen()) {
+      var input = recentPaletteInput();
+      renderRecentRows();
+      filterRecents(input ? input.value : "");
+    }
+  };
+
+  function recentPaletteEl() {
+    return document.getElementById("mdview-recent-palette");
+  }
+
+  function recentPaletteInput() {
+    return document.getElementById("mdview-recent-search");
+  }
+
+  function recentPaletteIsOpen() {
+    var el = recentPaletteEl();
+    return !!el && !el.hidden;
+  }
+
+  function buildRecentPalette() {
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-recent-palette";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Recent files");
+
+    var panel = document.createElement("div");
+    panel.className = "mdview-palette-panel";
+
+    var input = document.createElement("input");
+    input.type = "text";
+    input.id = "mdview-recent-search";
+    input.className = "mdview-palette-search";
+    input.placeholder = "Recent files";
+    input.setAttribute("aria-label", "Search recent files");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    panel.appendChild(input);
+
+    var list = document.createElement("div");
+    list.className = "mdview-palette-list";
+    list.id = "mdview-recent-list";
+    list.setAttribute("role", "listbox");
+    panel.appendChild(list);
+
+    var empty = document.createElement("p");
+    empty.className = "mdview-palette-empty";
+    empty.id = "mdview-recent-empty";
+    empty.hidden = true;
+    panel.appendChild(empty);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", function (event) {
+      // Only the backdrop dismisses, not a click bubbling out of the panel.
+      if (event.target === overlay) closeRecentPalette();
+    });
+    input.addEventListener("input", function () {
+      filterRecents(input.value);
+    });
+    return overlay;
+  }
+
+  function renderRecentRows() {
+    var list = document.getElementById("mdview-recent-list");
+    if (!list) return;
+    list.innerHTML = "";
+    recentRows = [];
+    recentMatches = [];
+    recentIndex = -1;
+    for (var i = 0; i < recents.length; i++) {
+      (function (entry) {
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "mdview-palette-row";
+        row.setAttribute("role", "option");
+        row.setAttribute("data-path", entry.path);
+        row.title = entry.path;
+
+        var name = document.createElement("span");
+        name.className = "mdview-palette-name";
+        name.textContent = entry.name;   // textContent, never innerHTML
+        row.appendChild(name);
+        // Two documents called README.md are only tellable apart by where they
+        // live, so the folder is part of the row rather than only the tooltip
+        // -- and, being in the row, it is part of what the filter reads.
+        if (entry.dir) {
+          var dir = document.createElement("span");
+          dir.className = "mdview-palette-dir";
+          dir.textContent = entry.dir;
+          row.appendChild(dir);
+        }
+
+        row.addEventListener("mouseenter", function () {
+          highlightRecent(recentMatches.indexOf(row));
+        });
+        row.addEventListener("click", function () {
+          openRecent(row);
+        });
+        list.appendChild(row);
+        recentRows.push(row);
+      })(recents[i]);
+    }
+  }
+
+  // No preview here, unlike the theme palette: moving the highlight cannot
+  // show you a document without opening one, and opening one is the commit.
+  function highlightRecent(index) {
+    if (!recentMatches.length) {
+      recentIndex = -1;
+      return;
+    }
+    var count = recentMatches.length;
+    recentIndex = ((index % count) + count) % count;
+    for (var i = 0; i < recentRows.length; i++) {
+      recentRows[i].classList.remove("is-current");
+      recentRows[i].setAttribute("aria-selected", "false");
+    }
+    var row = recentMatches[recentIndex];
+    row.classList.add("is-current");
+    row.setAttribute("aria-selected", "true");
+    if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function filterRecents(query) {
+    var needle = (query || "").toLowerCase().trim();
+    recentMatches = [];
+    for (var i = 0; i < recentRows.length; i++) {
+      var hit = !needle || recentRows[i].textContent.toLowerCase().indexOf(needle) >= 0;
+      recentRows[i].hidden = !hit;
+      if (hit) recentMatches.push(recentRows[i]);
+    }
+    var empty = document.getElementById("mdview-recent-empty");
+    if (empty) {
+      // An empty history and a query that matches nothing are different
+      // states, and the second one is the only one you can do anything about.
+      empty.textContent = recentRows.length
+        ? "No recent files match."
+        : "Nothing else has been opened yet.";
+      empty.hidden = recentMatches.length > 0;
+    }
+    // A narrowed list starts at its first match, the way the theme palette's
+    // does: the highlight must never sit on a row no longer on screen.
+    if (recentMatches.length) highlightRecent(0);
+    else recentIndex = -1;
+  }
+
+  function openRecent(row) {
+    if (!row) return;
+    var path = row.getAttribute("data-path");
+    if (!path) return;
+    closeRecentPalette();
+    postToHost("openPath:" + path);
+  }
+
+  function closeRecentPalette() {
+    var overlay = recentPaletteEl();
+    if (!overlay) return;
+    overlay.hidden = true;
+    var input = recentPaletteInput();
+    if (input) input.blur();
+  }
+
+  function openRecentPalette() {
+    exitVisual();
+    var overlay = recentPaletteEl() || buildRecentPalette();
+    overlay.hidden = false;
+    renderRecentRows();
+    var input = recentPaletteInput();
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    // Opens on the most recently opened OTHER document, so g r enter is "back
+    // to the one before this" without reading the list at all.
+    filterRecents("");
+  }
+
+  function toggleRecentPalette() {
+    if (recentPaletteIsOpen()) closeRecentPalette();
+    else openRecentPalette();
+  }
+
+  // Driven from the document handler rather than from the search field, for
+  // the reason the theme palette's is: a row clicked with the mouse takes the
+  // focus off the input, and the arrows have to keep steering the list.
+  function onRecentPaletteKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        closeRecentPalette();
+        break;
+      case "Enter":
+        event.preventDefault();
+        openRecent(recentMatches[recentIndex]);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        highlightRecent(recentIndex + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        highlightRecent(recentIndex - 1);
+        break;
+      default:
+        break;
+    }
+  }
+
   // ---- Comments -------------------------------------------------------------
   //
   // A comment is anchored by (heading ordinal, quote, nth occurrence), never by
@@ -3251,7 +3487,6 @@
         { keys: ["o"], hint: "o", label: "Swap which end you are moving", run: swapVisualEnds },
         { keys: ["y"], hint: "y", label: "Copy the selection", run: copyVisual },
         { keys: [], hint: "c", label: "Comment on the selection", run: null },
-        { keys: [], hint: "esc", label: "Leave the selection", run: null },
       ],
     },
     {
@@ -3281,7 +3516,6 @@
         { keys: [], hint: "enter", label: "Search, and back to the document", run: null },
         { keys: ["n", "Enter"], hint: "n  enter", label: "Next match", run: function () { stepFindKey(1); } },
         { keys: ["N"], hint: "N  ⇧enter", label: "Previous match", run: function () { stepFindKey(-1); } },
-        { keys: [], hint: "esc", label: "Clear the search", run: null },
       ],
     },
     {
@@ -3292,6 +3526,7 @@
         { keys: ["g b"], hint: "g  b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
+        { keys: ["g r"], hint: "g  r", label: "Recent files", run: toggleRecentPalette },
       ],
     },
     {
@@ -3303,8 +3538,6 @@
         { keys: ["g c"], hint: "g  c", label: "Edit the comment you are looking at", run: editCommentKey },
         { keys: ["x"], hint: "x", label: "Delete the comment you are looking at", run: deleteCommentKey },
         { keys: ["C"], hint: "C", label: "Copy the review prompt for Claude", run: copyReviewKey },
-        { keys: [], hint: "click", label: "Focus the comment on a highlighted passage", run: null },
-        { keys: [], hint: "esc", label: "Abandon what you were typing", run: null },
       ],
     },
     {
@@ -3324,19 +3557,14 @@
     {
       title: "Themes",
       items: [
-        { keys: [], hint: "type", label: "Filter the list", run: null },
         { keys: [], hint: "\u2191 \u2193", label: "Move, previewing as you go", run: null },
-        { keys: [], hint: "enter", label: "Keep it", run: null },
-        { keys: [], hint: "esc", label: "Put the old one back", run: null },
       ],
     },
     {
       title: "Zoomed image or diagram",
       items: [
-        { keys: [], hint: "click  z", label: "Open it filling the window", run: null },
+        { keys: [], hint: "z", label: "Open it filling the window", run: null },
         { keys: [], hint: "+  −  0", label: "Zoom in, out, reset", run: null },
-        { keys: [], hint: "↑ ↓ ← →   h j k l", label: "Pan", run: null },
-        { keys: [], hint: "esc", label: "Close", run: null },
       ],
     },
   ];
@@ -3533,6 +3761,13 @@
     // The palette is modal and owns the keyboard while it is up.
     if (themePaletteIsOpen()) {
       onThemePaletteKey(event);
+      return;
+    }
+
+    // And so is the other one. Neither can be up while the other is: every way
+    // of opening either goes through this handler, and it returns above.
+    if (recentPaletteIsOpen()) {
+      onRecentPaletteKey(event);
       return;
     }
 

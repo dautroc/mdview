@@ -192,6 +192,10 @@ fn rendered_html_carries_every_token_mdapp_js_depends_on() {
     assert!(html.contains("id=\"mdview-banners\""), "missing #mdview-banners: {html}");
     assert!(html.contains("window.mdviewRenderAll"), "missing window.mdviewRenderAll: {html}");
 
+    // `app.rs` names this in a script it queues at every open, reload and
+    // theme change; the palette behind it is the only reader of that list.
+    assert!(html.contains("mdviewSetRecents"), "missing mdviewSetRecents: {html}");
+
     for token in ["mdview-sidebar", "mdview-sidebar-body"] {
         assert!(html.contains(token), "missing sidebar token {token}");
     }

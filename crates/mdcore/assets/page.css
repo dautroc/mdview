@@ -792,15 +792,20 @@ body.mdview-resizing #mdview-sidebar-resizer {
   padding: 0;
   text-transform: uppercase;
 }
-/* A fixed keys column rather than max-content: each group is its own grid, so
-   sizing to content would give every group a different column width and the
-   labels would step in and out down the sheet. 6.5rem clears the widest hint
-   ("N  ⇧enter"). */
+/* A keys column that is 6.5rem for every group rather than sized to content:
+   each group is its own grid, so sizing to content would give every group a
+   different column width and the labels would step in and out down the sheet.
+   6.5rem clears the widest hint ("N  ⇧enter").
+
+   The minmax is what keeps that a floor and not a ceiling. A `dt` wider than
+   its track does not wrap or clip -- it overflows, and the label is then drawn
+   ON TOP of the keys, which is how a two-box hint once rendered as a row of
+   nonsense rather than as anything anyone would report as too wide. */
 .mdview-shortcuts-groups dl {
   align-items: baseline;
   display: grid;
   gap: .3rem .5rem;
-  grid-template-columns: 6.5rem 1fr;
+  grid-template-columns: minmax(6.5rem, max-content) 1fr;
   margin: 0;
 }
 .mdview-shortcuts-groups dt { display: flex; gap: .25rem; margin: 0; }
@@ -821,9 +826,11 @@ body.mdview-resizing #mdview-sidebar-resizer {
    for a mouse without putting a control on the page. */
 .mdview-zoomable { cursor: zoom-in; }
 
-/* The theme palette. Same shell as the cheat sheet -- both are things the
-   keyboard summons over the document -- with a search field and a list. */
-#mdview-theme-palette {
+/* The palettes: themes, and recent files. Same shell as the cheat sheet -- all
+   three are things the keyboard summons over the document -- with a search
+   field and a list. */
+#mdview-theme-palette,
+#mdview-recent-palette {
   align-items: flex-start;
   background: rgba(0, 0, 0, .55);
   bottom: 0;
@@ -835,7 +842,7 @@ body.mdview-resizing #mdview-sidebar-resizer {
   top: 0;
   z-index: 1100;
 }
-#mdview-theme-palette[hidden] { display: none; }
+#mdview-theme-palette[hidden], #mdview-recent-palette[hidden] { display: none; }
 .mdview-palette-panel {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -880,6 +887,20 @@ body.mdview-resizing #mdview-sidebar-resizer {
 .mdview-palette-row.is-current {
   background: var(--code-bg);
   box-shadow: inset 2px 0 0 var(--link);
+}
+/* A recent-files row is two lines: the file name, and the folder it is in.
+   Both are elided rather than wrapped -- a row is a target to pick, and a
+   two-line path would make the list shorter than the keyboard expects. */
+.mdview-palette-name,
+.mdview-palette-dir {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mdview-palette-dir {
+  color: var(--muted);
+  font-size: .8125rem;
 }
 .mdview-palette-empty {
   color: var(--muted);

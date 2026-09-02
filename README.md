@@ -41,6 +41,11 @@ file that never closes it.
   If the review file ends up in a state MDView cannot wholly read, it says so
   and stops writing to it rather than saving over the part it did not
   understand.
+- **Recent files.** `g r` opens the last fifty documents in a palette you can
+  type into — a few letters of the name, or of the folder it is in, narrows the
+  list. The document you are reading is not in it, so `g r` and enter is
+  "back to the one before this". File > Open Recent carries the same list for a
+  mouse.
 - **Themes** — three light, four dark, or follow the system. `g t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
@@ -57,7 +62,8 @@ file that never closes it.
   save, anchored to its section, so editing elsewhere in the document does not
   move it. `?` lists the lot.
 - **Click to zoom** an image or a Mermaid diagram to fill the window, or press
-  `z` for whichever one you are looking at.
+  `z` for whichever one you are looking at. Once it is zoomed, the arrows and
+  `h`/`j`/`k`/`l` pan it.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
 - **One window.** Opening another document reuses the current window rather
@@ -132,14 +138,13 @@ full list, which the app also offers once on first launch.
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |
 | ) / ( | Next / previous comment |
-| click | Focus the comment on a highlighted passage |
 | g c / x | Edit / delete the comment you are looking at |
 | C | Copy the review prompt for Claude |
 | g t | Themes |
+| g r | Recent files |
 | g d | Diff, and back to Markdown (needs a tracked file) |
 | g l | Diff layout, unified or split |
 | z | Zoom the nearest image or diagram |
-| ↑ ↓ ← → / h j k l | Pan the zoomed image or diagram |
 | g w | Toggle fullwidth view |
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |

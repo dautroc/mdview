@@ -134,6 +134,40 @@ pub fn push_history(list: &[String], path: &str, cap: usize) -> Vec<String> {
     out
 }
 
+/// The name a recent-files row is labelled with. A path with no last
+/// component -- only `/` has none -- falls back to the whole thing rather than
+/// to an empty row.
+#[allow(dead_code)]
+pub fn recent_label(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// The directory shown under that name, with the user's home written `~`.
+/// Two documents called `README.md` are only tellable apart by where they
+/// live, and the palette is filtered on this text as well as on the name.
+#[allow(dead_code)]
+pub fn recent_dir(path: &str, home: Option<&str>) -> String {
+    let Some(parent) = std::path::Path::new(path).parent() else {
+        return String::new();
+    };
+    let parent = parent.to_string_lossy().into_owned();
+    let Some(home) = home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) else {
+        return parent;
+    };
+    if parent == home {
+        return "~".to_string();
+    }
+    // Only a whole segment counts: with a home of `/Users/bo`, the trailing
+    // slash is what keeps `/Users/bobby/notes` from being written `~bby/notes`.
+    match parent.strip_prefix(&format!("{home}/")) {
+        Some(rest) => format!("~/{rest}"),
+        None => parent,
+    }
+}
+
 /// Add `path` if absent, remove it if present.
 #[allow(dead_code)]
 pub fn toggle_bookmark(list: &[String], path: &str) -> Vec<String> {
@@ -425,6 +459,31 @@ pub fn comments_script(comments: &[crate::review::Comment]) -> String {
     format!("window.mdviewSetComments && window.mdviewSetComments([{}]);", items.join(","))
 }
 
+/// The recent-files list for one window: the history, with that window's own
+/// document taken out, each entry carrying the name and folder the palette
+/// shows and filters on.
+///
+/// The current document is dropped because the palette is a way to somewhere
+/// else -- it is the one row that could do nothing, and it would sit under the
+/// highlight the moment the palette opens, which is where enter lands.
+#[allow(dead_code)]
+pub fn recents_script(history: &[String], current: &str, home: Option<&str>) -> String {
+    let items: Vec<String> = history
+        .iter()
+        .filter(|path| path.as_str() != current)
+        .map(|path| {
+            format!(
+                "{{name:{},dir:{},path:{}}}",
+                mdcore::escape::js_string_literal(&recent_label(path)),
+                mdcore::escape::js_string_literal(&recent_dir(path, home)),
+                mdcore::escape::js_string_literal(path),
+            )
+        })
+        .collect();
+    // Guarded like every other injected call: the error page has no init.js.
+    format!("window.mdviewSetRecents && window.mdviewSetRecents([{}]);", items.join(","))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,6 +762,59 @@ mod tests {
     #[test]
     fn history_cap_of_zero_yields_nothing() {
         assert!(push_history(&v(&["/a"]), "/b", 0).is_empty());
+    }
+
+    #[test]
+    fn a_recent_row_is_labelled_with_the_file_name() {
+        assert_eq!(recent_label("/Users/bo/notes/README.md"), "README.md");
+        // Nothing to take a name from, so the row shows the path itself
+        // rather than nothing at all.
+        assert_eq!(recent_label("/"), "/");
+    }
+
+    #[test]
+    fn a_recent_row_shows_its_folder_with_home_written_as_a_tilde() {
+        let home = Some("/Users/bo");
+        assert_eq!(recent_dir("/Users/bo/notes/README.md", home), "~/notes");
+        assert_eq!(recent_dir("/Users/bo/README.md", home), "~");
+        assert_eq!(recent_dir("/etc/motd.md", home), "/etc");
+        // No HOME to shorten against is not an error; the path stands as it is.
+        assert_eq!(recent_dir("/Users/bo/notes/README.md", None), "/Users/bo/notes");
+        assert_eq!(recent_dir("/Users/bo/notes/README.md", Some("")), "/Users/bo/notes");
+    }
+
+    /// The prefix test has to be segment-wise. A home of `/Users/bo` shortening
+    /// `/Users/bobby/notes` would name a directory that does not exist.
+    #[test]
+    fn a_home_prefix_only_shortens_a_whole_segment() {
+        assert_eq!(recent_dir("/Users/bobby/notes/a.md", Some("/Users/bo")), "/Users/bobby/notes");
+        // A trailing slash on HOME is the same home.
+        assert_eq!(recent_dir("/Users/bo/notes/a.md", Some("/Users/bo/")), "~/notes");
+    }
+
+    #[test]
+    fn the_recents_script_leaves_out_the_document_the_window_is_showing() {
+        let history = v(&["/Users/bo/a.md", "/Users/bo/b.md"]);
+        let script = recents_script(&history, "/Users/bo/a.md", Some("/Users/bo"));
+        assert!(script.contains("window.mdviewSetRecents &&"));
+        assert!(!script.contains("a.md"), "the open document is the one row that could do nothing");
+        assert!(script.contains(r#"name:"b.md""#));
+        assert!(script.contains(r#"dir:"~""#));
+        assert!(script.contains(r#"path:"/Users/bo/b.md""#));
+    }
+
+    #[test]
+    fn the_recents_script_escapes_every_field_and_survives_an_empty_list() {
+        let history = v(&["/tmp/</script>\n\"x\".md"]);
+        let script = recents_script(&history, "", None);
+        assert!(!script.contains("</script>"), "the literal has to be escaped");
+        assert!(!script.contains('\n'), "a raw newline would break the literal");
+        // An emptied history still has to reach the page, or the palette would
+        // go on offering documents Clear Menu has just thrown away.
+        assert_eq!(
+            recents_script(&[], "", None),
+            "window.mdviewSetRecents && window.mdviewSetRecents([]);"
+        );
     }
 
     #[test]
