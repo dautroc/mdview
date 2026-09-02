@@ -3,6 +3,53 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.15.0](https://github.com/dautroc/mdview/releases/tag/v0.15.0) — 2026-09-02
+
+### What's new
+
+- **The outline says which section you are in.** It listed every heading and
+  said nothing about which one you were under, which on anything longer than a
+  screen is half a map. The row for the section you are reading is now lit as
+  you scroll, and the list scrolls itself just far enough to keep that row
+  visible. The rule for which heading you are "on" is the one `]` and `[`
+  already use, so pressing `]` lights the row it took you to rather than the
+  one after it, and the two cannot drift apart.
+- **It does not fight you for the list.** The outline is only nudged when the
+  current heading changes, so scrolling it by hand to look somewhere else
+  stays where you put it, and the sidebar's own scroll is moved rather than
+  the document's — a panel that scrolled the page out from under you would be
+  worse than one that lost your place.
+- **`g m` maps the whole document down the right edge.** The outline says what
+  the headings are; what it cannot show is shape — how long a section runs,
+  where the code and the pictures are, how much is still below you. A
+  scrollbar knows all of that and shows none of it. Headings are bars, shorter
+  as they nest; prose is the lines it is made of; code and tables are blocks;
+  images and diagrams are frames. Click it to jump, drag it to scrub.
+- **Your comments and your search are on it.** Comments down one edge and
+  find's matches down the other, so a passage that is both does not hide one
+  mark under the other, and a search you have just run reads as a shape rather
+  than as a count.
+- **It is structure, not a photograph.** A scaled clone of the page, the way an
+  editor does it, would duplicate every diagram, equation and image, would be
+  rebuilt on every save, and would show prose as a uniform grey — because
+  prose has no shape at that scale. Code does, and headings do, and those are
+  what you navigate by.
+- **It costs the text no width.** The strip floats over the margin rather than
+  taking a column, so turning it on does not re-wrap what you are reading, and
+  the comment rail is told what it took rather than left to collide with it.
+  It stays out of the diff, which has no shape to map.
+- **The cursor follows the view, as the view already followed the cursor.** A
+  wheel, a half page or a drag on the minimap used to leave the cursor on a
+  paragraph you had scrolled past, so the next `j` carried on from there
+  instead of from what you were reading. It is now dragged to the edge you
+  scrolled towards — only at the edges, never recentred, so a scroll of two
+  lines still leaves it alone. This is what `⌃e` and `⌃y` have always done in
+  vim: leave the cursor be until it would scroll off the window.
+- **Not while you are choosing something.** The cursor does not follow a
+  scroll in visual mode, where it would extend the selection `c` and `y` are
+  about to act on, and never appears for a reader who has not used it — a
+  scroll is not the moment to hand somebody a caret they did not ask for.
+
 ## [v0.14.0](https://github.com/dautroc/mdview/releases/tag/v0.14.0) — 2026-09-02
 
 ### What's new
