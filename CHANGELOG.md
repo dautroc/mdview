@@ -3,6 +3,38 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.12.0](https://github.com/dautroc/mdview/releases/tag/v0.12.0) — 2026-09-02
+
+### What's new
+
+- **A frontmatter block comes off before the document is rendered.** Every
+  note written in Obsidian, Jekyll or Hugo opens with a fenced block of YAML
+  or TOML addressed to the tool that wrote it rather than to the reader.
+  MDView rendered it, and not merely as stray text: the opening `---` is a
+  thematic break, the lines under it are a paragraph, and the closing `---`
+  turns that paragraph into a setext heading. So a note beginning `title: My
+  Note` drew a rule, printed its own metadata, and then put an `<h2>` reading
+  `title: My Note` at the top of the outline sidebar, above the document's own
+  title. The metadata did not just clutter the page; it outranked the
+  document. `---` is YAML and `+++` is TOML, and both are recognised.
+- **A rule is still a rule.** The rules are the ones the writing tools
+  themselves apply: the opening fence has to be the file's very first line,
+  the closing fence is the same three characters alone on a line, and a block
+  with no closing fence is not a block at all — a document that genuinely
+  opens on a thematic break keeps it. A `---` anywhere below the first line is
+  left alone entirely, so a rule between two sections, and a setext heading
+  underlined with dashes, both render as they always did.
+- **Nothing between the fences is inspected.** Validating the block as YAML
+  would mean deciding what to do with a block that does not parse, and the
+  only answer — show the reader a page of raw metadata — is worse than the
+  alternative in every case we could construct. It also means a nested list
+  under `tags:` comes off with the rest, which the line-by-line version of
+  this would have got wrong.
+- **The diff still shows the file as it is on disk.** The strip happens on the
+  way into the renderer rather than on the way out of the file, so `g d` keeps
+  showing the frontmatter, and an edit to it shows up as a change. A diff that
+  hid one would be lying about the file.
+
 ## [v0.11.1](https://github.com/dautroc/mdview/releases/tag/v0.11.1) — 2026-09-01
 
 ### What's new
