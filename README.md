@@ -46,6 +46,11 @@ file that never closes it.
   list. The document you are reading is not in it, so `g r` and enter is
   "back to the one before this". File > Open Recent carries the same list for a
   mouse.
+- **Commands by name.** `:` opens a palette of what this app does, with the
+  key for each one printed beside it — type a few letters of what you want,
+  enter runs it, and you leave knowing the key. The vim alphabet is not in it:
+  `j`, `w`, `/` and `y` are keys you already have, and listing them would bury
+  the commands that are MDView's own. `?` still prints the lot.
 - **Themes** — three light, four dark, or follow the system. `g t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
@@ -112,7 +117,9 @@ icon, or press ⌘O.
 Vim-flavoured, since nothing in a read-only viewer is expecting your typing.
 Moving around is a single key; the commands that are not motion sit behind `g`,
 which keeps the vim alphabet free for the document itself. Press **?** for the
-full list, which the app also offers once on first launch.
+full list, which the app also offers once on first launch, or **:** to search
+the commands that are this app's own — the ones a vim alphabet does not
+already cover — and run what you find.
 
 | Key | |
 | --- | --- |
@@ -148,4 +155,5 @@ full list, which the app also offers once on first launch.
 | g w | Toggle fullwidth view |
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |
+| : | Run a command by name |
 | ? | The list of all of them |

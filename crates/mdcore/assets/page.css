@@ -810,7 +810,11 @@ body.mdview-resizing #mdview-sidebar-resizer {
 }
 .mdview-shortcuts-groups dt { display: flex; gap: .25rem; margin: 0; }
 .mdview-shortcuts-groups dd { color: var(--fg); font-size: .875rem; margin: 0; }
-.mdview-shortcuts-groups kbd {
+/* One keycap, wherever a key is printed: the cheat sheet and the command
+   palette show the same table and must not disagree about what a key looks
+   like. */
+.mdview-shortcuts-groups kbd,
+.mdview-command-keys kbd {
   background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -826,11 +830,12 @@ body.mdview-resizing #mdview-sidebar-resizer {
    for a mouse without putting a control on the page. */
 .mdview-zoomable { cursor: zoom-in; }
 
-/* The palettes: themes, and recent files. Same shell as the cheat sheet -- all
-   three are things the keyboard summons over the document -- with a search
-   field and a list. */
+/* The palettes: themes, recent files, and commands. Same shell as the cheat
+   sheet -- all four are things the keyboard summons over the document -- with
+   a search field and a list. */
 #mdview-theme-palette,
-#mdview-recent-palette {
+#mdview-recent-palette,
+#mdview-command-palette {
   align-items: flex-start;
   background: rgba(0, 0, 0, .55);
   bottom: 0;
@@ -842,7 +847,9 @@ body.mdview-resizing #mdview-sidebar-resizer {
   top: 0;
   z-index: 1100;
 }
-#mdview-theme-palette[hidden], #mdview-recent-palette[hidden] { display: none; }
+#mdview-theme-palette[hidden],
+#mdview-recent-palette[hidden],
+#mdview-command-palette[hidden] { display: none; }
 .mdview-palette-panel {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -902,6 +909,27 @@ body.mdview-resizing #mdview-sidebar-resizer {
   color: var(--muted);
   font-size: .8125rem;
 }
+/* Wider than the other two: a theme or a file is a name, a command is a
+   sentence with a keycap after it. */
+#mdview-command-palette .mdview-palette-panel { width: min(30rem, 90vw); }
+/* Label left, keys right, and the label is the part that gives way -- a
+   command you can only half read is still findable, a key you cannot see at
+   all defeats the point of showing it. */
+.mdview-command-row {
+  align-items: baseline;
+  display: flex;
+  gap: .75rem;
+  justify-content: space-between;
+}
+.mdview-command-keys {
+  display: flex;
+  flex-shrink: 0;
+  gap: .25rem;
+}
+/* A flex item will not shrink below its content without this, and the label
+   would push the keycaps off the row instead of eliding. */
+.mdview-command-row .mdview-palette-name { min-width: 0; }
+
 .mdview-palette-empty {
   color: var(--muted);
   font-size: .875rem;

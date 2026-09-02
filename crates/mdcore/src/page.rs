@@ -512,7 +512,7 @@ mod tests {
             "\"v\"", "\"V\"", "\"o\"", "\"y\"", "\"s\"",
             "\"w\"", "\"W\"", "\"e\"", "\"E\"", "\"b\"", "\"B\"",
             "\"Ctrl+e\"", "\"Ctrl+y\"",
-            "\"m\"", "\"z\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"",
+            "\"m\"", "\"z\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"", "\":\"",
             "\"c\"", "\"x\"", "\"C\"", "\"(\"", "\")\"",
         ] {
             let needle = format!("keys: [{}", key);
@@ -531,6 +531,70 @@ mod tests {
                 "{held} is meant to be unbound: space is held back as a leader key"
             );
         }
+    }
+
+    /// The command palette's rows ARE the SHORTCUTS table, walked when it
+    /// opens. A separate list of commands would be a second thing to keep in
+    /// sync with the keys, and the first one to drift -- so what is guarded is
+    /// that the builder reads the table and nothing else.
+    #[test]
+    fn the_command_palette_is_built_from_the_shortcuts_table() {
+        let js = assets::INIT_JS;
+        let start = js.find("function renderCommandRows(").expect("the row builder");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        assert!(body.contains("SHORTCUTS[g]"), "the rows come from somewhere other than the table");
+        // A row that documents a key something else implements has nothing to
+        // run, and the palette's own row would only reopen what you are
+        // already looking at.
+        assert!(body.contains("!entry.run"), "an unrunnable row would reach the palette");
+        assert!(
+            body.contains("entry.run === toggleCommandPalette"),
+            "the palette would list itself"
+        );
+        // And a key that is vim's rather than MDView's: nobody searches a
+        // palette for j, and the vim alphabet would bury what is this app's
+        // own. The ? sheet still prints them -- it is the map of the whole
+        // keyboard, and this is the list of things you might not know exist.
+        assert!(body.contains("entry.vim"), "the vim alphabet would fill the palette");
+        for (key, label) in [
+            ("\"j\"", "Down a line"),
+            ("\"w\"", "Forward a word"),
+            ("\"y\"", "Copy the selection"),
+            ("\"/\"", "Find in the document"),
+            ("\"Ctrl+f\"", "A page down"),
+        ] {
+            let at = js.find(&format!("keys: [{key}]")).expect("the row is still bound");
+            let row_start = js[..at].rfind("{ ").expect("start of row");
+            assert!(
+                js[row_start..at].contains("vim: true"),
+                "{label} is vim's own key and belongs out of the palette"
+            );
+        }
+        // Modal while it is up, like the other two palettes.
+        assert!(
+            js.contains("onCommandPaletteKey(event)"),
+            "the dispatcher never hands the palette its keys"
+        );
+        // Focusing the search field wipes the window's one Selection. Visual
+        // mode's model survives it, so closing repaints -- without this, `:`
+        // then "Copy the selection" copies nothing.
+        let start = js.find("function closeCommandPalette(").expect("the closer");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        assert!(
+            body.contains("paintVisual()"),
+            "the selection a command acts on would not survive the palette"
+        );
+        // Both halves of that, in order. Hiding the field before blurring it
+        // leaves it the focused element until WebKit resets focus on its own,
+        // and a command running in between reads a focus that has gone --
+        // which is exactly how the copy went to the empty search field.
+        let blur = body.find("input.blur()").expect("the field is blurred");
+        let hide = body.find("overlay.hidden = true").expect("the overlay is hidden");
+        let paint = body.find("paintVisual()").expect("the selection is repainted");
+        assert!(blur < hide, "the field is hidden before it is blurred");
+        assert!(hide < paint, "the selection is painted back before the overlay is gone");
     }
 
     /// Chords are table-driven now, not hand-dispatched: `gg` lost its

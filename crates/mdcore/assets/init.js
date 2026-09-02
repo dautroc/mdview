@@ -1404,6 +1404,263 @@
     }
   }
 
+
+  // ---- Command palette ------------------------------------------------------
+  //
+  // The third palette on the same shell, and the only one with no list of its
+  // own: its rows ARE the SHORTCUTS table, read at open time. A command is in
+  // the palette because it is documented, so the two can never disagree, and
+  // the key it names is the one the dispatcher would have run.
+  //
+  // It is the answer to the one thing a single-key app cannot do: be searched.
+  // The ? sheet is the map you read top to bottom; this is for when you know
+  // what you want to DO and not which key does it -- and, having found it, you
+  // leave with the key.
+
+  var commandRows = [];     // every row, in table order
+  var commandEntries = [];  // the SHORTCUTS item each row runs, same order
+  var commandMatches = [];  // the rows currently passing the filter
+  var commandIndex = -1;    // which of commandMatches is highlighted
+
+  function commandPaletteEl() {
+    return document.getElementById("mdview-command-palette");
+  }
+
+  function commandPaletteInput() {
+    return document.getElementById("mdview-command-search");
+  }
+
+  function commandPaletteIsOpen() {
+    var el = commandPaletteEl();
+    return !!el && !el.hidden;
+  }
+
+  function buildCommandPalette() {
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-command-palette";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Commands");
+
+    var panel = document.createElement("div");
+    panel.className = "mdview-palette-panel";
+
+    var input = document.createElement("input");
+    input.type = "text";
+    input.id = "mdview-command-search";
+    input.className = "mdview-palette-search";
+    input.placeholder = "Run a command";
+    input.setAttribute("aria-label", "Search commands");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    panel.appendChild(input);
+
+    var list = document.createElement("div");
+    list.className = "mdview-palette-list";
+    list.id = "mdview-command-list";
+    list.setAttribute("role", "listbox");
+    panel.appendChild(list);
+
+    var empty = document.createElement("p");
+    empty.className = "mdview-palette-empty";
+    empty.id = "mdview-command-empty";
+    empty.hidden = true;
+    empty.textContent = "No command matches.";
+    panel.appendChild(empty);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", function (event) {
+      // Only the backdrop dismisses, not a click bubbling out of the panel.
+      if (event.target === overlay) closeCommandPalette();
+    });
+    input.addEventListener("input", function () {
+      filterCommands(input.value);
+    });
+    return overlay;
+  }
+
+  function renderCommandRows() {
+    var list = document.getElementById("mdview-command-list");
+    if (!list) return;
+    list.innerHTML = "";
+    commandRows = [];
+    commandEntries = [];
+    commandMatches = [];
+    commandIndex = -1;
+    for (var g = 0; g < SHORTCUTS.length; g++) {
+      var group = SHORTCUTS[g];
+      for (var i = 0; i < group.items.length; i++) {
+        var entry = group.items[i];
+        // Three kinds of row never reach the palette. One documenting a key
+        // something else implements has nothing to run; the palette's own row
+        // would only reopen what you are looking at -- the argument that keeps
+        // the open document out of the recent files list; and a key that is
+        // VIM'S rather than MDView's is not a thing you came here to look up.
+        // Nobody searches a palette for j, and printing the whole vim alphabet
+        // buries the dozen commands that are this app's own.
+        if (!entry.run || entry.vim || entry.run === toggleCommandPalette) continue;
+        list.appendChild(commandRow(entry, group.title));
+      }
+    }
+  }
+
+  function commandRow(entry, groupTitle) {
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "mdview-palette-row mdview-command-row";
+    row.setAttribute("role", "option");
+    row.title = entry.label;
+
+    var label = document.createElement("span");
+    label.className = "mdview-palette-name";
+    label.textContent = entry.label;   // textContent, never innerHTML
+    row.appendChild(label);
+
+    var keys = document.createElement("span");
+    keys.className = "mdview-command-keys";
+    // The hint is split the way the ? sheet splits it, so a chord arrives as
+    // two keycaps and reads as two presses rather than one impossible key.
+    var parts = entry.hint.split("  ");
+    for (var p = 0; p < parts.length; p++) {
+      var cap = document.createElement("kbd");
+      cap.textContent = parts[p];
+      keys.appendChild(cap);
+    }
+    row.appendChild(keys);
+
+    // The group title is searched but not shown: "scroll" should find the
+    // scrolling commands, and printing "Scrolling" on four rows that are
+    // already next to each other would spend the width the labels need.
+    row.setAttribute("data-search", (entry.label + " " + groupTitle + " " + entry.hint).toLowerCase());
+    row.addEventListener("mouseenter", function () {
+      highlightCommand(commandMatches.indexOf(row));
+    });
+    row.addEventListener("click", function () {
+      runCommand(row);
+    });
+    commandRows.push(row);
+    commandEntries.push(entry);
+    return row;
+  }
+
+  // No preview, like the recent files list and unlike the themes: an action is
+  // only visible once it has run, and running it is the commit.
+  function highlightCommand(index) {
+    if (!commandMatches.length) {
+      commandIndex = -1;
+      return;
+    }
+    var count = commandMatches.length;
+    commandIndex = ((index % count) + count) % count;
+    for (var i = 0; i < commandRows.length; i++) {
+      commandRows[i].classList.remove("is-current");
+      commandRows[i].setAttribute("aria-selected", "false");
+    }
+    var row = commandMatches[commandIndex];
+    row.classList.add("is-current");
+    row.setAttribute("aria-selected", "true");
+    if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function filterCommands(query) {
+    var needle = (query || "").toLowerCase().trim();
+    commandMatches = [];
+    for (var i = 0; i < commandRows.length; i++) {
+      var hay = commandRows[i].getAttribute("data-search") || "";
+      var hit = !needle || hay.indexOf(needle) >= 0;
+      commandRows[i].hidden = !hit;
+      if (hit) commandMatches.push(commandRows[i]);
+    }
+    var empty = document.getElementById("mdview-command-empty");
+    if (empty) empty.hidden = commandMatches.length > 0;
+    // A narrowed list starts at its first match: the highlight must never sit
+    // on a row no longer on screen.
+    if (commandMatches.length) highlightCommand(0);
+    else commandIndex = -1;
+  }
+
+  // Closed FIRST, which is also what puts the selection back: a command acts
+  // on the document, and several act on the selection, so it has to be there
+  // before the command runs rather than after.
+  function runCommand(row) {
+    if (!row) return;
+    var at = commandRows.indexOf(row);
+    var entry = at < 0 ? null : commandEntries[at];
+    if (!entry) return;
+    closeCommandPalette();
+    entry.run();
+  }
+
+  // The search field destroyed the visual selection by taking the focus -- a
+  // window has exactly one Selection -- but only the painted one: the model
+  // behind it survived, so painting it again restores it exactly. Done on
+  // close rather than only on run, or an esc out of the palette would leave
+  // visual mode on with nothing highlighted.
+  function closeCommandPalette() {
+    var overlay = commandPaletteEl();
+    if (!overlay) return;
+    // Blurred BEFORE the overlay is hidden, and this order is load-bearing:
+    // hiding the field first leaves it the focused element until WebKit gets
+    // round to resetting focus, and a command that runs in between reads a
+    // focus that has gone. `y` from the palette copied nothing, because the
+    // copy went to an empty field rather than to the document.
+    var input = commandPaletteInput();
+    if (input) input.blur();
+    overlay.hidden = true;
+    paintVisual();
+  }
+
+  // Deliberately does NOT exitVisual, unlike the other two palettes: `v` then
+  // `:` then "Copy" is a sentence, and leaving visual mode would delete its
+  // subject halfway through.
+  function openCommandPalette() {
+    var overlay = commandPaletteEl() || buildCommandPalette();
+    overlay.hidden = false;
+    renderCommandRows();
+    var input = commandPaletteInput();
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    filterCommands("");
+  }
+
+  function toggleCommandPalette() {
+    if (commandPaletteIsOpen()) closeCommandPalette();
+    else openCommandPalette();
+  }
+
+  // Driven from the document handler rather than from the search field, for
+  // the reason the other two are: a row clicked with the mouse takes the focus
+  // off the input, and the arrows have to keep steering the list.
+  function onCommandPaletteKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        closeCommandPalette();
+        break;
+      case "Enter":
+        event.preventDefault();
+        runCommand(commandMatches[commandIndex]);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        highlightCommand(commandIndex + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        highlightCommand(commandIndex - 1);
+        break;
+      default:
+        break;
+    }
+  }
+
   // ---- Comments -------------------------------------------------------------
   //
   // A comment is anchored by (heading ordinal, quote, nth occurrence), never by
@@ -3251,10 +3508,16 @@
   // no editing at all and only two text fields (find, comment), so a letter
   // can never be something the user meant to type.
   //
-  // ONE table drives both the dispatcher and the `?` cheat sheet. A binding
-  // that exists but is undocumented is therefore not expressible -- which is
-  // the whole reason the table exists, since a single-key shortcut leaves no
-  // trace in the menu bar to discover it by.
+  // ONE table drives the dispatcher, the `?` cheat sheet and the command
+  // palette. A binding that exists but is undocumented is therefore not
+  // expressible -- which is the whole reason the table exists, since a
+  // single-key shortcut leaves no trace in the menu bar to discover it by.
+  //
+  // `vim: true` marks a row whose key is vim's own -- h, w, /, ⌃f, y. The
+  // sheet prints them, because it is the map of the whole keyboard; the
+  // palette leaves them out, because a reader who wants "down a line" knows
+  // it is j, and twenty-five rows of vim would bury the commands that are
+  // MDView's alone.
 
   var SCROLL_LINE = 60;
   // Two lines of overlap between pages, so nothing is stepped over unread.
@@ -3457,35 +3720,35 @@
     {
       title: "Moving",
       items: [
-        { keys: ["h"], hint: "h", label: "Left a character", run: cursorKeyX(function (index, at) { return charStep(index, at, -1); }) },
-        { keys: ["l"], hint: "l", label: "Right a character", run: cursorKeyX(function (index, at) { return charStep(index, at, 1); }) },
-        { keys: ["j"], hint: "j", label: "Down a line", run: cursorKey(function (index, at) { return lineStep(index, at, 1); }) },
-        { keys: ["k"], hint: "k", label: "Up a line", run: cursorKey(function (index, at) { return lineStep(index, at, -1); }) },
+        { vim: true, keys: ["h"], hint: "h", label: "Left a character", run: cursorKeyX(function (index, at) { return charStep(index, at, -1); }) },
+        { vim: true, keys: ["l"], hint: "l", label: "Right a character", run: cursorKeyX(function (index, at) { return charStep(index, at, 1); }) },
+        { vim: true, keys: ["j"], hint: "j", label: "Down a line", run: cursorKey(function (index, at) { return lineStep(index, at, 1); }) },
+        { vim: true, keys: ["k"], hint: "k", label: "Up a line", run: cursorKey(function (index, at) { return lineStep(index, at, -1); }) },
         { keys: ["s"], hint: "s", label: "Jump to anything you can see", run: beginJump },
-        { keys: ["^"], hint: "^", label: "Start of the line", run: cursorKeyX(function (index, at) { return lineEdge(index, at, -1); }) },
-        { keys: ["$"], hint: "$", label: "End of the line", run: cursorKeyX(function (index, at) { return lineEdge(index, at, 1); }) },
-        { keys: ["g g"], hint: "g  g", label: "Top of the document", run: function () { jumpCursorTo(false); } },
-        { keys: ["G"], hint: "G", label: "Bottom of the document", run: function () { jumpCursorTo(true); } },
+        { vim: true, keys: ["^"], hint: "^", label: "Start of the line", run: cursorKeyX(function (index, at) { return lineEdge(index, at, -1); }) },
+        { vim: true, keys: ["$"], hint: "$", label: "End of the line", run: cursorKeyX(function (index, at) { return lineEdge(index, at, 1); }) },
+        { vim: true, keys: ["g g"], hint: "g  g", label: "Top of the document", run: function () { jumpCursorTo(false); } },
+        { vim: true, keys: ["G"], hint: "G", label: "Bottom of the document", run: function () { jumpCursorTo(true); } },
       ],
     },
     {
       title: "Words",
       items: [
-        { keys: ["w"], hint: "w", label: "Forward a word", run: cursorKeyX(function (index, at) { return wordForward(index, at, false); }) },
-        { keys: ["W"], hint: "W", label: "Forward a WORD", run: cursorKeyX(function (index, at) { return wordForward(index, at, true); }) },
-        { keys: ["e"], hint: "e", label: "To the end of the word", run: cursorKeyX(function (index, at) { return wordEnd(index, at, false); }) },
-        { keys: ["E"], hint: "E", label: "To the end of the WORD", run: cursorKeyX(function (index, at) { return wordEnd(index, at, true); }) },
-        { keys: ["b"], hint: "b", label: "Back a word", run: cursorKeyX(function (index, at) { return wordBack(index, at, false); }) },
-        { keys: ["B"], hint: "B", label: "Back a WORD", run: cursorKeyX(function (index, at) { return wordBack(index, at, true); }) },
+        { vim: true, keys: ["w"], hint: "w", label: "Forward a word", run: cursorKeyX(function (index, at) { return wordForward(index, at, false); }) },
+        { vim: true, keys: ["W"], hint: "W", label: "Forward a WORD", run: cursorKeyX(function (index, at) { return wordForward(index, at, true); }) },
+        { vim: true, keys: ["e"], hint: "e", label: "To the end of the word", run: cursorKeyX(function (index, at) { return wordEnd(index, at, false); }) },
+        { vim: true, keys: ["E"], hint: "E", label: "To the end of the WORD", run: cursorKeyX(function (index, at) { return wordEnd(index, at, true); }) },
+        { vim: true, keys: ["b"], hint: "b", label: "Back a word", run: cursorKeyX(function (index, at) { return wordBack(index, at, false); }) },
+        { vim: true, keys: ["B"], hint: "B", label: "Back a WORD", run: cursorKeyX(function (index, at) { return wordBack(index, at, true); }) },
       ],
     },
     {
       title: "Selecting",
       items: [
-        { keys: ["v"], hint: "v", label: "Select from the cursor", run: function () { toggleVisual(false); } },
-        { keys: ["V"], hint: "V", label: "Select whole blocks", run: function () { toggleVisual(true); } },
-        { keys: ["o"], hint: "o", label: "Swap which end you are moving", run: swapVisualEnds },
-        { keys: ["y"], hint: "y", label: "Copy the selection", run: copyVisual },
+        { vim: true, keys: ["v"], hint: "v", label: "Select from the cursor", run: function () { toggleVisual(false); } },
+        { vim: true, keys: ["V"], hint: "V", label: "Select whole blocks", run: function () { toggleVisual(true); } },
+        { vim: true, keys: ["o"], hint: "o", label: "Swap which end you are moving", run: swapVisualEnds },
+        { vim: true, keys: ["y"], hint: "y", label: "Copy the selection", run: copyVisual },
         { keys: [], hint: "c", label: "Comment on the selection", run: null },
       ],
     },
@@ -3494,10 +3757,10 @@
       items: [
         { keys: ["d", "Ctrl+d"], hint: "d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
         { keys: ["u", "Ctrl+u"], hint: "u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
-        { keys: ["Ctrl+f"], hint: "⌃f", label: "A page down", run: function () { scrollLines(pageStep()); } },
-        { keys: ["Ctrl+b"], hint: "⌃b", label: "A page up", run: function () { scrollLines(-pageStep()); } },
-        { keys: ["Ctrl+e"], hint: "⌃e", label: "A line down, leaving the cursor", run: function () { scrollLines(SCROLL_LINE); } },
-        { keys: ["Ctrl+y"], hint: "⌃y", label: "A line up, leaving the cursor", run: function () { scrollLines(-SCROLL_LINE); } },
+        { vim: true, keys: ["Ctrl+f"], hint: "⌃f", label: "A page down", run: function () { scrollLines(pageStep()); } },
+        { vim: true, keys: ["Ctrl+b"], hint: "⌃b", label: "A page up", run: function () { scrollLines(-pageStep()); } },
+        { vim: true, keys: ["Ctrl+e"], hint: "⌃e", label: "A line down, leaving the cursor", run: function () { scrollLines(SCROLL_LINE); } },
+        { vim: true, keys: ["Ctrl+y"], hint: "⌃y", label: "A line up, leaving the cursor", run: function () { scrollLines(-SCROLL_LINE); } },
       ],
     },
     {
@@ -3512,10 +3775,10 @@
     {
       title: "Finding",
       items: [
-        { keys: ["/"], hint: "/", label: "Find in the document", run: function () { window.mdviewOpenFind(); } },
+        { vim: true, keys: ["/"], hint: "/", label: "Find in the document", run: function () { window.mdviewOpenFind(); } },
         { keys: [], hint: "enter", label: "Search, and back to the document", run: null },
-        { keys: ["n", "Enter"], hint: "n  enter", label: "Next match", run: function () { stepFindKey(1); } },
-        { keys: ["N"], hint: "N  ⇧enter", label: "Previous match", run: function () { stepFindKey(-1); } },
+        { vim: true, keys: ["n", "Enter"], hint: "n  enter", label: "Next match", run: function () { stepFindKey(1); } },
+        { vim: true, keys: ["N"], hint: "N  ⇧enter", label: "Previous match", run: function () { stepFindKey(-1); } },
       ],
     },
     {
@@ -3551,6 +3814,7 @@
         { keys: ["+", "="], hint: "+", label: "Zoom in", run: function () { postToHost("zoomIn"); } },
         { keys: ["-"], hint: "−", label: "Zoom out", run: function () { postToHost("zoomOut"); } },
         { keys: ["0"], hint: "0", label: "Actual size", run: function () { postToHost("zoomReset"); } },
+        { keys: [":"], hint: ":", label: "Run a command by name", run: toggleCommandPalette },
         { keys: ["?"], hint: "?", label: "This list", run: function () { toggleShortcuts(); } },
       ],
     },
@@ -3764,10 +4028,15 @@
       return;
     }
 
-    // And so is the other one. Neither can be up while the other is: every way
-    // of opening either goes through this handler, and it returns above.
+    // And so are the other two. No two can be up at once: every way of opening
+    // any of them goes through this handler, and it returns above.
     if (recentPaletteIsOpen()) {
       onRecentPaletteKey(event);
+      return;
+    }
+
+    if (commandPaletteIsOpen()) {
+      onCommandPaletteKey(event);
       return;
     }
 
