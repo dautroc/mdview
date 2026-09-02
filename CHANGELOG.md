@@ -3,6 +3,63 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.13.0](https://github.com/dautroc/mdview/releases/tag/v0.13.0) — 2026-09-02
+
+### What's new
+
+- **`g r` opens the recent files in a palette.** File > Open Recent already
+  held the last fifty documents, and a native menu is the wrong shape for fifty
+  of anything: it shows them one at a time, to a mouse, when the thing you know
+  about the file you want is a few letters of its name. The history now gets
+  the same treatment the themes got — an overlay you type into, on the same
+  shell, with the same keys. Type to narrow, arrow through it, enter opens,
+  esc closes.
+- **The document you are reading is not in the list.** It is the one row that
+  could do nothing, and it would otherwise sit under the highlight the moment
+  the palette opens, which is where enter lands. With it gone, `g r` and enter
+  is "back to the one before this" without reading the list at all.
+- **A row is the name over the folder it is in**, with your home directory
+  written `~`, because two documents called `README.md` are only tellable apart
+  by where they live. The folder is part of the row rather than only of the
+  tooltip so that the filter reads it too: `other` finds
+  `~/work/other-project/README.md`.
+- **A file that has gone is hidden, not forgotten.** Entries whose file is
+  missing are dropped from the display only — the rule Open Recent already
+  follows — so an unmounted volume does not silently erase the history.
+
+### Fixes
+
+- **A long selection was refused rather than elided.** The cap on a comment's
+  quote was 400 characters and carried no argument for it. It was not an
+  anchoring constraint — the search does not care how long a quote is — so it
+  was refusing selections the machinery would have anchored fine. What it was
+  really holding up was the layout: three surfaces show a quote, and each
+  decided for itself, or not at all, whether to cut it down. They now share one
+  elider, which flattens whitespace before cutting so the budget is spent on
+  words rather than on a code block's indentation, and the cap is 4000.
+- **A note on three words no longer strikes through the comment about the
+  passage containing them.** Two comments cannot both highlight an overlapping
+  span, and the winner used to fall out of the order the highlights were
+  wrapped in, which meant the later-starting one claimed first — exactly
+  backwards for nesting. The claim is now its own pass, widest first, so
+  enclosure wins by construction.
+- **A key hint in the cheat sheet was painted over by its own label.** The keys
+  column was a fixed width, and a hint wider than it does not wrap or clip: it
+  overflows, and the label is drawn on top of it. The zoomed image's `↑ ↓ ← →
+  h j k l` was over that width, so "Pan" was printed across the keys and the
+  row read as a string of nonsense characters. The column is now a floor rather
+  than a ceiling, and a wide hint pushes its label right instead.
+
+### Documentation
+
+- **The cheat sheet lists the keys you press, and nothing else.** It is read to
+  find the one key you do not know, so `esc`, `enter`, the arrows and `hjkl`
+  were spending rows for no information, and `click` is not a key at all. Those
+  rows are gone, from the sheet and from the README's table, except where the
+  line carries a surprise rather than a key: the theme palette previews as you
+  arrow through it, and enter in the find field hands the keyboard back to the
+  document. Nothing else said either. The sheet is about a screen shorter.
+
 ## [v0.12.0](https://github.com/dautroc/mdview/releases/tag/v0.12.0) — 2026-09-02
 
 ### What's new
