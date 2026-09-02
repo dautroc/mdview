@@ -90,6 +90,21 @@ pub fn queue_sidebar_width_script(scripts: &mut Vec<String>, px: u32) {
     scripts.push(sidebar_width_script(px));
 }
 
+#[allow(dead_code)]
+pub fn minimap_script(open: bool) -> String {
+    format!(
+        "window.mdviewSetMinimap && window.mdviewSetMinimap({});",
+        open
+    )
+}
+
+#[allow(dead_code)]
+pub fn queue_minimap_script(scripts: &mut Vec<String>, open: bool) {
+    let needle = "window.mdviewSetMinimap";
+    scripts.retain(|s| !s.contains(needle));
+    scripts.push(minimap_script(open));
+}
+
 /// Scripts for the page's find bar. The page owns the search itself; the app
 /// only relays the standard macOS Find shortcuts into it. Each guards on the
 /// hook existing, because the error page has no init.js behind it.
@@ -199,6 +214,7 @@ pub enum Message {
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
     SetSidebarWidth(u32),
+    SetMinimap(bool),
     /// The page's single-key shortcuts for actions only the host can perform:
     /// reloading from disk, and page zoom, which lives on the WKWebView.
     ReloadDocument,
@@ -278,6 +294,13 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             let px = rest.parse::<u32>().ok()?;
             Some(Message::SetSidebarWidth(px))
         }
+        // "1" or nothing. Unlike the sidebar there is no second field: the
+        // strip has no tabs, so a bare flag is the whole of its state.
+        "setMinimap" => match rest {
+            "1" => Some(Message::SetMinimap(true)),
+            "0" => Some(Message::SetMinimap(false)),
+            _ => None,
+        },
         // A comment carries two free-text fields, and `openPath` only gets
         // away with one because it is last. The page percent-encodes both, so
         // every field here is delimiter-free by construction.
@@ -672,6 +695,7 @@ mod tests {
                 "setTheme:" => "setTheme:mocha:0".to_string(),
                 "setSidebar:" => "setSidebar:1:outline".to_string(),
                 "setSidebarWidth:" => "setSidebarWidth:260".to_string(),
+                "setMinimap:" => "setMinimap:1".to_string(),
                 "setDiffLayout:" => "setDiffLayout:split".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),
                 "addComment:" => "addComment:1:0:a%20quote:a%20note".to_string(),

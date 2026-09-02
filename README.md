@@ -28,6 +28,12 @@ file that never closes it.
   and drag to resize; the width is remembered across launches. The heading you
   are reading is lit as you scroll, and the list keeps it in view, so the
   outline says where you are and not just what there is.
+- **Minimap.** `g m` puts the shape of the whole document down the right edge:
+  headings as bars, prose as lines, code and tables as blocks, pictures as
+  frames, with your comments and find matches marked on it. The band shows the
+  part you are reading; click it to jump, drag it to scrub. It floats over the
+  margin rather than taking width from the text, so turning it on does not
+  re-wrap what you are reading.
 - **Bookmarks** for documents you come back to, kept across launches.
 - **Comments.** Select a phrase — with the mouse, or with `v` and a motion —
   press `c`, and type a note. The note becomes a
@@ -143,6 +149,7 @@ already cover — and run what you find.
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
 | g s | Toggle the sidebar |
+| g m | Toggle the minimap |
 | g o / g b | Outline / bookmarks in the sidebar |
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |

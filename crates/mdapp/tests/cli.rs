@@ -200,6 +200,11 @@ fn rendered_html_carries_every_token_mdapp_js_depends_on() {
         assert!(html.contains(token), "missing sidebar token {token}");
     }
 
+    // The strip is chrome the page paints and the host restores by name.
+    for token in ["mdview-minimap", "mdview-minimap-canvas", "mdviewSetMinimap"] {
+        assert!(html.contains(token), "missing minimap token {token}");
+    }
+
     // The comment layer crosses the same crate boundary: `state.rs` names
     // `mdviewSetComments` in a script it builds, and the two classes are what
     // the anchors and the entry field are looked up and painted by.

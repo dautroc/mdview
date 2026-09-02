@@ -42,6 +42,49 @@ mod tests {
         assert!(js.contains("|| \"There is no Git diff for this file.\""));
     }
 
+    /// Same hazard again. The minimap is a canvas, so nothing about it is
+    /// styled by the rules it draws with: a renamed function paints nothing,
+    /// and a renamed id paints somewhere nobody can see.
+    #[test]
+    fn the_minimap_is_defined_and_styled() {
+        for hook in [
+            "function paintMinimap(",
+            "function placeMinimapWindow(",
+            "function minimapReserve(",
+            "function attachMinimapListeners(",
+            "window.mdviewSetMinimap",
+        ] {
+            assert!(super::INIT_JS.contains(hook), "init.js is missing {hook}");
+        }
+        assert!(super::INIT_JS.contains("attachMinimapListeners();"), "never attached");
+        // Painted pixels do not restyle themselves. Each of these is a surface
+        // that changes the document's shape or its colours and fires no event
+        // of its own, so each has to say so by hand.
+        for repaint in [
+            // Diagrams arrive with a height the first paint could not measure.
+            "renderDiagrams().then(enhanceZoomables).then(scheduleMinimapPaint)",
+            // The System theme stamps no attribute at all.
+            "dark.addEventListener(\"change\", scheduleMinimapPaint)",
+            // The marks it plots exist only once find and comments are rebuilt.
+            "// Last of all: the comment and find marks the map plots exist only now.",
+        ] {
+            assert!(super::INIT_JS.contains(repaint), "init.js never repaints the map: {repaint}");
+        }
+        // Sliced rather than matched against its neighbours: a theme preview
+        // is an attribute flip that fires nothing, and the repaint has to be
+        // inside the function doing the flipping, wherever that function sits.
+        let theme_start = super::INIT_JS.find("function applyTheme(").expect("applyTheme");
+        let theme_end = theme_start
+            + super::INIT_JS[theme_start..].find("\n  }").expect("applyTheme must close");
+        assert!(
+            super::INIT_JS[theme_start..theme_end].contains("scheduleMinimapPaint()"),
+            "a theme preview leaves the map painted in the old theme's colours"
+        );
+        for selector in ["#mdview-minimap {", "#mdview-minimap-window {", "#mdview-minimap-canvas"] {
+            assert!(super::PAGE_CSS.contains(selector), "page.css is missing {selector}");
+        }
+    }
+
     /// The outline is a map, and a map that does not mark where you are
     /// standing is half a map. The rule it uses is the one `]` and `[` use --
     /// asserted here, because two rules for "the heading you are on" would
@@ -56,7 +99,7 @@ mod tests {
             "the outline must stand on the same line the heading keys do"
         );
         assert!(
-            js.contains("scheduleOutlineSync, { passive: true }"),
+            js.contains("schedulePositionSync, { passive: true }"),
             "the mark has to follow the scroll to be worth anything"
         );
         assert!(

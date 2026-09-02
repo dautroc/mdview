@@ -355,6 +355,21 @@ define_class!(
             self.handle_message(crate::state::Message::ToggleBookmark);
         }
 
+        /// The page owns the strip, so this flips the preference and tells
+        /// every window; the page then posts the same value back, which is
+        /// what `g m` does too. Off unless asked for: a new surface should not
+        /// appear in a window nobody opened it in.
+        #[unsafe(method(toggleMinimap:))]
+        fn toggle_minimap_action(&self, _sender: Option<&NSObject>) {
+            let open = !crate::defaults::get_bool_opt(crate::defaults::MINIMAP_OPEN_KEY)
+                .unwrap_or(false);
+            crate::defaults::set_bool(crate::defaults::MINIMAP_OPEN_KEY, open);
+            let script = crate::state::minimap_script(open);
+            for window in self.ivars().windows.borrow().iter() {
+                window.eval_script(&script);
+            }
+        }
+
         #[unsafe(method(openRecent:))]
         fn open_recent_action(&self, sender: Option<&NSMenuItem>) {
             let Some(sender) = sender else { return };
@@ -719,6 +734,9 @@ impl AppDelegate {
             Message::SetSidebarWidth(px) => {
                 let clamped = crate::state::clamp_sidebar_width(px);
                 crate::defaults::set_int(crate::defaults::SIDEBAR_WIDTH_KEY, clamped as i64);
+            }
+            Message::SetMinimap(open) => {
+                crate::defaults::set_bool(crate::defaults::MINIMAP_OPEN_KEY, open);
             }
             // These four go through the same paths as their menu items, so the
             // page's `r`, `+`, `-` and `0` cannot drift from ⌘R and ⌘=/⌘-/⌘0.

@@ -100,6 +100,7 @@ mod bundle_version_tests {
             assert!(!readme.contains(gone), "README still advertises {gone}");
         }
         assert!(readme.contains("| g w | Toggle fullwidth view |"));
+        assert!(readme.contains("| g m | Toggle the minimap |"));
     }
 
     /// Themes have no other native home now that the in-page picker is a
@@ -133,6 +134,16 @@ mod bundle_version_tests {
         assert!(app.contains("#[unsafe(method(showOutline:))]"));
         assert!(app.contains("#[unsafe(method(showBookmarks:))]"));
         assert!(app.contains("mdviewShowSidebarTab"));
+    }
+
+    #[test]
+    fn the_minimap_is_reachable_without_the_keyboard() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(toggleMinimap:)"));
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(toggleMinimap:))]"));
+        // The page owns the strip; the menu item can only ask it to change.
+        assert!(app.contains("crate::state::minimap_script(open)"));
     }
 
     #[test]

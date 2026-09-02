@@ -13,6 +13,7 @@ use objc2_foundation::{MainThreadMarker, NSString};
 // second shortcut for it would be a second thing to keep in sync. The macOS standards -- ⌘C,
 // ⌘A, ⌘Q, ⌘W, ⌘M, ⌘H -- stay: they are not duplicates of anything, and ⌘C is
 // the only way to copy out of the web view.
+const MINIMAP_TITLE: &str = "Toggle Minimap";
 const FULL_WIDTH_TITLE: &str = "Full Width";
 const DIFF_TITLE: &str = "Show Diff";
 const FIND_TITLE: &str = "Find…";
@@ -155,6 +156,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     view_menu.addItem(&item(mtm, "Zoom Out", sel!(zoomOut:), ""));
     view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     view_menu.addItem(&item(mtm, "Toggle Sidebar", sel!(toggleSidebar:), ""));
+    view_menu.addItem(&item(mtm, MINIMAP_TITLE, sel!(toggleMinimap:), ""));
     let full_width_item = item(mtm, FULL_WIDTH_TITLE, sel!(toggleFullWidth:), "");
     let full_width = crate::state::resolve_full_width(crate::defaults::get_bool_opt(
         crate::defaults::FULL_WIDTH_KEY,
@@ -281,6 +283,7 @@ mod tests {
 
     #[test]
     fn the_titles_the_menu_advertises_are_stable() {
+        assert_eq!(MINIMAP_TITLE, "Toggle Minimap");
         assert_eq!(FULL_WIDTH_TITLE, "Full Width");
         assert_eq!(DIFF_TITLE, "Show Diff");
         assert_eq!(SHORTCUTS_TITLE, "Keyboard Shortcuts");

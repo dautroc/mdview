@@ -199,6 +199,10 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
 </div>
 <div id="mdview-content">{body}</div>
 </main>
+<aside id="mdview-minimap" hidden>
+<div id="mdview-minimap-window"></div>
+<canvas id="mdview-minimap-canvas"></canvas>
+</aside>
 <div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
 <aside id="mdview-sidebar" hidden>
 <header class="mdview-sidebar-head">
@@ -507,7 +511,7 @@ mod tests {
             "\"]\"", "\"[\"", "\"}\"", "\"{\"",
             "\"/\"", "\"n\"", "\"N\"",
             "\"g g\"", "\"g s\"", "\"g o\"", "\"g b\"", "\"g t\"",
-            "\"g c\"", "\"g d\"", "\"g l\"", "\"g w\"",
+            "\"g c\"", "\"g d\"", "\"g l\"", "\"g w\"", "\"g m\"",
             "\"h\"", "\"l\"", "\"^\"", "\"$\"",
             "\"v\"", "\"V\"", "\"o\"", "\"y\"", "\"s\"",
             "\"w\"", "\"W\"", "\"e\"", "\"E\"", "\"b\"", "\"B\"",
@@ -1017,6 +1021,42 @@ mod tests {
         assert!(
             sidebar < content_open || sidebar > content_close,
             "sidebar must not sit inside #mdview-content"
+        );
+    }
+
+    /// Same hazard as the sidebar, and the same shape of guard: the strip is
+    /// painted from measurements of the content, but it is not part of it.
+    #[test]
+    fn the_minimap_lives_outside_the_swappable_content() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        let minimap = html.find("id=\"mdview-minimap\"").expect("minimap missing");
+        let content_open = html.find("id=\"mdview-content\"").expect("content missing");
+        let content_close = html.find("</main>").expect("main must close");
+        assert!(
+            minimap < content_open || minimap > content_close,
+            "minimap must not sit inside #mdview-content"
+        );
+        assert!(html.contains("id=\"mdview-minimap-canvas\""));
+        assert!(html.contains("id=\"mdview-minimap-window\""));
+    }
+
+    /// The strip is fixed to the window rather than a column in the layout, so
+    /// the text column keeps its width when it is toggled -- and the comment
+    /// rail, which measures the margin for itself, has to be told what the
+    /// strip took or its cards would sit underneath.
+    #[test]
+    fn the_minimap_is_fixed_and_the_rail_knows_its_width() {
+        let css = assets::PAGE_CSS;
+        let start = css.find("#mdview-minimap {").expect("minimap rule");
+        let rule = &css[start..start + css[start..].find('}').expect("minimap rule close")];
+        assert!(rule.contains("position: fixed"), "the strip must not take layout width");
+        assert!(
+            css.contains(":root[data-view=\"diff\"] #mdview-minimap"),
+            "the diff view has no shape to map"
+        );
+        assert!(
+            assets::INIT_JS.contains("mainRect.right - minimapReserve()"),
+            "railGeometry must subtract the strip from the free margin"
         );
     }
 

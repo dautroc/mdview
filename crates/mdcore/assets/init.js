@@ -381,7 +381,9 @@
     // promise (resolved immediately when mermaid is absent or throws) so
     // enhanceZoomables() runs exactly once, after diagrams exist, and still
     // runs -- covering images -- even when mermaid itself failed.
-    renderDiagrams().then(enhanceZoomables);
+    // Painted again after the diagrams land: they arrive with a height, and
+    // the first paint measured a document that did not have it yet.
+    renderDiagrams().then(enhanceZoomables).then(scheduleMinimapPaint);
     renderSidebarBody();
     refreshHighlights();
   };
@@ -671,6 +673,8 @@
     sidebarWidth = w;
     document.documentElement.style.setProperty("--sidebar-width", w + "px");
     layoutCommentRail();
+    // The text column just changed width, so every block the map drew moved.
+    scheduleMinimapPaint();
     return w;
   }
 
@@ -697,6 +701,7 @@
     }
     renderSidebarBody();
     layoutCommentRail();
+    scheduleMinimapPaint();
     postToHost("setSidebar:" + (open ? "1" : "0") + ":" + sidebarTab);
   }
 
@@ -986,16 +991,295 @@
     outlineCurrentId = id;
   }
 
-  function scheduleOutlineSync() {
+  // The outline's mark and the minimap's viewport band answer the same
+  // question, so they ride the same frame rather than one listener each.
+  function schedulePositionSync() {
     if (outlineSyncPending) return;
     outlineSyncPending = true;
     requestAnimationFrame(function () {
       outlineSyncPending = false;
       syncOutline();
+      placeMinimapWindow();
     });
   }
 
   window.mdviewSetSidebar = setSidebar;
+
+  // ---- The minimap ---------------------------------------------------------
+  //
+  // A strip down the right edge holding the shape of the whole document: the
+  // page seen from far enough away to take it all in at once, with the part
+  // you are reading marked, and clickable.
+  //
+  // It is FIXED to the window rather than a column in the layout. Reserving
+  // width was weighed for the comment rail and rejected there for a reason
+  // that applies here too -- it re-wraps the text column, which moves your
+  // place in the document. The rail is told about the strip instead, in
+  // railGeometry, and the text keeps the width it had.
+  //
+  // What it draws is structure, not pixels. A scaled clone of the document
+  // would duplicate every diagram, equation and image and would have to be
+  // rebuilt on every save, and prose at this scale is a uniform grey anyway.
+  // Headings are bars, prose is lines, code and tables are blocks, pictures
+  // are frames: the shapes you actually navigate by.
+
+  var MINIMAP_WIDTH = 72;
+  // The strip's own padding, so nothing drawn touches either edge.
+  var MINIMAP_PAD = 6;
+  // Text lines are 1px on a 2px pitch. Below that they merge into a solid
+  // block, and a solid block is what a code fence is supposed to look like.
+  var MINIMAP_LINE_PITCH = 2;
+  var minimapOpen = false;
+  var minimapPaintPending = false;
+  var minimapDrag = null;   // { moved, startY } while the button is down
+
+  function minimapEl() {
+    return document.getElementById("mdview-minimap");
+  }
+
+  // Hidden is not the only way to be absent: the diff view has no headings, no
+  // comments and no margin, so the strip stays out of it entirely.
+  function minimapVisible() {
+    var el = minimapEl();
+    if (!el || el.hidden) return false;
+    return document.documentElement.getAttribute("data-view") !== "diff";
+  }
+
+  // What the strip takes out of the window, and so out of the margin the
+  // comment rail measures. Zero unless it is actually showing.
+  function minimapReserve() {
+    return minimapVisible() ? MINIMAP_WIDTH : 0;
+  }
+
+  // Empty when a theme leaves a token undefined -- find's colours are absent
+  // in the System theme, where a <mark> keeps the browser's own yellow.
+  function cssVar(style, name, fallback) {
+    var value = style.getPropertyValue(name);
+    value = value ? value.replace(/^\s+|\s+$/g, "") : "";
+    return value || fallback;
+  }
+
+  // The whole document mapped onto the strip's height. A document shorter than
+  // the window maps 1:1 and the viewport marker covers the lot, which is the
+  // truth: there is nothing off screen to point at.
+  function minimapScale() {
+    var el = minimapEl();
+    var docHeight = document.documentElement.scrollHeight || 1;
+    var height = el && el.clientHeight ? el.clientHeight : window.innerHeight;
+    return Math.min(1, height / docHeight);
+  }
+
+  function minimapKind(el) {
+    var tag = el.tagName;
+    if (/^H[1-6]$/.test(tag)) return "heading";
+    if (tag === "HR") return "rule";
+    // Before the PRE test, so a Mermaid diagram -- an <svg> inside a <pre> --
+    // reads as the picture it became rather than as the source it was.
+    if (tag === "IMG" || tag === "FIGURE") return "figure";
+    if (el.querySelector && el.querySelector("img, svg")) return "figure";
+    if (tag === "PRE" || tag === "TABLE") return "block";
+    return "prose";
+  }
+
+  // The document's top-level blocks, in document coordinates. Rects rather
+  // than offsetTop: the content div is not every block's offsetParent.
+  function minimapBlocks() {
+    var content = contentEl();
+    if (!content) return [];
+    var out = [];
+    var kids = content.children;
+    for (var i = 0; i < kids.length; i++) {
+      var el = kids[i];
+      var rect = el.getBoundingClientRect();
+      if (!rect.height) continue;
+      var tag = el.tagName;
+      out.push({
+        top: rect.top + window.scrollY,
+        height: rect.height,
+        kind: minimapKind(el),
+        level: /^H[1-6]$/.test(tag) ? parseInt(tag.charAt(1), 10) : 0,
+      });
+    }
+    return out;
+  }
+
+  // Prose as the lines it is made of, while there is room for lines. The last
+  // line of a paragraph is short: it is the only thing that makes a stack of
+  // lines read as prose rather than as a filled box.
+  function paintMinimapProse(ctx, colour, y, h, width) {
+    ctx.globalAlpha = 0.38;
+    ctx.fillStyle = colour;
+    if (h < MINIMAP_LINE_PITCH * 2) {
+      ctx.fillRect(0, y, width, Math.max(1, h));
+      return;
+    }
+    var lines = Math.floor(h / MINIMAP_LINE_PITCH);
+    for (var i = 0; i < lines; i++) {
+      ctx.fillRect(0, y + i * MINIMAP_LINE_PITCH, i === lines - 1 ? width * 0.6 : width, 1);
+    }
+  }
+
+  // Comments down the right edge, find matches down the left, so a passage
+  // that is both does not hide one mark under the other.
+  function paintMinimapMarkers(ctx, style, scale, width) {
+    var anchors = commentAnchors || [];
+    var matches = findMatches || [];
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = cssVar(style, "--comment-fg", "#4b2c85");
+    for (var a = 0; a < anchors.length; a++) {
+      var marks = anchors[a].marks;
+      if (!marks || !marks.length) continue;
+      ctx.fillRect(width - 3, minimapMarkTop(marks[0]) * scale - 1, 3, 3);
+    }
+    ctx.fillStyle = cssVar(style, "--find-hit-bg",
+      cssVar(style, "--find-current-bg", cssVar(style, "--link", "#0969da")));
+    for (var f = 0; f < matches.length; f++) {
+      ctx.fillRect(0, minimapMarkTop(matches[f]) * scale - 1, 3, 3);
+    }
+  }
+
+  function minimapMarkTop(el) {
+    return el.getBoundingClientRect().top + window.scrollY;
+  }
+
+  function paintMinimap() {
+    var el = minimapEl();
+    var canvas = document.getElementById("mdview-minimap-canvas");
+    if (!el || !canvas || !minimapVisible()) return;
+    var width = el.clientWidth - MINIMAP_PAD * 2;
+    var height = el.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    var ctx = canvas.getContext ? canvas.getContext("2d") : null;
+    if (!ctx) return;
+    // The backing store is in device pixels and the box is in CSS pixels, or
+    // every line drawn here would be a blurred two.
+    var ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    var style = getComputedStyle(document.documentElement);
+    var fg = cssVar(style, "--fg", "#1f2328");
+    var muted = cssVar(style, "--muted", "#59636e");
+    var border = cssVar(style, "--border", "#d1d9e0");
+    var scale = minimapScale();
+    var blocks = minimapBlocks();
+
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var y = b.top * scale;
+      var h = Math.max(1, b.height * scale);
+      if (b.kind === "heading") {
+        // Deeper headings are shorter bars, so the shape of the document shows
+        // its hierarchy the way the outline's indentation does.
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = fg;
+        ctx.fillRect(0, y, Math.max(8, width * (1 - (b.level - 1) * 0.13)), Math.max(2, Math.min(h, 3)));
+      } else if (b.kind === "block") {
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = muted;
+        ctx.fillRect(0, y, width, h);
+      } else if (b.kind === "figure") {
+        // Half-pixel offsets, or a 1px stroke straddles two rows and greys.
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0.5, Math.round(y) + 0.5, width - 1, Math.max(2, Math.round(h) - 1));
+      } else if (b.kind === "rule") {
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = border;
+        ctx.fillRect(0, y, width, 1);
+      } else {
+        paintMinimapProse(ctx, muted, y, h, width);
+      }
+    }
+    ctx.globalAlpha = 1;
+    paintMinimapMarkers(ctx, style, scale, width);
+  }
+
+  // The band behind the map, not a box drawn over it: it sits under the canvas
+  // exactly as the palette's current row sits under its text, which is where
+  // its colour comes from.
+  function placeMinimapWindow() {
+    var win = document.getElementById("mdview-minimap-window");
+    if (!win || !minimapVisible()) return;
+    var scale = minimapScale();
+    win.style.top = Math.round(window.scrollY * scale) + "px";
+    win.style.height = Math.max(6, Math.round(window.innerHeight * scale)) + "px";
+  }
+
+  function scheduleMinimapPaint() {
+    if (minimapPaintPending) return;
+    minimapPaintPending = true;
+    requestAnimationFrame(function () {
+      minimapPaintPending = false;
+      paintMinimap();
+      placeMinimapWindow();
+    });
+  }
+
+  // Where in the document a point on the strip is, with the viewport centred
+  // on it: you click what you want to read, not the top edge of it.
+  function minimapTarget(clientY) {
+    var el = minimapEl();
+    var scale = minimapScale();
+    if (!el || !scale) return 0;
+    return (clientY - el.getBoundingClientRect().top) / scale - window.innerHeight / 2;
+  }
+
+  function onMinimapMouseDown(event) {
+    if (!minimapVisible()) return;
+    if (event.button != null && event.button !== 0) return;
+    event.preventDefault();
+    minimapDrag = { moved: false, startY: event.clientY };
+    document.addEventListener("mousemove", onMinimapMouseMove);
+    document.addEventListener("mouseup", onMinimapMouseUp);
+  }
+
+  function onMinimapMouseMove(event) {
+    if (!minimapDrag) return;
+    if (!minimapDrag.moved && Math.abs(event.clientY - minimapDrag.startY) < 3) return;
+    minimapDrag.moved = true;
+    // Instant while the button is down, for the reason scrollLines is: one
+    // smooth animation per move event would queue up and fight the pointer.
+    window.scrollTo(0, Math.min(maxScrollY(), Math.max(0, minimapTarget(event.clientY))));
+  }
+
+  function onMinimapMouseUp(event) {
+    if (!minimapDrag) return;
+    var moved = minimapDrag.moved;
+    minimapDrag = null;
+    document.removeEventListener("mousemove", onMinimapMouseMove);
+    document.removeEventListener("mouseup", onMinimapMouseUp);
+    // A press that never became a drag is a jump across the document, which is
+    // the one case the animation is worth having.
+    if (!moved) scrollToY(minimapTarget(event.clientY));
+  }
+
+  function setMinimap(open) {
+    var el = minimapEl();
+    if (!el) return;
+    minimapOpen = !!open;
+    el.hidden = !minimapOpen;
+    document.documentElement.setAttribute("data-minimap-open", minimapOpen ? "1" : "0");
+    document.documentElement.style.setProperty("--minimap-width", MINIMAP_WIDTH + "px");
+    // The rail has just been handed back, or charged, the width of the strip.
+    layoutCommentRail();
+    scheduleMinimapPaint();
+    postToHost("setMinimap:" + (minimapOpen ? "1" : "0"));
+  }
+
+  function toggleMinimapKey() {
+    setMinimap(!minimapOpen);
+  }
+
+  window.mdviewSetMinimap = function (open) {
+    setMinimap(!!open);
+  };
+
 
   // ---- Document options ---------------------------------------------------
   window.mdviewDiffAvailable = false;
@@ -1015,6 +1299,8 @@
     else root.removeAttribute("data-fullwidth");
     if (typeof available === "boolean") window.mdviewDiffAvailable = available;
     if (arguments.length > 4) diffUnavailableReason = reason || null;
+    // The diff has no shape to map and full width leaves no margin to sit in.
+    scheduleMinimapPaint();
   };
 
   // ---- Theme palette --------------------------------------------------------
@@ -1994,6 +2280,8 @@
     // The selection's nodes went out with the marks; the offsets that describe
     // it did not.
     if (visual) paintVisual();
+    // Last of all: the comment and find marks the map plots exist only now.
+    scheduleMinimapPaint();
   }
 
   function anchorMarks(id) {
@@ -2449,7 +2737,9 @@
     if (!main || !content) return null;
     var mainRect = main.getBoundingClientRect();
     var contentRect = content.getBoundingClientRect();
-    var margin = mainRect.right - contentRect.right - RAIL_GAP;
+    // Minus the strip: it is fixed to the window rather than in the layout,
+    // so main's own right edge is not where the free margin ends.
+    var margin = mainRect.right - minimapReserve() - contentRect.right - RAIL_GAP;
     if (margin < RAIL_MIN) return null;
     return {
       top: mainRect.top,
@@ -2650,8 +2940,10 @@
       railResizeTimer = setTimeout(function () {
         layoutCommentRail();
         // The text re-wrapped, so a different heading may be the one above the
-        // line even though nobody scrolled.
-        scheduleOutlineSync();
+        // line even though nobody scrolled -- and every block the minimap drew
+        // is somewhere else.
+        schedulePositionSync();
+        scheduleMinimapPaint();
         // The text re-wrapped, so the offset the caret sits on is somewhere
         // else on screen even though it is the same offset.
         placeCaret();
@@ -3862,6 +4154,7 @@
         { keys: ["g s"], hint: "g  s", label: "Toggle the sidebar", run: toggleSidebarKey },
         { keys: ["g o"], hint: "g  o", label: "Outline", run: function () { showSidebarTab("outline"); } },
         { keys: ["g b"], hint: "g  b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
+        { keys: ["g m"], hint: "g  m", label: "Toggle the minimap", run: toggleMinimapKey },
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
         { keys: ["g r"], hint: "g  r", label: "Recent files", run: toggleRecentPalette },
@@ -4216,12 +4509,26 @@
         sheets[i].media = id === "mdview-hl-" + themeId ? "all" : "not all";
       }
     }
+    // The map is painted pixels, not styled elements: nothing about a theme
+    // change reaches it unless it is repainted.
+    scheduleMinimapPaint();
+  }
+
+  function attachMinimapListeners() {
+    var el = minimapEl();
+    if (!el) return;
+    el.addEventListener("mousedown", onMinimapMouseDown);
+    // The System theme stamps no attribute, so this is the only notice the
+    // page gets that its colours have changed under it.
+    var dark = window.matchMedia("(prefers-color-scheme: dark)");
+    if (dark.addEventListener) dark.addEventListener("change", scheduleMinimapPaint);
+    else if (dark.addListener) dark.addListener(scheduleMinimapPaint);
   }
 
   function attachSidebarListeners() {
     // Before the resizer check: the outline follows the reader whether or not
     // the panel can be dragged.
-    window.addEventListener("scroll", scheduleOutlineSync, { passive: true });
+    window.addEventListener("scroll", schedulePositionSync, { passive: true });
     var resizerEl = document.getElementById("mdview-sidebar-resizer");
     if (!resizerEl) return;
     resizerEl.addEventListener("mousedown", onSidebarResizerPointerDown);
@@ -4240,6 +4547,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     attachSidebarListeners();
+    attachMinimapListeners();
     attachFindListeners();
     attachCommentListeners();
     attachKeyListeners();

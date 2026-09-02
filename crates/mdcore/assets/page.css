@@ -336,6 +336,50 @@ img { max-width: 100%; }
 :root[data-fullwidth="1"] #mdview-content { max-width: none; }
 :root[data-view="diff"] #mdview-content { max-width: none; padding: 0; }
 
+/* The minimap. Fixed to the window rather than a column in the layout: a
+   column would re-wrap the text every time it was toggled, and would take the
+   margin the comment rail needs. It steps aside for the sidebar the way the
+   note does, and railGeometry subtracts its width from the free margin.
+
+   The viewport band is a sibling BEHIND the canvas, not a box drawn over it --
+   the palette's current row is a background too, and that is where the colour
+   comes from. z-index sits above the sticky banners and below the find bar. */
+#mdview-minimap {
+  bottom: 0;
+  box-sizing: border-box;
+  padding: 0 6px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: var(--minimap-width, 72px);
+  z-index: 11;
+}
+#mdview-minimap[hidden] { display: none; }
+/* No shape to map, and no margin to sit in. */
+:root[data-view="diff"] #mdview-minimap { display: none; }
+:root[data-sidebar-open="1"] #mdview-minimap { right: var(--sidebar-width, 260px); }
+/* Full width leaves the text no margin of its own, so the strip is the one
+   case where the column does give way -- on a keypress, deliberately. */
+:root[data-fullwidth="1"][data-minimap-open="1"] #mdview-content {
+  padding-right: calc(var(--minimap-width, 72px) + 1.5rem);
+}
+#mdview-minimap-canvas { display: block; position: relative; }
+#mdview-minimap-window {
+  background: var(--code-bg);
+  border-radius: 2px;
+  box-shadow: inset 2px 0 0 var(--link);
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+/* The note already steps aside for the sidebar; the strip is the second thing
+   in that corner it has to clear. */
+:root[data-minimap-open="1"] #mdview-note { right: calc(var(--minimap-width, 72px) + .75rem); }
+:root[data-minimap-open="1"][data-sidebar-open="1"] #mdview-note {
+  right: calc(var(--sidebar-width, 260px) + var(--minimap-width, 72px) + .75rem);
+}
+
 #mdview-sidebar {
   border-left: 1px solid var(--border);
   /* There is no global border-box reset, so height:100vh plus the padding

@@ -307,6 +307,13 @@ impl DocumentWindow {
                         .borrow_mut()
                         .push(crate::state::sidebar_width_script(width));
                 }
+                let minimap_open =
+                    crate::defaults::get_bool_opt(crate::defaults::MINIMAP_OPEN_KEY)
+                        .unwrap_or(false);
+                crate::state::queue_minimap_script(
+                    &mut self.pending_scripts.borrow_mut(),
+                    minimap_open,
+                );
                 let full_width = crate::state::resolve_full_width(crate::defaults::get_bool_opt(
                     crate::defaults::FULL_WIDTH_KEY,
                 ));

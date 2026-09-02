@@ -19,6 +19,8 @@ pub const DIFF_LAYOUT_KEY: &str = "MDViewDiffLayout";
 #[allow(dead_code)]
 pub const SIDEBAR_WIDTH_KEY: &str = "MDViewSidebarWidth";
 #[allow(dead_code)]
+pub const MINIMAP_OPEN_KEY: &str = "MDViewMinimapOpen";
+#[allow(dead_code)]
 pub const SHORTCUTS_HINT_SHOWN_KEY: &str = "MDViewShortcutsHintShown";
 
 fn defaults() -> objc2::rc::Retained<NSUserDefaults> {
