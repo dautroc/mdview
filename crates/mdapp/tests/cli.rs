@@ -26,6 +26,26 @@ fn print_html_emits_a_complete_document() {
     assert!(html.contains("<title>doc.md</title>"));
 }
 
+/// The whole path a reader actually takes, for the block every note written
+/// in Obsidian or Jekyll opens with. Rendered, it is a rule plus an `<h2>`
+/// holding the raw metadata, and that `<h2>` heads the outline.
+#[test]
+fn print_html_strips_a_frontmatter_block() {
+    let path = fixture_file("front.md", "---\ntitle: My Note\ntags: [a, b]\n---\n\n# Title\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mdview"))
+        .arg("--print-html")
+        .arg(&path)
+        .output()
+        .expect("failed to run mdview");
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let html = String::from_utf8(output.stdout).unwrap();
+    assert!(html.contains("<h1>Title</h1>"));
+    assert!(!html.contains("My Note"), "the metadata reached the page");
+    assert!(!html.contains("<hr"), "the opening fence rendered as a rule");
+}
+
 #[test]
 fn print_html_on_a_missing_file_exits_one() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdview"))

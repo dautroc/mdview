@@ -7,6 +7,7 @@ pub mod chrome;
 pub mod document;
 pub mod diff;
 pub mod escape;
+pub mod frontmatter;
 pub mod highlight;
 pub mod images;
 pub mod math;

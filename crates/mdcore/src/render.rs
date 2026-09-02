@@ -35,6 +35,10 @@ pub fn render_body_in(
     highlighter: &Highlighter,
     base_dir: Option<&std::path::Path>,
 ) -> String {
+    // Frontmatter comes off before the parser sees it. Doing it here rather
+    // than in `Document` keeps it out of the diff view, which shows the file
+    // as it is on disk and would be wrong to hide a metadata edit from.
+    let markdown = crate::frontmatter::strip(markdown);
     let parser = Parser::new_ext(markdown, markdown_options());
     let events = transform_events(parser, highlighter);
     let events = inline_images(events, base_dir);
@@ -132,7 +136,7 @@ fn transform_events<'a>(
 pub fn headings(markdown: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut depth = 0usize;
-    for event in Parser::new_ext(markdown, markdown_options()) {
+    for event in Parser::new_ext(crate::frontmatter::strip(markdown), markdown_options()) {
         match event {
             Event::Start(Tag::Heading { .. }) => {
                 depth += 1;
@@ -167,5 +171,39 @@ mod heading_tests {
     #[test]
     fn a_document_with_no_headings_has_no_labels() {
         assert!(headings("just a paragraph\n").is_empty());
+    }
+
+    /// A review's labels come from this list, and frontmatter parses as a
+    /// setext heading -- so without the strip, every comment on an Obsidian
+    /// note would be filed under a section called `title: My Note`.
+    #[test]
+    fn frontmatter_is_not_a_heading() {
+        let markdown = "---\ntitle: My Note\n---\n\n# One\n\n## Two\n";
+        assert_eq!(headings(markdown), vec!["One", "Two"]);
+    }
+}
+
+#[cfg(test)]
+mod frontmatter_tests {
+    use super::render_body;
+
+    /// The bug this exists for. `---`, metadata, `---` is a thematic break
+    /// followed by a paragraph that the closing fence promotes to an `<h2>`,
+    /// which then outranks the document's own `<h1>` in the outline.
+    #[test]
+    fn frontmatter_renders_as_nothing_at_all() {
+        let html = render_body("---\ntitle: My Note\ntags: [a, b]\n---\n\n# Hello\n\nBody.\n");
+        assert!(!html.contains("<hr"), "the opening fence is still a rule: {html}");
+        assert!(!html.contains("My Note"), "the metadata is still in the body: {html}");
+        assert!(html.starts_with("<h1>Hello</h1>"), "got: {html}");
+    }
+
+    /// The other half of the contract: a document is allowed to open on a
+    /// rule, and nothing about that looks like metadata once you require a
+    /// closing fence.
+    #[test]
+    fn a_leading_thematic_break_still_renders() {
+        let html = render_body("---\n\n# Hello\n");
+        assert!(html.contains("<hr"), "got: {html}");
     }
 }

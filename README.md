@@ -14,6 +14,11 @@ same with the network off.
 CommonMark plus GFM tables and task lists, syntax-highlighted code, images,
 LaTeX math, and Mermaid diagrams.
 
+A YAML or TOML frontmatter block at the top of a file is addressed to whatever
+tool wrote it, not to you, so MDView takes it off before rendering. A `---`
+anywhere else in the document is still a rule, and so is one at the top of a
+file that never closes it.
+
 ## What it does
 
 - **No buttons.** The window is the document. Everything is a key, and the

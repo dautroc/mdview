@@ -37,6 +37,16 @@ fn relative_and_remote_image_paths_are_preserved() {
     insta::assert_snapshot!(html);
 }
 
+/// Frontmatter is stripped, and the rule further down the document -- which
+/// is the same three characters -- is not.
+#[test]
+fn frontmatter_is_stripped_and_later_rules_are_kept() {
+    let html = mdcore::render::render_body(&fixture("frontmatter.md"));
+    assert!(!html.contains("tags:"), "metadata leaked into the body: {html}");
+    assert!(html.starts_with("<h1>"), "got: {html}");
+    insta::assert_snapshot!(html);
+}
+
 #[test]
 fn empty_file_renders_an_empty_body() {
     assert_eq!(mdcore::render::render_body(&fixture("empty.md")), "");
