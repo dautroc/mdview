@@ -212,6 +212,81 @@ mod tests {
         assert!(js.contains("wrapRuns(runsFor(index, winner.from, winner.to)"), "wrapping is not a separate pass");
     }
 
+    /// `g l` is the only way to the rendered layout, and the layout is only a
+    /// layout because the stylesheet knows the class the body comes wrapped in.
+    #[test]
+    fn the_rendered_diff_layout_is_reachable_and_styled() {
+        let js = super::INIT_JS;
+        assert!(js.contains("function renderedDiff("), "nothing recognises the layout");
+        assert!(
+            js.contains("var layouts = [\"unified\", \"split\", \"rendered\", \"rendered-split\"];"),
+            "g l no longer cycles all four"
+        );
+        assert!(
+            super::PAGE_CSS.contains(".mdview-rdiff-split .mdview-rdiff-row {"),
+            "the two-column layout has no rows"
+        );
+        assert!(
+            super::PAGE_CSS.contains("details.mdview-rdiff-old {"),
+            "the folded-away older version is unstyled"
+        );
+        assert!(
+            super::PAGE_CSS
+                .contains(".mdview-rdiff-single [data-mdview-change]:not(.mdview-rdiff-old)"),
+            "a changed block has no mark in one column"
+        );
+    }
+
+    /// The rendered layout is a diff *and* a document, and the two rules that
+    /// hand it back what the source layouts give up are both a specificity
+    /// accident away from doing something else. The `:not([hidden])` keeps the
+    /// strip closed when the reader has closed it; rewriting the full-bleed
+    /// rule in place rather than overriding it keeps `g w` working.
+    #[test]
+    fn the_rendered_diff_keeps_the_minimap_and_the_prose_column() {
+        let css = super::PAGE_CSS;
+        assert!(
+            css.contains(":root[data-view=\"diff\"]:not([data-diff-layout=\"rendered\"]) #mdview-content"),
+            "the rendered layout has lost its reading column"
+        );
+        assert!(
+            css.contains(":root[data-diff-layout=\"rendered\"] #mdview-minimap:not([hidden])"),
+            "the strip is either gone from the layout or forced open in it"
+        );
+        let start = super::INIT_JS.find("function minimapVisible(").expect("minimapVisible");
+        let end = start + super::INIT_JS[start..].find("\n  }").expect("must close");
+        assert!(
+            super::INIT_JS[start..end].contains("renderedDiff()"),
+            "the strip is styled back in but never painted"
+        );
+    }
+
+    /// The older version of a block is not part of the document, and four
+    /// things would treat it as if it were. It stays in a `<template>` until
+    /// a reader opens it, and out of the outline and the find index after.
+    #[test]
+    fn the_older_version_of_a_block_cannot_reach_the_outline_or_the_find_index() {
+        let js = super::INIT_JS;
+        assert!(js.contains("function documentHeadings("), "no filtered heading list");
+        assert_eq!(
+            js.matches("querySelectorAll(\"h1, h2, h3, h4, h5, h6\")").count(),
+            1,
+            "every heading query has to go through documentHeadings"
+        );
+        assert!(
+            js.contains("found[i].closest(\".mdview-rdiff-old\")"),
+            "the filter no longer filters anything"
+        );
+        assert!(
+            js.contains("el.classList.contains(\"mdview-rdiff-old\")"),
+            "find would offer matches in text that is not in the document"
+        );
+        // Hydrated on open, so nothing renders it at zero height: mermaid
+        // marks what it has drawn and would never draw it again.
+        assert!(js.contains("body.appendChild(template.content);"), "never hydrated");
+        assert!(js.contains("attachRenderedDiffListeners();"), "never attached");
+    }
+
     /// The rail is built entirely in JS, so nothing in the emitted markup
     /// would notice if it stopped being wired up.
     #[test]

@@ -63,7 +63,49 @@ pub enum DiffAvailability {
 pub enum DiffLayout {
     Unified,
     Split,
+    /// Not a layout of the source at all: the document as it renders, with the
+    /// blocks that changed marked. Drawn by `crate::rdiff`.
+    Rendered,
+    /// The same, in two columns: what each block was, beside what it is.
+    RenderedSplit,
 }
+
+impl DiffLayout {
+    /// The value stored in defaults and stamped on the page.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            DiffLayout::Unified => "unified",
+            DiffLayout::Split => "split",
+            DiffLayout::Rendered => "rendered",
+            DiffLayout::RenderedSplit => "rendered-split",
+        }
+    }
+
+    /// The layout a stored or posted wire value asks for. `None` for anything
+    /// else, so that a stored value from a newer build and a message from a
+    /// page that has gone wrong are both refused rather than guessed at.
+    pub fn from_wire(wire: &str) -> Option<DiffLayout> {
+        match wire {
+            "unified" => Some(DiffLayout::Unified),
+            "split" => Some(DiffLayout::Split),
+            "rendered" => Some(DiffLayout::Rendered),
+            "rendered-split" => Some(DiffLayout::RenderedSplit),
+            _ => None,
+        }
+    }
+}
+
+/// The layouts that draw the source. `DiffLayout::Rendered` is deliberately
+/// not one of them: it renders the document rather than its lines, and this
+/// module is about lines and hunks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceLayout {
+    Unified,
+    Split,
+}
+
+/// Shown by every layout when the file matches HEAD.
+pub const NO_CHANGES_HTML: &str = "<div class=\"mdview-diff-empty\">No changes against HEAD.</div>";
 
 /// Parse Git's unified patch format. The parser intentionally accepts only
 /// the line records needed by the renderer and ignores file headers and other
@@ -295,18 +337,18 @@ pub fn render_body(
     diff: &GitDiff,
     working_source: &str,
     highlighter: &Highlighter,
-    layout: DiffLayout,
+    layout: SourceLayout,
 ) -> String {
     if diff.patch.is_empty() {
-        return "<div class=\"mdview-diff-empty\">No changes against HEAD.</div>".to_string();
+        return NO_CHANGES_HTML.to_string();
     }
     let old_lines = highlighter.render_markdown_lines(&diff.old_source);
     let new_lines = highlighter.render_markdown_lines(working_source);
     let mut html = format!(
         "<div class=\"mdview-diff mdview-diff-{}\" role=\"table\" aria-label=\"Git diff\">",
         match layout {
-            DiffLayout::Unified => "unified",
-            DiffLayout::Split => "split",
+            SourceLayout::Unified => "unified",
+            SourceLayout::Split => "split",
         }
     );
     for hunk in &diff.patch {
@@ -319,8 +361,8 @@ pub fn render_body(
             escape_html(&hunk.heading)
         ));
         match layout {
-            DiffLayout::Unified => render_unified_rows(&mut html, hunk, &old_lines, &new_lines),
-            DiffLayout::Split => render_split_rows(&mut html, hunk, &old_lines, &new_lines),
+            SourceLayout::Unified => render_unified_rows(&mut html, hunk, &old_lines, &new_lines),
+            SourceLayout::Split => render_split_rows(&mut html, hunk, &old_lines, &new_lines),
         }
         html.push_str("</section>");
     }
@@ -626,6 +668,67 @@ mod tests {
         assert_eq!(availability(&tracked), DiffAvailability::NoHead);
     }
 
+    /// The one test that walks the whole path a keypress takes: a tracked
+    /// file, a layout, and a page. `rdiff` is unit-tested without git, and the
+    /// page without a document, so nothing else checks that the three are
+    /// actually joined up.
+    #[test]
+    fn the_rendered_layout_renders_the_document_and_says_so_on_the_page() {
+        if Command::new("git").output().is_err() {
+            return;
+        }
+        let dir = temp_repo();
+        let path = dir.join("note.md");
+        std::fs::write(&path, "# After
+
+A new paragraph.
+").unwrap();
+        let highlighter = Highlighter::new();
+        let doc = crate::render_diff_document_with(
+            &path,
+            &highlighter,
+            crate::Theme::System,
+            DiffLayout::Rendered,
+        )
+        .unwrap();
+        assert!(doc.html.contains("data-diff-layout=\"rendered\""), "the page is not stamped");
+        assert!(
+            doc.html.contains("<div class=\"mdview-rdiff mdview-rdiff-single\">"),
+            "the body is not the document"
+        );
+        assert!(
+            doc.html.contains("<h1 data-mdview-change=\"changed\">After</h1>"),
+            "the changed heading is not marked"
+        );
+        assert!(
+            doc.html.contains("<template><h1>Before</h1></template>"),
+            "the version that was there is gone"
+        );
+        // The same file in two columns: the same pairing, laid out in rows.
+        let side_by_side = crate::render_diff_document_with(
+            &path,
+            &highlighter,
+            crate::Theme::System,
+            DiffLayout::RenderedSplit,
+        )
+        .unwrap();
+        assert!(side_by_side.html.contains("data-diff-layout=\"rendered-split\""));
+        assert!(
+            side_by_side.html.contains("<div class=\"mdview-rdiff-side mdview-rdiff-old\"><h1>Before</h1></div>"),
+            "the older document is not in the left column"
+        );
+
+        // And in a source layout it is still rows of source.
+        let unified = crate::render_diff_document_with(
+            &path,
+            &highlighter,
+            crate::Theme::System,
+            DiffLayout::Unified,
+        )
+        .unwrap();
+        assert!(unified.html.contains("mdview-diff-unified"), "the layouts have merged");
+    }
+
     #[test]
     fn head_diff_includes_staged_and_unstaged_working_tree_changes() {
         if Command::new("git").output().is_err() {
@@ -657,8 +760,8 @@ mod tests {
             patch: parse_patch("@@ -1 +1,2 @@\n-# Before\n+# After\n+<script>alert(1)</script>\n").unwrap(),
         };
         let highlighter = Highlighter::new();
-        let unified = render_body(&diff, "# After\n<script>alert(1)</script>\n", &highlighter, DiffLayout::Unified);
-        let split = render_body(&diff, "# After\n<script>alert(1)</script>\n", &highlighter, DiffLayout::Split);
+        let unified = render_body(&diff, "# After\n<script>alert(1)</script>\n", &highlighter, SourceLayout::Unified);
+        let split = render_body(&diff, "# After\n<script>alert(1)</script>\n", &highlighter, SourceLayout::Split);
         assert!(unified.contains("mdview-diff-unified"));
         assert!(split.contains("mdview-diff-split"));
         assert!(unified.contains("&lt;") && unified.contains("&gt;"));

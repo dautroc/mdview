@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::assets;
 use crate::chrome;
+use crate::diff::DiffLayout;
 use crate::document::Document;
 use crate::highlight;
 use crate::theme::Theme;
@@ -95,6 +96,32 @@ fn build_theme_catalogue() -> String {
 
 /// Assemble a complete, self-contained HTML document around rendered body HTML.
 pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
+    build_page_view(doc, body_html, theme, None)
+}
+
+/// The same page, stamped as a Git diff in the given layout.
+///
+/// The layout is passed rather than read back out of the markup. It used to be
+/// sniffed -- `body_html.contains("mdview-diff-split")` -- which was survivable
+/// while a diff body was only ever generated rows, and is not survivable now
+/// that the rendered layout puts the reader's own prose in the body: a document
+/// that mentions those class names in a code fence would have stamped itself
+/// as a split diff and loaded the wrong half of the stylesheet.
+pub fn build_diff_page(
+    doc: &Document,
+    body_html: &str,
+    theme: Theme,
+    layout: DiffLayout,
+) -> String {
+    build_page_view(doc, body_html, theme, Some(layout))
+}
+
+fn build_page_view(
+    doc: &Document,
+    body_html: &str,
+    theme: Theme,
+    diff: Option<DiffLayout>,
+) -> String {
     let (light_css, dark_css) = highlight::theme_css();
     let title = doc
         .path
@@ -118,17 +145,10 @@ pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
         Some(false) => " data-dark=\"0\"".to_string(),
         None => String::new(),
     };
-    let view_attr = if body_html.contains("class=\"mdview-diff ") {
-        " data-view=\"diff\""
-    } else {
-        ""
-    };
-    let diff_layout_attr = if body_html.contains("mdview-diff-split") {
-        " data-diff-layout=\"split\""
-    } else if body_html.contains("mdview-diff-unified") {
-        " data-diff-layout=\"unified\""
-    } else {
-        ""
+    let view_attr = if diff.is_some() { " data-view=\"diff\"" } else { "" };
+    let diff_layout_attr = match diff {
+        Some(layout) => format!(" data-diff-layout=\"{}\"", layout.as_wire()),
+        None => String::new(),
     };
 
     // Emit chrome and syntax CSS for *every* named theme, not just the active
@@ -314,8 +334,55 @@ mod tests {
 
     #[test]
     fn diff_body_marks_page_for_full_width_diff_layout() {
-        let html = build_page(&doc(), "<div class=\"mdview-diff mdview-diff-unified\"></div>", Theme::System);
-        assert!(html.contains("<html data-view=\"diff\">") || html.contains(" data-view=\"diff\""));
+        let html = build_diff_page(&doc(), "<div class=\"mdview-diff mdview-diff-unified\"></div>", Theme::System, DiffLayout::Unified);
+        let tag = root_tag(&html);
+        assert!(tag.contains(" data-view=\"diff\""), "got: {tag}");
+        assert!(tag.contains(" data-diff-layout=\"unified\""), "got: {tag}");
+    }
+
+    #[test]
+    fn a_rendered_diff_page_is_a_diff_view_with_its_own_layout() {
+        let html = build_diff_page(&doc(), "<div class=\"mdview-rdiff\"></div>", Theme::System, DiffLayout::Rendered);
+        let tag = root_tag(&html);
+        assert!(tag.contains(" data-view=\"diff\""), "got: {tag}");
+        assert!(tag.contains(" data-diff-layout=\"rendered\""), "got: {tag}");
+    }
+
+    #[test]
+    fn the_two_column_rendered_diff_is_its_own_layout_too() {
+        let html = build_diff_page(&doc(), "<div class=\"mdview-rdiff mdview-rdiff-split\"></div>", Theme::System, DiffLayout::RenderedSplit);
+        let tag = root_tag(&html);
+        assert!(tag.contains(" data-view=\"diff\""), "got: {tag}");
+        assert!(tag.contains(" data-diff-layout=\"rendered-split\""), "got: {tag}");
+        // Two columns want the window, so the full-bleed rule is for them too:
+        // only the single-column layout keeps the reading column.
+        assert!(
+            assets::PAGE_CSS.contains(":root[data-view=\"diff\"]:not([data-diff-layout=\"rendered\"]) #mdview-content"),
+            "the exception has stopped being exact"
+        );
+    }
+
+    /// The regression the sniff was replaced for. This document is *about* the
+    /// diff view, and is not one; a page that read its own body to decide would
+    /// have stamped it as a split diff and laid it out as one.
+    #[test]
+    fn a_document_that_merely_mentions_the_diff_classes_is_not_a_diff_page() {
+        let html = build_page(
+            &doc(),
+            "<p>The wrapper is <code>mdview-diff mdview-diff-split</code>.</p>",
+            Theme::System,
+        );
+        let tag = root_tag(&html);
+        assert!(!tag.contains("data-view="), "got: {tag}");
+        assert!(!tag.contains("data-diff-layout="), "got: {tag}");
+    }
+
+    /// The `<html>` tag alone. The stylesheet below it names every attribute
+    /// these tests are about, so a search over the whole page proves nothing.
+    fn root_tag(html: &str) -> &str {
+        let start = html.find("<html").expect("the html tag");
+        let end = start + html[start..].find('>').expect("the html tag closes");
+        &html[start..=end]
     }
 
     /// Pull the `script-src` directive's value out of the CSP meta tag, e.g.

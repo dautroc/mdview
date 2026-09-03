@@ -74,8 +74,12 @@ pub struct ChromeTokens {
     pub banner_border: Rgb,
     pub diff_add_bg: Rgb,
     pub diff_add_fg: Rgb,
+    /// Strong enough to read as a hue in a 3px rule. The `_bg` tints are laid
+    /// under text and cannot be: at that width they are invisible.
+    pub diff_add_border: Rgb,
     pub diff_del_bg: Rgb,
     pub diff_del_fg: Rgb,
+    pub diff_del_border: Rgb,
     pub diff_hunk_bg: Rgb,
     pub diff_hunk_fg: Rgb,
     pub find_hit_bg: Rgb,
@@ -150,8 +154,10 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         banner_border: mix(bg, warn, 0.45),
         diff_add_bg,
         diff_add_fg: mix_to_contrast(diff_add_bg, fg, diff_add_bg, 4.5),
+        diff_add_border: mix(bg, add, 0.55),
         diff_del_bg,
         diff_del_fg: mix_to_contrast(diff_del_bg, fg, diff_del_bg, 4.5),
+        diff_del_border: mix(bg, delete, 0.55),
         diff_hunk_bg,
         diff_hunk_fg: mix_to_contrast(diff_hunk_bg, fg, diff_hunk_bg, 4.5),
         find_hit_bg,
@@ -168,7 +174,8 @@ impl ChromeTokens {
         format!(
             "--bg:{};--fg:{};--muted:{};--border:{};--code-bg:{};--link:{};\
 --banner-bg:{};--banner-fg:{};--banner-border:{};\
---diff-add-bg:{};--diff-add-fg:{};--diff-del-bg:{};--diff-del-fg:{};\
+--diff-add-bg:{};--diff-add-fg:{};--diff-add-border:{};\
+--diff-del-bg:{};--diff-del-fg:{};--diff-del-border:{};\
 --diff-hunk-bg:{};--diff-hunk-fg:{};\
 --find-hit-bg:{};--find-hit-fg:{};--find-current-bg:{};--find-current-fg:{};\
 --comment-bg:{};--comment-fg:{};",
@@ -183,8 +190,10 @@ impl ChromeTokens {
             self.banner_border.hex(),
             self.diff_add_bg.hex(),
             self.diff_add_fg.hex(),
+            self.diff_add_border.hex(),
             self.diff_del_bg.hex(),
             self.diff_del_fg.hex(),
+            self.diff_del_border.hex(),
             self.diff_hunk_bg.hex(),
             self.diff_hunk_fg.hex(),
             self.find_hit_bg.hex(),

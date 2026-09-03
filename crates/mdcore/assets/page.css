@@ -10,8 +10,10 @@
   --banner-border: #d4a72c;
   --diff-add-bg: #dff4e5;
   --diff-add-fg: #1f2328;
+  --diff-add-border: #81b891;
   --diff-del-bg: #ffebe9;
   --diff-del-fg: #1f2328;
+  --diff-del-border: #e4858c;
   --diff-hunk-bg: #e7f0ff;
   --diff-hunk-fg: #1f2328;
   /* Named themes get these from chrome::tokens, but the default System theme
@@ -35,8 +37,10 @@
     --banner-border: #9e6a03;
     --diff-add-bg: #1b3a27;
     --diff-add-fg: #e6edf3;
+    --diff-add-border: #286d36;
     --diff-del-bg: #4b2223;
     --diff-del-fg: #e6edf3;
+    --diff-del-border: #8e3432;
     --comment-bg: #34215c;
     --comment-fg: #e0ccff;
     --diff-hunk-bg: #1f334b;
@@ -331,10 +335,108 @@ img { max-width: 100%; }
   .mdview-diff-side { grid-template-columns: 3rem minmax(0, 1fr); }
   .mdview-diff-split-row { grid-template-columns: minmax(0, 1fr); }
   .mdview-diff-side-old { border-right: 0; }
+  /* Two columns of prose in half a window is neither of them. */
+  .mdview-rdiff-split .mdview-rdiff-row { grid-template-columns: minmax(0, 1fr); }
+  .mdview-rdiff-split .mdview-rdiff-gap { display: none; }
 }
 
+
+/* The rendered diff ----------------------------------------------------- */
+
+/* The wrapper takes no width and no padding of its own. The column comes from
+   #mdview-content, which keeps it in this layout -- the full-bleed rule below
+   is for the source layouts only -- and a width here would look identical
+   while quietly breaking `g w`, which widens the content div and would find
+   this pinned inside it.
+
+   A bar in the margin, then, and nothing across the text: a tint behind a
+   block of prose is a band the width of the column, saying "changed" far
+   louder than the change itself does, and a page of them stops reading as a
+   document. The negative margin puts the bar in the padding #mdview-content
+   already has, and the matching padding puts the text back exactly where an
+   unmarked block's text sits -- so a mark costs the document no alignment. */
+.mdview-rdiff-single [data-mdview-change]:not(.mdview-rdiff-old) {
+  border-left: 3px solid var(--diff-add-border);
+  margin-left: -1rem;
+  padding-left: calc(1rem - 3px);
+}
+
+/* Two columns: what each block was, beside what it is. The row is the unit,
+   not the block -- it is as tall as its taller half, which is what keeps the
+   two documents level all the way down without measuring anything. This one
+   takes the full window, so it brings the padding #mdview-content gives up. */
+.mdview-rdiff-split { padding: 3rem 1.5rem 6rem; }
+.mdview-rdiff-split .mdview-rdiff-row {
+  display: grid;
+  gap: 0 1.5rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.mdview-rdiff-split .mdview-rdiff-side {
+  border-left: 3px solid transparent;
+  min-width: 0;
+  padding-left: 1rem;
+}
+/* The mark is on the row, so both halves take their own side's colour. */
+.mdview-rdiff-row[data-mdview-change="changed"] > .mdview-rdiff-old,
+.mdview-rdiff-row[data-mdview-change="removed"] > .mdview-rdiff-old {
+  border-left-color: var(--diff-del-border);
+}
+.mdview-rdiff-row[data-mdview-change="changed"] > .mdview-rdiff-new,
+.mdview-rdiff-row[data-mdview-change="added"] > .mdview-rdiff-new {
+  border-left-color: var(--diff-add-border);
+}
+/* A half that has nothing in it is still a cell, and says so quietly: an
+   absent block and a block that happens to be empty look nothing alike. */
+.mdview-rdiff-gap { background: var(--code-bg); border-radius: 2px; }
+
+/* The version that was there before, folded away under the block that
+   replaced it. Empty until the page hydrates it from its <template>. */
+/* The class itself is a marker the page reads, and both layouts wear it: it is
+   how the outline, the heading keys and the find index know that a version
+   which is not the document is not the document. Only the fold is styled. */
+details.mdview-rdiff-old {
+  border-left: 3px solid var(--diff-del-border);
+  margin: .35rem 0 1.2rem -1rem;
+  padding-left: calc(1rem - 3px);
+}
+.mdview-rdiff-old > summary {
+  color: var(--muted);
+  cursor: default;
+  font-size: .85em;
+  list-style: none;
+  user-select: none;
+}
+.mdview-rdiff-old > summary::-webkit-details-marker { display: none; }
+.mdview-rdiff-old > summary::before { content: "\25b8  "; }
+.mdview-rdiff-old[open] > summary::before { content: "\25be  "; }
+.mdview-rdiff-old-body {
+  background: var(--diff-del-bg);
+  border-radius: 2px;
+  padding: .25rem .7rem;
+}
+.mdview-rdiff-old-body:empty { display: none; }
+
+/* What changed where this layout cannot show it. */
+.mdview-rdiff-note {
+  background: var(--diff-hunk-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--diff-hunk-fg);
+  margin: 0 0 1.5rem;
+  padding: .6rem .8rem;
+}
+.mdview-rdiff-meta {
+  border-radius: 2px;
+  font-size: 12px;
+  margin: .5rem 0 0;
+  padding: .3rem .5rem;
+  white-space: pre-wrap;
+}
+.mdview-rdiff-meta-old { background: var(--diff-del-bg); }
+.mdview-rdiff-meta-new { background: var(--diff-add-bg); }
+
 :root[data-fullwidth="1"] #mdview-content { max-width: none; }
-:root[data-view="diff"] #mdview-content { max-width: none; padding: 0; }
+:root[data-view="diff"]:not([data-diff-layout="rendered"]) #mdview-content { max-width: none; padding: 0; }
 
 /* The minimap. Fixed to the window rather than a column in the layout: a
    column would re-wrap the text every time it was toggled, and would take the
@@ -357,6 +459,7 @@ img { max-width: 100%; }
 #mdview-minimap[hidden] { display: none; }
 /* No shape to map, and no margin to sit in. */
 :root[data-view="diff"] #mdview-minimap { display: none; }
+:root[data-diff-layout="rendered"] #mdview-minimap:not([hidden]) { display: block; }
 :root[data-sidebar-open="1"] #mdview-minimap { right: var(--sidebar-width, 260px); }
 /* Full width leaves the text no margin of its own, so the strip is the one
    case where the column does give way -- on a keypress, deliberately. */

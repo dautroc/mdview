@@ -49,6 +49,16 @@ file that never closes it.
   If the review file ends up in a state MDView cannot wholly read, it says so
   and stops writing to it rather than saving over the part it did not
   understand.
+- **Diff against HEAD.** `g d` on a file Git tracks shows what has changed
+  since the last commit, and `g l` lays it out four ways: the source or the
+  document, in one column or two. The source layouts go line by line, which is
+  the view for checking a table's pipes. Rendered shows the document — the
+  prose, as it renders — with a bar beside every block that changed and the
+  version that was there before folded away under it, one click from being
+  read; the outline and the minimap keep working there, because it is still the
+  document. Rendered split puts the two documents side by side instead, a row
+  to a block, which is the one to reach for when a page has been rewritten
+  rather than edited.
 - **Recent files.** `g r` opens the last fifty documents in a palette you can
   type into — a few letters of the name, or of the folder it is in, narrows the
   list. The document you are reading is not in it, so `g r` and enter is
@@ -162,7 +172,7 @@ already cover — and run what you find.
 | g t | Themes |
 | g r | Recent files |
 | g d | Diff, and back to Markdown (needs a tracked file) |
-| g l | Diff layout, unified or split |
+| g l | Diff layout: source or rendered, one column or two |
 | z | Zoom the nearest image or diagram |
 | g w | Toggle fullwidth view |
 | r | Reload |

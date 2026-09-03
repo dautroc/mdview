@@ -62,7 +62,9 @@ define_class!(
                 },
                 Some(action)
                     if action == objc2::sel!(setUnifiedDiff:)
-                        || action == objc2::sel!(setSplitDiff:) =>
+                        || action == objc2::sel!(setSplitDiff:)
+                        || action == objc2::sel!(setRenderedDiff:)
+                        || action == objc2::sel!(setRenderedSplitDiff:) =>
                 {
                     window.view_mode() == crate::window::ViewMode::Diff
                 }
@@ -348,6 +350,16 @@ define_class!(
         #[unsafe(method(setSplitDiff:))]
         fn set_split_diff_action(&self, sender: Option<&NSMenuItem>) {
             self.set_diff_layout(mdcore::DiffLayout::Split, sender);
+        }
+
+        #[unsafe(method(setRenderedDiff:))]
+        fn set_rendered_diff_action(&self, sender: Option<&NSMenuItem>) {
+            self.set_diff_layout(mdcore::DiffLayout::Rendered, sender);
+        }
+
+        #[unsafe(method(setRenderedSplitDiff:))]
+        fn set_rendered_split_diff_action(&self, sender: Option<&NSMenuItem>) {
+            self.set_diff_layout(mdcore::DiffLayout::RenderedSplit, sender);
         }
 
         #[unsafe(method(toggleBookmark:))]

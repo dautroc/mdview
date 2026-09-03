@@ -288,6 +288,35 @@ mod bundle_version_tests {
         );
     }
 
+    /// The two rendered diff layouts, end to end. Each of these is inert on
+    /// its own: a menu item with no action behind it does nothing, an action
+    /// the validator never hears about stays enabled outside the diff, and a
+    /// key the README and the page's own command list describe differently is
+    /// two keys as far as a reader is concerned.
+    #[test]
+    fn the_rendered_diff_layouts_are_wired_from_the_menu_through_to_the_page() {
+        let menu = include_str!("menu.rs");
+        let app = include_str!("app.rs");
+        let readme = include_str!("../../../README.md");
+        for selector in ["setRenderedDiff:", "setRenderedSplitDiff:"] {
+            assert!(menu.contains(&format!("sel!({selector})")), "no menu item for {selector}");
+            assert!(
+                app.contains(&format!("#[unsafe(method({selector}))]")),
+                "no action for {selector}"
+            );
+            assert!(
+                app.contains(&format!("objc2::sel!({selector})")),
+                "{selector} is never validated, so it stays enabled outside the diff"
+            );
+        }
+        let label = "Diff layout: source or rendered, one column or two";
+        assert!(readme.contains(&format!("| g l | {label} |")), "the README row is stale");
+        assert!(
+            mdcore::assets::INIT_JS.contains(&format!("label: \"{label}\"")),
+            "the cheat sheet and the palette say something else"
+        );
+    }
+
     /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
     /// evaluating it directly would run against a page that does not exist yet.
     #[test]

@@ -12,6 +12,7 @@ pub mod highlight;
 pub mod images;
 pub mod math;
 pub mod page;
+pub mod rdiff;
 pub mod render;
 pub mod theme;
 
@@ -19,7 +20,10 @@ use std::path::{Path, PathBuf};
 
 pub use chrome::Rgb;
 pub use document::{Document, DocumentError};
-pub use diff::{DiffAvailability, DiffError, DiffHunk, DiffLayout, DiffLine, DiffLineKind, GitDiff, SplitRow};
+pub use diff::{
+    DiffAvailability, DiffError, DiffHunk, DiffLayout, DiffLine, DiffLineKind, GitDiff,
+    SourceLayout, SplitRow,
+};
 pub use highlight::Highlighter;
 pub use render::headings;
 pub use theme::Theme;
@@ -77,12 +81,46 @@ pub fn render_diff_document_with(
 ) -> Result<RenderedDoc, DiffError> {
     let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
     let diff = diff::load_diff(&doc.path)?;
-    let body = diff::render_body(&diff, &doc.source, highlighter, layout);
+    let body = diff_body(&doc, &diff, highlighter, layout);
     Ok(RenderedDoc {
-        html: page::build_page(&doc, &body, theme),
+        html: page::build_diff_page(&doc, &body, theme, layout),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
     })
+}
+
+/// The body of a diff, in whichever layout was asked for.
+///
+/// The two source layouts are drawn from Git's hunks; the two rendered ones are
+/// drawn from the two versions of the document, and are the only ones that need
+/// the document's directory -- their images are real images, and a web view
+/// handed a page as a string cannot fetch them for itself.
+fn diff_body(
+    doc: &Document,
+    diff: &GitDiff,
+    highlighter: &Highlighter,
+    layout: DiffLayout,
+) -> String {
+    if diff.patch.is_empty() {
+        return diff::NO_CHANGES_HTML.to_string();
+    }
+    let rendered = |columns| {
+        rdiff::render_body(
+            &diff.old_source,
+            &doc.source,
+            highlighter,
+            Some(&doc.base_dir),
+            columns,
+        )
+    };
+    match layout {
+        DiffLayout::Unified => {
+            diff::render_body(diff, &doc.source, highlighter, SourceLayout::Unified)
+        }
+        DiffLayout::Split => diff::render_body(diff, &doc.source, highlighter, SourceLayout::Split),
+        DiffLayout::Rendered => rendered(rdiff::Columns::Single),
+        DiffLayout::RenderedSplit => rendered(rdiff::Columns::Split),
+    }
 }
 
 /// Render only the Git diff body for live reload.
@@ -93,10 +131,7 @@ pub fn render_diff_body_of(
 ) -> Result<(String, bool), DiffError> {
     let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
     let diff = diff::load_diff(&doc.path)?;
-    Ok((
-        diff::render_body(&diff, &doc.source, highlighter, layout),
-        doc.lossy,
-    ))
+    Ok((diff_body(&doc, &diff, highlighter, layout), doc.lossy))
 }
 
 pub fn version() -> &'static str {

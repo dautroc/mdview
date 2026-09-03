@@ -1,7 +1,11 @@
 (function () {
-  function renderMath() {
+  // Scoped, because re-rendering an already-rendered node feeds KaTeX its own
+  // output as if it were TeX. The default root is the whole page, which is what
+  // a fresh body swap wants; the rendered diff passes the block it just
+  // hydrated.
+  function renderMath(root) {
     if (typeof katex === "undefined") return;
-    var nodes = document.querySelectorAll(".math-inline, .math-display");
+    var nodes = (root || document).querySelectorAll(".math-inline, .math-display");
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       var tex = node.textContent;
@@ -429,6 +433,12 @@
           if (el.classList && el.classList.contains("katex-mathml")) {
             return NodeFilter.FILTER_REJECT;
           }
+          // The rendered diff's older versions. Out of the index even when a
+          // reader has one open: find would offer matches in text that is not
+          // in the document, and every comment anchored below it would shift.
+          if (el.classList && el.classList.contains("mdview-rdiff-old")) {
+            return NodeFilter.FILTER_REJECT;
+          }
           el = el.parentNode;
         }
         return NodeFilter.FILTER_ACCEPT;
@@ -822,13 +832,27 @@
     return slug;
   }
 
+  // The document's own headings. In the rendered diff an older version of a
+  // block can be open on screen, and its headings are not the document's: they
+  // would double the outline, land in ] and [, and index sections that are not
+  // there.
+  function documentHeadings(content) {
+    var found = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var out = [];
+    for (var i = 0; i < found.length; i++) {
+      if (found[i].closest && found[i].closest(".mdview-rdiff-old")) continue;
+      out.push(found[i]);
+    }
+    return out;
+  }
+
   // Build the outline from the rendered document. Rebuilt wholesale on every
   // render rather than patched: incremental updates over already-processed
   // nodes are the defect class that has bitten this project twice.
   function buildOutline() {
     var content = document.getElementById("mdview-content");
     if (!content) return "<p class=\"mdview-sidebar-empty\">No document.</p>";
-    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var headings = documentHeadings(content);
     if (!headings.length) {
       return "<p class=\"mdview-sidebar-empty\">No headings.</p>";
     }
@@ -946,7 +970,7 @@
   function currentHeadingId() {
     var content = contentEl();
     if (!content) return null;
-    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var headings = documentHeadings(content);
     if (!headings.length) return null;
     var found = null;
     for (var i = 0; i < headings.length; i++) {
@@ -1038,12 +1062,23 @@
     return document.getElementById("mdview-minimap");
   }
 
-  // Hidden is not the only way to be absent: the diff view has no headings, no
-  // comments and no margin, so the strip stays out of it entirely.
+  // The diff view laid out as the document itself, rather than as its lines.
+  // It has headings, a shape and a margin, so the things the source layouts
+  // switch off stay on for it.
+  function renderedDiff() {
+    var root = document.documentElement;
+    return root.getAttribute("data-view") === "diff" &&
+      root.getAttribute("data-diff-layout") === "rendered";
+  }
+
+  // Hidden is not the only way to be absent: a source diff has no headings, no
+  // comments and no margin, so the strip stays out of it entirely. The rendered
+  // layout is the document, and gets it back.
   function minimapVisible() {
     var el = minimapEl();
     if (!el || el.hidden) return false;
-    return document.documentElement.getAttribute("data-view") !== "diff";
+    if (document.documentElement.getAttribute("data-view") !== "diff") return true;
+    return renderedDiff();
   }
 
   // What the strip takes out of the window, and so out of the margin the
@@ -1079,6 +1114,8 @@
     if (tag === "IMG" || tag === "FIGURE") return "figure";
     if (el.querySelector && el.querySelector("img, svg")) return "figure";
     if (tag === "PRE" || tag === "TABLE") return "block";
+    // A folded-away older version of a block, in the rendered diff.
+    if (tag === "DETAILS") return "block";
     return "prose";
   }
 
@@ -1088,7 +1125,11 @@
     var content = contentEl();
     if (!content) return [];
     var out = [];
-    var kids = content.children;
+    // The rendered diff wraps the document in one element, and the blocks the
+    // map is about are its children rather than the content div's.
+    var host = content.firstElementChild;
+    if (!host || !host.classList || !host.classList.contains("mdview-rdiff")) host = content;
+    var kids = host.children;
     for (var i = 0; i < kids.length; i++) {
       var el = kids[i];
       var rect = el.getBoundingClientRect();
@@ -2127,7 +2168,7 @@
   function sectionStarts(index) {
     var content = contentEl();
     if (!content) return [];
-    var headings = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var headings = documentHeadings(content);
     var starts = new Array(headings.length);
     var k = 0;
     for (var i = 0; i < index.spans.length && k < headings.length; i++) {
@@ -3992,7 +4033,7 @@
   function headingList(topLevelOnly) {
     var content = document.getElementById("mdview-content");
     if (!content) return [];
-    var all = content.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    var all = documentHeadings(content);
     var out = [];
     for (var i = 0; i < all.length; i++) {
       var level = parseInt(all[i].tagName.substring(1), 10);
@@ -4069,8 +4110,10 @@
     // Only meaningful in the diff view: a Markdown render has no unified and
     // split form to choose between.
     if (root.getAttribute("data-view") !== "diff") return;
-    var next = root.getAttribute("data-diff-layout") === "split" ? "unified" : "split";
-    postToHost("setDiffLayout:" + next);
+    // Two axes, four stops: the source or the document, in one column or two.
+    var layouts = ["unified", "split", "rendered", "rendered-split"];
+    var at = layouts.indexOf(root.getAttribute("data-diff-layout"));
+    postToHost("setDiffLayout:" + layouts[(at + 1) % layouts.length]);
   }
 
   // Opens whichever zoomable sits nearest the middle of the viewport, which is
@@ -4225,7 +4268,7 @@
       title: "View",
       items: [
         { keys: ["g d"], hint: "g  d", label: "Diff and back to Markdown", run: toggleDiffKey },
-        { keys: ["g l"], hint: "g  l", label: "Diff layout, unified or split", run: cycleDiffLayout },
+        { keys: ["g l"], hint: "g  l", label: "Diff layout: source or rendered, one column or two", run: cycleDiffLayout },
         { keys: ["z"], hint: "z", label: "Zoom the nearest image", run: zoomNearest },
         { keys: ["g w"], hint: "g  w", label: "Toggle full width", run: toggleFullWidthKey },
         { keys: ["r"], hint: "r", label: "Reload the document", run: reloadKey },
@@ -4595,11 +4638,34 @@
     if (!resizerEl.hasAttribute("tabindex")) resizerEl.setAttribute("tabindex", "0");
   }
 
+  // The rendered diff carries each block's older version as inert <template>
+  // content, so that nothing walks into it: not the outline, not find, not the
+  // offsets comments are anchored against, and above all not mermaid, which
+  // marks what it has drawn and would leave a diagram drawn at zero height
+  // inside a closed fold broken for good. It is hydrated the first time a
+  // reader opens one. Capture phase: toggle does not bubble.
+  function attachRenderedDiffListeners() {
+    document.addEventListener("toggle", function (event) {
+      var details = event.target;
+      if (!details || !details.classList) return;
+      if (!details.classList.contains("mdview-rdiff-old") || !details.open) return;
+      var template = details.querySelector("template");
+      var body = details.querySelector(".mdview-rdiff-old-body");
+      if (!template || !body) return;
+      body.appendChild(template.content);
+      details.removeChild(template);
+      invalidateTextIndex();
+      renderMath(body);
+      renderDiagrams().then(enhanceZoomables).then(scheduleMinimapPaint);
+    }, true);
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     attachSidebarListeners();
     attachMinimapListeners();
     attachFindListeners();
     attachCommentListeners();
+    attachRenderedDiffListeners();
     attachKeyListeners();
     window.mdviewRenderAll();
   });

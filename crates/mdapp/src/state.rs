@@ -3,18 +3,17 @@
 
 use mdcore::{DiffLayout, Theme};
 
+/// Nothing stored, a value from a build that predates a layout, or one from a
+/// build that has a layout this one does not -- all three are Unified, which is
+/// what a first launch gets. That is the whole of the migration.
 pub fn resolve_diff_layout(stored: Option<&str>) -> DiffLayout {
-    match stored {
-        Some("split") => DiffLayout::Split,
-        _ => DiffLayout::Unified,
-    }
+    stored
+        .and_then(DiffLayout::from_wire)
+        .unwrap_or(DiffLayout::Unified)
 }
 
 pub fn diff_layout_wire(layout: DiffLayout) -> &'static str {
-    match layout {
-        DiffLayout::Unified => "unified",
-        DiffLayout::Split => "split",
-    }
+    layout.as_wire()
 }
 
 /// The stored theme, or System when nothing is stored. `Theme::from_wire` maps
@@ -259,11 +258,7 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
-        "setDiffLayout" => match rest {
-            "unified" => Some(Message::SetDiffLayout(DiffLayout::Unified)),
-            "split" => Some(Message::SetDiffLayout(DiffLayout::Split)),
-            _ => None,
-        },
+        "setDiffLayout" => DiffLayout::from_wire(rest).map(Message::SetDiffLayout),
         "setTheme" => {
             // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
             let (wire, scroll_str) = match rest.split_once(':') {
@@ -977,11 +972,41 @@ mod tests {
     }
 
     #[test]
-    fn diff_layout_defaults_to_unified_and_round_trips_split() {
+    fn diff_layout_defaults_to_unified_and_round_trips_every_layout() {
         assert_eq!(resolve_diff_layout(None), DiffLayout::Unified);
-        assert_eq!(resolve_diff_layout(Some("unified")), DiffLayout::Unified);
-        assert_eq!(resolve_diff_layout(Some("split")), DiffLayout::Split);
+        for layout in [
+            DiffLayout::Unified,
+            DiffLayout::Split,
+            DiffLayout::Rendered,
+            DiffLayout::RenderedSplit,
+        ] {
+            assert_eq!(resolve_diff_layout(Some(diff_layout_wire(layout))), layout);
+        }
         assert_eq!(diff_layout_wire(DiffLayout::Unified), "unified");
         assert_eq!(diff_layout_wire(DiffLayout::Split), "split");
+        assert_eq!(diff_layout_wire(DiffLayout::Rendered), "rendered");
+        assert_eq!(diff_layout_wire(DiffLayout::RenderedSplit), "rendered-split");
+    }
+
+    /// A layout stored by a build that has one this build does not. Falling
+    /// back to Unified is the whole migration; refusing to launch is not.
+    #[test]
+    fn a_layout_this_build_does_not_have_is_still_unified() {
+        assert_eq!(resolve_diff_layout(Some("sidebyside")), DiffLayout::Unified);
+        assert_eq!(resolve_diff_layout(Some("")), DiffLayout::Unified);
+    }
+
+    #[test]
+    fn the_page_can_ask_for_every_layout_and_nothing_else() {
+        for layout in [
+            DiffLayout::Unified,
+            DiffLayout::Split,
+            DiffLayout::Rendered,
+            DiffLayout::RenderedSplit,
+        ] {
+            let wire = format!("setDiffLayout:{}", diff_layout_wire(layout));
+            assert_eq!(parse_message(&wire), Some(Message::SetDiffLayout(layout)));
+        }
+        assert_eq!(parse_message("setDiffLayout:sidebyside"), None);
     }
 }

@@ -64,6 +64,12 @@ pub(crate) fn set_diff_layout_states(sender: &NSMenuItem, layout: mdcore::DiffLa
                 layout == mdcore::DiffLayout::Unified
             }
             Some(action) if action == sel!(setSplitDiff:) => layout == mdcore::DiffLayout::Split,
+            Some(action) if action == sel!(setRenderedDiff:) => {
+                layout == mdcore::DiffLayout::Rendered
+            }
+            Some(action) if action == sel!(setRenderedSplitDiff:) => {
+                layout == mdcore::DiffLayout::RenderedSplit
+            }
             _ => continue,
         };
         item.setState(diff_layout_menu_state(selected));
@@ -185,13 +191,21 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     let (layout_holder, layout_menu) = submenu(mtm, "Diff Layout");
     let unified = item(mtm, "Unified", sel!(setUnifiedDiff:), "");
     let split = item(mtm, "Split", sel!(setSplitDiff:), "");
+    let rendered = item(mtm, "Rendered", sel!(setRenderedDiff:), "");
+    let rendered_split = item(mtm, "Rendered Split", sel!(setRenderedSplitDiff:), "");
     let layout = crate::state::resolve_diff_layout(
         crate::defaults::get_string(crate::defaults::DIFF_LAYOUT_KEY).as_deref(),
     );
     unified.setState(diff_layout_menu_state(layout == mdcore::DiffLayout::Unified));
     split.setState(diff_layout_menu_state(layout == mdcore::DiffLayout::Split));
+    rendered.setState(diff_layout_menu_state(layout == mdcore::DiffLayout::Rendered));
+    rendered_split.setState(diff_layout_menu_state(
+        layout == mdcore::DiffLayout::RenderedSplit,
+    ));
     layout_menu.addItem(&unified);
     layout_menu.addItem(&split);
+    layout_menu.addItem(&rendered);
+    layout_menu.addItem(&rendered_split);
     view_menu.addItem(&layout_holder);
     menubar.addItem(&view_holder);
 
