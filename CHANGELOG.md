@@ -3,6 +3,61 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.16.0](https://github.com/dautroc/mdview/releases/tag/v0.16.0) — 2026-09-03
+
+### What's new
+
+- **The diff can be the document.** `g d` has always opened a source diff: a
+  row per line, highlighted as Markdown source. That is the view for checking
+  a table's pipes, and the wrong one for the question people actually bring to
+  a diff of prose — which of these paragraphs is not the one I wrote. `g l`
+  now cycles two axes rather than one: the source or the document, in one
+  column or two.
+- **In one column, the document with its changes marked.** The working copy
+  renders exactly as it always does, with a bar in the margin beside every
+  block that changed against HEAD, and the version that was there before
+  folded away under it, one click from being read. Nothing is tinted and
+  nothing is struck through: a page of coloured bands stops reading as a page.
+- **In two, the two documents side by side.** A row to a block, which is what
+  makes side-by-side rendered prose possible at all — two documents laid out
+  independently drift apart within a screen, because a paragraph and the
+  paragraph that replaced it are not the same height. A row is as tall as its
+  taller half, so the columns stay level the whole way down. Reach for this one
+  when a page has been rewritten rather than edited.
+- **The blocks are paired, not the lines.** The rendered layouts ignore Git's
+  hunks and compare the two versions' top-level blocks instead, because the
+  block is the unit a reader compares. An edit that changes the file without
+  changing the document — `_em_` written as `*em*` — is not reported as a
+  change, and a run of rewrites pairs the way the split source diff pairs a run
+  of rewritten lines, so the two views cannot disagree about what happened.
+- **The outline and the minimap keep working in it.** They stay out of the
+  source diff, which has no headings and no shape to map, but the single-column
+  rendered diff is still the document and gets both. The version that was there
+  before is inert until you open it, so it cannot double the outline, cannot be
+  landed on by `]` and `[`, and cannot be found by `/` — a search that offered
+  matches in text that is not in the document would be worse than no search.
+- **It says so when the change is somewhere it cannot show.** Frontmatter comes
+  off before the renderer sees it and a link definition renders as nothing at
+  all, so either can be the whole of an edit. Rather than show an unmarked
+  document and imply nothing happened, the layout names what changed and points
+  at the source diff — the one thing a diff must never do is claim there is
+  nothing to see.
+- **What you read is what the document is.** The blocks are parsed and rendered
+  in one pass and split afterwards, so footnotes are numbered across the
+  document rather than restarting in every block, and a link definition written
+  at the foot of the file still reaches the paragraph that uses it. A test
+  holds the pieces to exactly what the normal view renders.
+
+### Fixes
+
+- **A document about the diff view is no longer mistaken for one.** The page
+  used to decide whether it was showing a diff by searching the body HTML for
+  the diff's own class names, which was survivable while a diff body was only
+  ever generated rows. It is not survivable now that the body can be your
+  prose: a document mentioning `mdview-diff-split` in a code fence would have
+  stamped itself a split diff and loaded the wrong half of the stylesheet. The
+  layout is passed in now rather than guessed at.
+
 ## [v0.15.0](https://github.com/dautroc/mdview/releases/tag/v0.15.0) — 2026-09-02
 
 ### What's new
