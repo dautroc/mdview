@@ -1,0 +1,23 @@
+{
+  "page": "proposal.html",
+  "width": 1120, "height": 640,
+  "openHold": 1200,
+  "pages": {
+    "unified": "target/reels/pages/proposal.unified.html",
+    "split": "target/reels/pages/proposal.split.html",
+    "rendered": "target/reels/pages/proposal.rendered.html",
+    "rendered-split": "target/reels/pages/proposal.rendered-split.html"
+  },
+  "seed": ["window.mdviewSetDiffAvailability && window.mdviewSetDiffAvailability(true)"],
+  "bridge": {
+    "toggleDiff": { "load": "unified" },
+    "setDiffLayout:": { "loadByArg": "%s" },
+    "*": { "ignore": true }
+  },
+  "steps": [
+    { "key": "g d", "settle": 900, "hold": 2200 },
+    { "key": "g l", "settle": 900, "hold": 2200 },
+    { "key": "g l", "settle": 900, "hold": 2400 },
+    { "key": "g l", "settle": 900, "hold": 2600 }
+  ]
+}

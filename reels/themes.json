@@ -1,0 +1,56 @@
+{
+  "page": "tour.html",
+  "width": 1120,
+  "height": 640,
+  "openHold": 1100,
+  "pages": {
+    "github": "target/reels/pages/tour.github.html",
+    "solarized-dark": "target/reels/pages/tour.solarized-dark.html",
+    "mocha": "target/reels/pages/tour.mocha.html",
+    "chiroptera-dark-hard": "target/reels/pages/tour.chiroptera-dark-hard.html"
+  },
+  "seed": [
+    "window.mdviewShowSidebarTab && window.mdviewShowSidebarTab('outline')"
+  ],
+  "bridge": {
+    "setTheme:": {
+      "loadByArg": "%s"
+    },
+    "toggleFullWidth": {
+      "js": "window.mdviewSetViewState && window.mdviewSetViewState(null, null, true)"
+    },
+    "*": {
+      "ignore": true
+    }
+  },
+  "steps": [
+    {
+      "js": "document.querySelectorAll('pre')[0].scrollIntoView({block:'center'})",
+      "hold": 900
+    },
+    {
+      "key": "g t",
+      "hold": 1000
+    },
+    {
+      "key": "ArrowDown",
+      "repeat": 3,
+      "hold": 800
+    },
+    {
+      "type": "#mdview-theme-search",
+      "text": "chiro",
+      "hold": 1400
+    },
+    {
+      "key": "Enter",
+      "settle": 1200,
+      "hold": 900
+    },
+    {
+      "js": "document.querySelectorAll('pre')[0].scrollIntoView({block:'center'})",
+      "settle": 600,
+      "hold": 2800
+    }
+  ]
+}

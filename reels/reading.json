@@ -1,0 +1,14 @@
+{
+  "page": "tour.html",
+  "width": 1120, "height": 640,
+  "openHold": 1400,
+  "steps": [
+    { "js": "window.mdviewShowSidebarTab('outline')", "hold": 1200 },
+    { "key": "}", "settle": 700, "hold": 900 },
+    { "key": "}", "settle": 700, "hold": 900 },
+    { "key": "}", "settle": 700, "hold": 1100 },
+    { "key": "g m", "hold": 1400 },
+    { "key": "j", "repeat": 4, "hold": 200 },
+    { "key": "}", "settle": 700, "hold": 1600 }
+  ]
+}

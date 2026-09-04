@@ -1,0 +1,16 @@
+{
+  "page": "tour.html",
+  "width": 1120, "height": 640,
+  "openHold": 1100,
+  "steps": [
+    { "key": "/", "hold": 500 },
+    { "type": "#mdview-find-input", "text": "backpressure", "hold": 1400 },
+    { "key": "Enter", "settle": 700, "hold": 1000 },
+    { "key": "n", "settle": 700, "hold": 1000 },
+    { "key": "Escape", "hold": 700 },
+    { "key": ":", "hold": 700 },
+    { "type": "#mdview-command-search", "text": "diff", "hold": 1600 },
+    { "key": "Escape", "hold": 600 },
+    { "key": "?", "settle": 500, "hold": 2600 }
+  ]
+}

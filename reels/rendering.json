@@ -1,0 +1,14 @@
+{
+  "page": "render.html",
+  "width": 1120, "height": 640,
+  "openHold": 1600,
+  "steps": [
+    { "key": "}", "settle": 700, "hold": 1600 },
+    { "key": "}", "settle": 700, "hold": 1600 },
+    { "key": "}", "settle": 700, "hold": 1600 },
+    { "key": "}", "settle": 700, "hold": 1600 },
+    { "key": "}", "settle": 700, "hold": 1800 },
+    { "key": "z", "settle": 700, "hold": 2600 },
+    { "key": "Escape", "settle": 600, "hold": 900 }
+  ]
+}

@@ -10,7 +10,8 @@ BUNDLE_BIN ?= $(BINARY)
 ARCHS      := aarch64-apple-darwin x86_64-apple-darwin
 UNIVERSAL  := target/universal/mdview
 
-.PHONY: all bundle install install-cli uninstall clean test shot icon universal dist version FORCE
+.PHONY: all bundle install install-cli uninstall clean test shot reel reels reel-pages \
+	reel-size icon universal dist version FORCE
 
 all: bundle
 
@@ -95,6 +96,115 @@ endif
 	@$(BINARY) --print-html $(if $(THEME),--theme $(THEME),) $(FILE) > target/shots/page.html
 	@$(SHOT_BIN) target/shots/page.html $(SHOT_OUT) $(WIDTH) $(HEIGHT) \
 		'$(if $(SIDEBAR),window.mdviewShowSidebarTab("$(if $(filter bookmarks,$(SIDEBAR)),bookmarks,outline)");,) $(JS)'
+
+# Record a sequence of page states and assemble them into a GIF, so docs/tour.md
+# can show what a key DOES rather than describing it. `shot` answers "does this
+# look right"; a reel answers "what happens when you press this", which is the
+# question the README has been failing to answer in prose.
+#
+#   make reels                 # every spec in reels/
+#   make reel REEL=finding     # one of them
+#   make reel-pages            # just the pages the specs load
+#   make reel-size             # what the committed gifs weigh
+#
+# A reel drives the same generated page `shot` snapshots, through the same
+# window.mdview* hooks the AppKit bridge calls -- and reel.swift registers the
+# bridge's own "mdview" message handler, so c, C, g d, g r and m behave as they
+# do in the app rather than reporting that they need it.
+#
+# ffmpeg is a DEVELOPER's dependency and nothing else: it is not in the binary,
+# not in the bundle, and `all`, `test` and `dist` never reach any of this.
+# Without it the frames are still written, and the target says where they are.
+REELS_DIR  ?= reels
+GIF_DIR    ?= docs/gifs
+GIF_WIDTH  ?= 900
+GIF_COLORS ?= 128
+REEL_THEME ?= solarized-light
+REEL       ?=
+FFMPEG     ?= ffmpeg
+REEL_BIN   := target/tools/reel
+REEL_WORK  := target/reels
+REEL_NAMES := $(basename $(notdir $(wildcard $(REELS_DIR)/*.json)))
+
+$(REEL_BIN): tools/reel.swift
+	@mkdir -p $(dir $@)
+	swiftc -O -o $@ $<
+
+# Every page any spec can load. Images are inlined as data: URIs, so a
+# generated page is self-contained and can live under target/ whatever its
+# markdown does.
+#
+# The diff pages need a repository with a commit to diff against, and the demo
+# document is not committed in a state that has one -- so a throwaway repo is
+# built under target/. The working tree is never dirtied to film it, and no
+# repository of the reader's is ever read.
+reel-pages: $(BINARY)
+	@mkdir -p $(REEL_WORK)/pages
+	@for doc in $(REELS_DIR)/demo/*.md; do \
+		name=$$(basename $$doc .md); \
+		case $$name in changes.*) continue;; esac; \
+		$(BINARY) --print-html --theme $(REEL_THEME) $$doc \
+			> $(REEL_WORK)/pages/$$name.html; \
+	done
+	@# The theme reel commits a theme, and the app answers that by rebuilding
+	@# the page -- so every theme it visits needs its own page, or the frame
+	@# would keep the syntax colours of the theme it just left.
+	@for theme in github solarized-dark mocha chiroptera-dark-hard; do \
+		$(BINARY) --print-html --theme $$theme $(REELS_DIR)/demo/tour.md \
+			> $(REEL_WORK)/pages/tour.$$theme.html; \
+	done
+	@rm -rf $(REEL_WORK)/git && mkdir -p $(REEL_WORK)/git
+	@cp $(REELS_DIR)/demo/changes.before.md $(REEL_WORK)/git/proposal.md
+	@cd $(REEL_WORK)/git && git init -q . \
+		&& git -c user.email=reel@localhost -c user.name=reel add proposal.md \
+		&& git -c user.email=reel@localhost -c user.name=reel commit -qm before
+	@cp $(REELS_DIR)/demo/changes.after.md $(REEL_WORK)/git/proposal.md
+	@for layout in unified split rendered rendered-split; do \
+		$(BINARY) --print-html --diff --diff-layout $$layout --theme $(REEL_THEME) \
+			$(REEL_WORK)/git/proposal.md \
+			> $(REEL_WORK)/pages/proposal.$$layout.html; \
+	done
+	@$(BINARY) --print-html --theme $(REEL_THEME) $(REEL_WORK)/git/proposal.md \
+		> $(REEL_WORK)/pages/proposal.html
+	@echo "pages in $(REEL_WORK)/pages"
+
+reel: $(REEL_BIN) reel-pages
+ifeq ($(REEL),)
+	$(error set REEL to a spec in $(REELS_DIR), e.g. make reel REEL=finding)
+endif
+	@test -f $(REELS_DIR)/$(REEL).json \
+		|| { echo "no such reel: $(REELS_DIR)/$(REEL).json" >&2; exit 2; }
+	@rm -rf $(REEL_WORK)/$(REEL) && mkdir -p $(REEL_WORK)/$(REEL) $(GIF_DIR)
+	@$(REEL_BIN) $(REEL_WORK)/pages/$$(awk -F'"' '/"page":/{print $$4; exit}' \
+		$(REELS_DIR)/$(REEL).json) $(REELS_DIR)/$(REEL).json $(REEL_WORK)/$(REEL)
+	@# One recipe line, because the frames are the expensive half and are
+	@# worth keeping: without ffmpeg this says where they are and stops,
+	@# rather than failing on a command the app itself never needs.
+	@if ! command -v $(FFMPEG) >/dev/null 2>&1; then \
+		echo "$(FFMPEG) not found: the frames are in $(REEL_WORK)/$(REEL)."; \
+		echo "  brew install ffmpeg   to assemble them"; \
+		exit 0; \
+	fi; \
+	set -e; \
+	$(FFMPEG) -y -loglevel error -f concat -safe 0 \
+		-i $(REEL_WORK)/$(REEL)/frames.txt \
+		-vf "scale=$(GIF_WIDTH):-2:flags=lanczos,palettegen=max_colors=$(GIF_COLORS):stats_mode=diff" \
+		-update 1 $(REEL_WORK)/$(REEL)/palette.png; \
+	$(FFMPEG) -y -loglevel error -f concat -safe 0 \
+		-i $(REEL_WORK)/$(REEL)/frames.txt -i $(REEL_WORK)/$(REEL)/palette.png \
+		-filter_complex "[0:v]scale=$(GIF_WIDTH):-2:flags=lanczos[s];[s][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+		-fps_mode vfr -loop 0 $(GIF_DIR)/$(REEL).gif; \
+	echo "$(GIF_DIR)/$(REEL).gif  $$(du -h $(GIF_DIR)/$(REEL).gif | cut -f1)"
+
+reels: $(REEL_BIN) reel-pages
+	@for name in $(REEL_NAMES); do \
+		$(MAKE) --no-print-directory reel REEL=$$name || exit 1; done
+	@$(MAKE) --no-print-directory reel-size
+
+# Committed weight, said out loud. Seven reels should come to about five
+# megabytes; past that, cut frames before cutting quality.
+reel-size:
+	@du -ch $(GIF_DIR)/*.gif 2>/dev/null | tail -1
 
 # Redraw the app icon. bundle/MDView.icns is committed, so building the app
 # needs no Swift toolchain; run this only after editing tools/icon.swift.

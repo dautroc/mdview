@@ -1,0 +1,24 @@
+{
+  "page": "tour.html",
+  "width": 1120, "height": 640,
+  "openHold": 1100,
+  "pages": {
+    "spec": "target/reels/pages/spec.html",
+    "notes": "target/reels/pages/notes.html"
+  },
+  "seed": [
+    "window.mdviewSetRecents && window.mdviewSetRecents([{name:'spec.md',dir:'~/notes/scheduler',path:'spec'},{name:'notes.md',dir:'~/notes/scheduler',path:'notes'}])"
+  ],
+  "bridge": {
+    "openPath:": { "loadByArg": "%s" },
+    "toggleBookmark": { "js": "window.mdviewSetBookmarks([{name:'tour.md',dir:'~/notes/scheduler',path:'tour'}], true)" },
+    "*": { "ignore": true }
+  },
+  "steps": [
+    { "key": "m", "settle": 600, "hold": 1600 },
+    { "key": "g b", "hold": 1800 },
+    { "key": "g r", "hold": 1000 },
+    { "type": "#mdview-recent-search", "text": "spec", "hold": 1400 },
+    { "key": "Enter", "settle": 1000, "hold": 2400 }
+  ]
+}

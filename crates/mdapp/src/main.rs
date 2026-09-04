@@ -15,6 +15,9 @@ fn main() {
     let mut print_html = false;
     let mut theme = mdcore::Theme::System;
     let mut want_theme = false;
+    let mut diff = false;
+    let mut diff_layout = mdcore::DiffLayout::Unified;
+    let mut want_diff_layout = false;
     let mut paths: Vec<PathBuf> = Vec::new();
 
     for arg in std::env::args_os().skip(1) {
@@ -34,15 +37,43 @@ fn main() {
             }
         }
 
+        // The same rule as --theme's: a value starting with "--" is the next
+        // flag, not a layout name. An unrecognised name is worth refusing
+        // rather than defaulting, because `--diff-layout renderd` silently
+        // printing a unified diff is the kind of typo a demo bakes into a GIF.
+        if want_diff_layout {
+            want_diff_layout = false;
+            if !arg.starts_with("--") {
+                match mdcore::DiffLayout::from_wire(&arg) {
+                    Some(layout) => {
+                        diff_layout = layout;
+                        continue;
+                    }
+                    None => {
+                        eprintln!(
+                            "mdview: unknown diff layout {arg:?} \
+                             (unified, split, rendered, rendered-split)"
+                        );
+                        std::process::exit(2);
+                    }
+                }
+            }
+        }
+
         match arg.as_str() {
             "--print-html" => print_html = true,
             "--theme" => want_theme = true,
+            "--diff" => diff = true,
+            "--diff-layout" => want_diff_layout = true,
             "--version" => {
                 println!("mdview {}", mdcore::version());
                 return;
             }
             "--help" | "-h" => {
-                println!("usage: mdview [--print-html] [--theme THEME] [FILE...]");
+                println!(
+                    "usage: mdview [--print-html [--diff [--diff-layout LAYOUT]]] \
+                     [--theme THEME] [FILE...]"
+                );
                 return;
             }
             other => paths.push(PathBuf::from(other)),
@@ -54,14 +85,36 @@ fn main() {
             eprintln!("mdview: --print-html requires a file path");
             std::process::exit(2);
         };
-        match mdcore::render_document(path, theme) {
-            Ok(doc) => print!("{}", doc.html),
-            Err(err) => {
-                eprintln!("mdview: {err}");
-                std::process::exit(1);
+        // The diff is a whole other page -- build_diff_page, not a state the
+        // normal one can be put into -- so printing it needs its own branch
+        // rather than a flag threaded through render_document. Without this
+        // the four diff layouts are the one part of the app that cannot be
+        // rendered outside it, which is why `make shot` has never shown one.
+        let html = if diff {
+            let highlighter = mdcore::Highlighter::new();
+            match mdcore::render_diff_document_with(path, &highlighter, theme, diff_layout) {
+                Ok(doc) => doc.html,
+                Err(err) => {
+                    eprintln!("mdview: {err}");
+                    std::process::exit(1);
+                }
             }
-        }
+        } else {
+            match mdcore::render_document(path, theme) {
+                Ok(doc) => doc.html,
+                Err(err) => {
+                    eprintln!("mdview: {err}");
+                    std::process::exit(1);
+                }
+            }
+        };
+        print!("{html}");
         return;
+    }
+
+    if diff {
+        eprintln!("mdview: --diff only applies to --print-html");
+        std::process::exit(2);
     }
 
     app::run(paths);

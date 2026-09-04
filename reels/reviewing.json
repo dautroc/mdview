@@ -1,0 +1,57 @@
+{
+  "page": "tour.html",
+  "width": 1400,
+  "height": 660,
+  "openHold": 1100,
+  "bridge": {
+    "addComment:": {
+      "js": "(function(a){var p=a.split(':');window.mdviewSetComments([{id:'1',heading:+p[0],nth:+p[1],quote:decodeURIComponent(p[2]),note:decodeURIComponent(p[3])}]);})('%s')"
+    },
+    "copyReview": {
+      "js": "window.mdviewNote('Copied the review prompt for Claude.')"
+    },
+    "*": {
+      "ignore": true
+    }
+  },
+  "steps": [
+    {
+      "js": "document.querySelectorAll('h2')[2].scrollIntoView()",
+      "hold": 900
+    },
+    {
+      "key": "j",
+      "repeat": 4,
+      "hold": 130
+    },
+    {
+      "key": "v",
+      "hold": 500
+    },
+    {
+      "key": "e",
+      "repeat": 9,
+      "hold": 120
+    },
+    {
+      "key": "c",
+      "hold": 800
+    },
+    {
+      "type": "#mdview-comment-input",
+      "text": "Quote this in the postmortem template.",
+      "tick": 45,
+      "hold": 1000
+    },
+    {
+      "key": "Enter",
+      "settle": 700,
+      "hold": 2400
+    },
+    {
+      "key": "C",
+      "settle": 500,
+      "hold": 1800
+    }
+  ]
+}
