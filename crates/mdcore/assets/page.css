@@ -219,7 +219,7 @@ img { max-width: 100%; }
 
 #mdview-content {
   margin: 0 auto;
-  max-width: 46rem;
+  max-width: 150ch;
   padding: 3rem 1.5rem 6rem;
 }
 

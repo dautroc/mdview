@@ -1144,7 +1144,7 @@ mod tests {
         let content = &css[content_start
             ..content_start + css[content_start..].find('}').expect("content rule close")];
         assert!(
-            content.contains("max-width: 46rem"),
+            content.contains("max-width: 150ch"),
             "centered view must remain the default"
         );
         assert!(
