@@ -5,6 +5,9 @@ as a paint surface.
 
 ![MDView showing a document with its outline in the sidebar](docs/screenshot.png)
 
+**[Take the tour](docs/tour.md)** — what each of these looks like in use,
+grouped by what you are doing at the time.
+
 Point it at a file and read. There is no editor, no preview pane to keep in
 sync, and no server: every asset is embedded in the binary, so it renders the
 same with the network off.
@@ -182,3 +185,27 @@ already cover — and run what you find.
 | + / − / 0 | Zoom in / out / actual size |
 | : | Run a command by name |
 | ? | The list of all of them |
+
+## Working on it
+
+```sh
+make test      # cargo test
+make bundle    # MDView.app
+make dist      # a universal DMG
+```
+
+Two tools render the interface outside the app, because most of it is HTML and
+looking at it beats inferring it from the stylesheet:
+
+```sh
+make shot FILE=notes.md THEME=mocha SIDEBAR=1   # one page, one PNG
+make reels                                       # the GIFs in docs/tour.md
+make reel REEL=finding                           # just one of them
+```
+
+`make reels` drives the same generated page through a list of steps in
+`reels/*.json` and assembles the frames with ffmpeg, which is a developer's
+dependency and nothing else — it is not in the binary and not in the bundle.
+The demos are therefore rebuilt when the interface changes rather than
+re-recorded by hand, and the state they show is invented in the spec files
+rather than read off anybody's disk.

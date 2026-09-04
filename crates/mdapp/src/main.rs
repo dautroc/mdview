@@ -385,6 +385,77 @@ mod bundle_version_tests {
         assert!(body.contains("SHORTCUTS_HINT_SHOWN_KEY"));
     }
 
+    /// The tour is the README's pictures, and a picture goes stale in a way
+    /// prose does not: a GIF keeps showing the old interface long after the
+    /// sentence beside it was corrected. These do not check that a demo is
+    /// current -- nothing can -- but they do catch the two ways the tour rots
+    /// on its own: a demo referenced but never generated, and a shortcut the
+    /// app retired still being advertised in the one document that repeats
+    /// them outside the table.
+    #[test]
+    fn every_demo_the_tour_shows_has_been_generated() {
+        let tour = include_str!("../../../docs/tour.md");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+        let mut found = 0;
+        for (at, _) in tour.match_indices("](gifs/") {
+            let name = tour[at + 2..]
+                .split(')')
+                .next()
+                .expect("an image reference must close");
+            assert!(
+                root.join(name).exists(),
+                "docs/tour.md shows {name}, which does not exist -- run `make reels`"
+            );
+            found += 1;
+        }
+        assert_eq!(found, 7, "the tour is seven sections, one demo each");
+    }
+
+    /// The same list main.rs already holds the README to. The tour is the only
+    /// other document that names keys, so it is the only other one that can
+    /// advertise a binding the app no longer has.
+    #[test]
+    fn the_tour_advertises_no_retired_shortcut() {
+        let tour = include_str!("../../../docs/tour.md");
+        for gone in ["⌥⌘F", "⌥⌘S", "⌥⌘D", "⌘G", "⇧⌘/", "Theme picker"] {
+            assert!(!tour.contains(gone), "docs/tour.md still advertises {gone}");
+        }
+    }
+
+    /// A spec that names a document nobody wrote fails at `make reels` with a
+    /// WebKit load error, which is a long way from the file that caused it.
+    #[test]
+    fn every_reel_names_a_document_that_exists() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let specs = std::fs::read_dir(root.join("reels")).expect("reels/ must exist");
+        let mut seen = 0;
+        for spec in specs {
+            let path = spec.expect("a readable entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a readable spec");
+            let page = text
+                .split("\"page\":")
+                .nth(1)
+                .and_then(|rest| rest.split('"').nth(1))
+                .unwrap_or_else(|| panic!("{path:?} names no starting page"));
+            let doc = page.trim_end_matches(".html");
+            // The diff reel starts from the throwaway repo's copy, which is
+            // built by `make reel-pages` rather than committed.
+            if doc == "proposal" {
+                seen += 1;
+                continue;
+            }
+            assert!(
+                root.join("reels/demo").join(format!("{doc}.md")).exists(),
+                "{path:?} starts from {doc}.md, which is not in reels/demo"
+            );
+            seen += 1;
+        }
+        assert_eq!(seen, 7, "seven reels, one per section of the tour");
+    }
+
     #[test]
     fn readme_lists_the_cheat_sheet_shortcut() {
         let readme = include_str!("../../../README.md");
