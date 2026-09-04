@@ -56,9 +56,10 @@ the commits that introduced them. The newest release is listed first.
   the rail wants 180px beyond it, so the margin only appears past about a
   2000px window. The behaviour is unchanged since v0.17 — the demo just makes
   it visible.
-- `docs/screenshot.png` is still from v0.9. It is the only image showing the
-  real macOS window, so it is left for a manual retake rather than replaced by
-  a generated page-only still.
+- `docs/screenshot.png` was retaken from the running app at v0.18.0, showing
+  the outline and the minimap that the v0.9 image predated. It stays a hand
+  capture rather than a generated one, because it is the only image that shows
+  the real macOS window.
 
 ## [v0.17.0](https://github.com/dautroc/mdview/releases/tag/v0.17.0) — 2026-09-04
 

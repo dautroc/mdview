@@ -3,7 +3,7 @@
 A read-only Markdown viewer for macOS. Rust and AppKit, with WebKit used only
 as a paint surface.
 
-![MDView showing a document with its outline in the sidebar](docs/screenshot.png)
+![MDView showing a document with its outline in the sidebar and its minimap down the right edge](docs/screenshot.png)
 
 **[Take the tour](docs/tour.md)** — what each of these looks like in use,
 grouped by what you are doing at the time.
