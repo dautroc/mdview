@@ -67,6 +67,7 @@ fn theme_flag_selects_the_html_data_theme_attribute() {
     for (flag, expected) in [
         ("solarized-dark", Some("solarized-dark")),
         ("monokai-pro", Some("monokai-pro")),
+        ("chiroptera-dark-hard", Some("chiroptera-dark-hard")),
         ("github", Some("github")),
         ("system", None),
     ] {

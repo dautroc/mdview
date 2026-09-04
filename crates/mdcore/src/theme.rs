@@ -12,6 +12,7 @@ pub enum Theme {
     Eighties,
     Mocha,
     MonokaiPro,
+    ChiropteraDarkHard,
 }
 
 impl Theme {
@@ -25,6 +26,7 @@ impl Theme {
             Theme::Eighties,
             Theme::Mocha,
             Theme::MonokaiPro,
+            Theme::ChiropteraDarkHard,
         ]
     }
 
@@ -38,6 +40,7 @@ impl Theme {
             Theme::Eighties => "eighties",
             Theme::Mocha => "mocha",
             Theme::MonokaiPro => "monokai-pro",
+            Theme::ChiropteraDarkHard => "chiroptera-dark-hard",
         }
     }
 
@@ -61,6 +64,7 @@ impl Theme {
             Theme::Eighties => "Eighties",
             Theme::Mocha => "Mocha",
             Theme::MonokaiPro => "Monokai Pro",
+            Theme::ChiropteraDarkHard => "Chiroptera Dark Hard",
         }
     }
 
@@ -76,8 +80,9 @@ impl Theme {
             Theme::SolarizedDark => Some("Solarized (dark)"),
             Theme::Eighties => Some("base16-eighties.dark"),
             Theme::Mocha => Some("base16-mocha.dark"),
-            // Not a syntect built-in; resolved from the bundled tmTheme.
+            // Not syntect built-ins; resolved from the bundled tmThemes.
             Theme::MonokaiPro => Some("Monokai Pro"),
+            Theme::ChiropteraDarkHard => Some("Chiroptera Dark Hard"),
         }
     }
 
@@ -85,9 +90,11 @@ impl Theme {
         match self {
             Theme::System => None,
             Theme::GitHub | Theme::SolarizedLight | Theme::OceanLight => Some(false),
-            Theme::SolarizedDark | Theme::Eighties | Theme::Mocha | Theme::MonokaiPro => {
-                Some(true)
-            }
+            Theme::SolarizedDark
+            | Theme::Eighties
+            | Theme::Mocha
+            | Theme::MonokaiPro
+            | Theme::ChiropteraDarkHard => Some(true),
         }
     }
 }
@@ -134,11 +141,11 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_offers_system_plus_three_light_and_four_dark() {
+    fn the_picker_offers_system_plus_three_light_and_five_dark() {
         let all = Theme::all();
-        assert_eq!(all.len(), 8);
+        assert_eq!(all.len(), 9);
         assert_eq!(all.iter().filter(|t| t.is_dark() == Some(false)).count(), 3);
-        assert_eq!(all.iter().filter(|t| t.is_dark() == Some(true)).count(), 4);
+        assert_eq!(all.iter().filter(|t| t.is_dark() == Some(true)).count(), 5);
     }
 
     #[test]

@@ -69,7 +69,7 @@ file that never closes it.
   enter runs it, and you leave knowing the key. The vim alphabet is not in it:
   `j`, `w`, `/` and `y` are keys you already have, and listing them would bury
   the commands that are MDView's own. `?` still prints the lot.
-- **Themes** — three light, four dark, or follow the system. `g t` opens a
+- **Themes** — three light, five dark, or follow the system. `g t` opens a
   palette you can type into; arrowing through it previews each theme on the
   document, and only enter keeps one.
 - **Find in page** with `/` or ⌘F: every match is highlighted as you type,

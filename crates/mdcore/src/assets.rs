@@ -11,6 +11,11 @@ pub const MERMAID_JS: &str = include_str!("../assets/mermaid.js");
 /// tmTheme embedded like every other asset rather than read from disk.
 pub const MONOKAI_PRO_THEME: &str = include_str!("../assets/monokai-pro.tmTheme");
 
+/// Chiroptera Dark Hard, likewise absent from syntect's defaults. Translated
+/// from the Neovim colourscheme's palette and its own syntax mapping.
+pub const CHIROPTERA_DARK_HARD_THEME: &str =
+    include_str!("../assets/chiroptera-dark-hard.tmTheme");
+
 #[cfg(test)]
 mod tests {
     /// v0.9.0 shipped a call to `showNote` with no such function anywhere in

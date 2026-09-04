@@ -154,7 +154,10 @@ fn bundled_themes() -> &'static ThemeSet {
     static BUNDLED: OnceLock<ThemeSet> = OnceLock::new();
     BUNDLED.get_or_init(|| {
         let mut set = ThemeSet::new();
-        for source in [crate::assets::MONOKAI_PRO_THEME] {
+        for source in [
+            crate::assets::MONOKAI_PRO_THEME,
+            crate::assets::CHIROPTERA_DARK_HARD_THEME,
+        ] {
             if let Ok(theme) = ThemeSet::load_from_reader(&mut Cursor::new(source)) {
                 // Keyed by the name the file declares, so an asset whose name
                 // drifts from `Theme::syntect_name` fails to resolve loudly.
@@ -274,25 +277,39 @@ mod tests {
     }
 
     #[test]
-    fn the_bundled_tmtheme_parses_and_exposes_a_palette() {
+    fn the_bundled_tmthemes_parse_and_expose_a_palette() {
         // Without this, a malformed or renamed asset would ship as an
         // unstyled page at runtime with the whole suite still green: the
         // bundled set swallows a parse failure by staying empty.
         let bundled = bundled_themes();
-        assert!(
-            bundled.themes.contains_key("Monokai Pro"),
-            "bundled tmTheme failed to parse or declares a different name; got {:?}",
+        let expected = [
+            ("Monokai Pro", crate::chrome::Rgb { r: 0x2d, g: 0x2a, b: 0x2e },
+                crate::chrome::Rgb { r: 0xfc, g: 0xfc, b: 0xfa }),
+            ("Chiroptera Dark Hard", crate::chrome::Rgb { r: 0x2d, g: 0x2d, b: 0x2e },
+                crate::chrome::Rgb { r: 0xa4, g: 0xa2, b: 0x9b }),
+        ];
+        assert_eq!(
+            bundled.themes.len(),
+            expected.len(),
+            "a bundled tmTheme failed to parse; got {:?}",
             bundled.themes.keys().collect::<Vec<_>>()
         );
 
-        let (css, bg, fg) = palette_for("Monokai Pro").expect("bundled palette must resolve");
-        assert_eq!(bg, crate::chrome::Rgb { r: 0x2d, g: 0x2a, b: 0x2e });
-        assert_eq!(fg, crate::chrome::Rgb { r: 0xfc, g: 0xfc, b: 0xfa });
-        // A tmTheme with only bg/fg would satisfy the checks above while
-        // leaving code blocks background-swapped and otherwise uncoloured.
-        assert!(css.contains(".comment"), "comments must be coloured: {css}");
-        assert!(css.contains(".string"), "strings must be coloured: {css}");
-        assert!(css.contains(".keyword"), "keywords must be coloured: {css}");
+        for (name, want_bg, want_fg) in expected {
+            assert!(
+                bundled.themes.contains_key(name),
+                "bundled tmTheme failed to parse or declares a different name; got {:?}",
+                bundled.themes.keys().collect::<Vec<_>>()
+            );
+            let (css, bg, fg) = palette_for(name).expect("bundled palette must resolve");
+            assert_eq!(bg, want_bg, "{name} background");
+            assert_eq!(fg, want_fg, "{name} foreground");
+            // A tmTheme with only bg/fg would satisfy the checks above while
+            // leaving code blocks background-swapped and otherwise uncoloured.
+            assert!(css.contains(".comment"), "{name} comments must be coloured: {css}");
+            assert!(css.contains(".string"), "{name} strings must be coloured: {css}");
+            assert!(css.contains(".keyword"), "{name} keywords must be coloured: {css}");
+        }
     }
 
     #[test]
