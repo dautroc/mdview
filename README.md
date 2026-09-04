@@ -71,7 +71,10 @@ file that never closes it.
   the commands that are MDView's own. `?` still prints the lot.
 - **Themes** — three light, five dark, or follow the system. `g t` opens a
   palette you can type into; arrowing through it previews each theme on the
-  document, and only enter keeps one.
+  document, and only enter keeps one. The document takes the palette's own
+  colours, not just the code inside it: headings, links, inline code, emphasis
+  and table headings all come from what the theme says about Markdown, so a
+  page reads the way it does in the editor the theme came from.
 - **Find in page** with `/` or ⌘F: every match is highlighted as you type,
   `n` and `N` step through them, and esc clears the highlights.
 - **A cursor, in the vim idiom.** `h`/`j`/`k`/`l` move it, `w`/`e`/`b` by the

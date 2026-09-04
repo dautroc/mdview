@@ -1205,6 +1205,10 @@
 
     var style = getComputedStyle(document.documentElement);
     var fg = cssVar(style, "--fg", "#1f2328");
+    // The page heads its sections in the theme's own colour; a map painted in
+    // --fg would be the one place the two disagree. System defines no
+    // --heading, and falls back to exactly what it painted before.
+    var heading = cssVar(style, "--heading", fg);
     var muted = cssVar(style, "--muted", "#59636e");
     var border = cssVar(style, "--border", "#d1d9e0");
     var scale = minimapScale();
@@ -1218,7 +1222,7 @@
         // Deeper headings are shorter bars, so the shape of the document shows
         // its hierarchy the way the outline's indentation does.
         ctx.globalAlpha = 1;
-        ctx.fillStyle = fg;
+        ctx.fillStyle = heading;
         ctx.fillRect(0, y, Math.max(8, width * (1 - (b.level - 1) * 0.13)), Math.max(2, Math.min(h, 3)));
       } else if (b.kind === "block") {
         ctx.globalAlpha = 0.5;

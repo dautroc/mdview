@@ -59,7 +59,7 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-h1, h2, h3, h4 { line-height: 1.25; margin: 2rem 0 1rem; }
+h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 2rem 0 1rem; }
 h1 { font-size: 2rem; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
 h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
 
@@ -82,6 +82,42 @@ pre, code { font-family: "SF Mono", Menlo, monospace; }
 table { border-collapse: collapse; display: block; overflow-x: auto; width: max-content; max-width: 100%; }
 th, td { border: 1px solid var(--border); padding: .4rem .8rem; }
 th { background: var(--code-bg); }
+
+/* The document's own colours ---------------------------------------------
+
+   Scoped to #mdview-content on purpose. The chrome reuses these tags -- the
+   shortcuts panel heads its sections with h2 and h3, the sidebar with an h2 --
+   and an unscoped `h1, h2 { color: … }` would repaint all of them.
+
+   Each var comes from chrome::tokens, which derives it from what the theme
+   itself says about Markdown. The `var(--x, var(--y))` fallbacks are what the
+   System theme renders: it stamps no data-theme, so none of these are defined
+   for it and the document stays the monochrome GitHub renders. */
+#mdview-content h1,
+#mdview-content h2,
+#mdview-content h3,
+#mdview-content h4,
+#mdview-content h5,
+#mdview-content h6 { color: var(--heading, var(--fg)); }
+#mdview-content strong,
+#mdview-content b { color: var(--strong, var(--fg)); }
+#mdview-content em,
+#mdview-content i { color: var(--em, var(--fg)); }
+#mdview-content blockquote { color: var(--quote-fg, var(--muted)); }
+/* :not() keeps this off the raw source diff, whose every line is a
+   <code class="mdview-diff-code"> living inside #mdview-content. An ID
+   selector outranks the .mdview-diff-row-added/-removed rules that paint
+   those lines, so without the exclusion a diff loses --diff-add-fg and
+   --diff-del-fg to the inline-code hue. */
+#mdview-content code:not(.mdview-diff-code) { color: var(--code-fg, var(--fg)); }
+/* Fenced code is coloured token by token by the theme's own syntect sheet on
+   <pre class="code">. Without this the inline-code hue wins on the inner
+   <code> and repaints every token syntect left alone -- which is all of them
+   in a fence whose language it does not know. Carries the same :not() as the
+   rule above only to outrank it: a bare `#mdview-content pre code` is (1,0,2)
+   and loses to that rule's (1,1,1). */
+#mdview-content pre code:not(.mdview-diff-code) { color: inherit; }
+#mdview-content th { color: var(--table-head-fg, var(--fg)); }
 
 img { max-width: 100%; }
 .task-list-item { list-style: none; }

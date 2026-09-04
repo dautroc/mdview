@@ -200,6 +200,98 @@ pub fn palette_for(name: &str) -> Option<(String, crate::chrome::Rgb, crate::chr
     ))
 }
 
+/// The scope stacks a real Markdown highlight would produce, and the code
+/// scopes to fall back on when a palette says nothing about prose.
+///
+/// The stacks are not decoration. The eight palettes MDView ships disagree
+/// about how a heading is even expressed: Solarized, Monokai Pro and
+/// Chiroptera write a plain `markup.heading` rule; the base16 family writes
+/// `markup.heading punctuation.definition.heading, entity.name.section`,
+/// which a bare `markup.heading` probe does not match; and InspiredGitHub
+/// writes `text.html.markdown markup.heading` with a font weight and no
+/// colour at all. Handing syntect the stack its own Markdown syntax would
+/// push lets its matcher resolve all three, and reports `None` for the third.
+type Chain = &'static [&'static [&'static str]];
+
+const HEADING: Chain = &[
+    // `markup.heading` first and alone. Putting `entity.name.section` on the
+    // same stack loses: it matches the top of the stack and so outscores
+    // `markup.heading` further down it, which took Chiroptera's headings from
+    // its Title colour to the one it gives labels.
+    &["text.html.markdown", "markup.heading.1.markdown"],
+    // The base16 family colours nothing but the `#` marks under
+    // `markup.heading`; `entity.name.section` is where it puts the text.
+    &["entity.name.section"],
+    &["entity.name.function"],
+    &["keyword"],
+];
+const LINK: Chain = &[
+    &["text.html.markdown", "meta.link.inline.markdown", "markup.underline.link.markdown"],
+    &["string.other.link"],
+    &["keyword"],
+];
+const RAW: Chain = &[
+    &["text.html.markdown", "markup.raw.inline.markdown"],
+    &["string"],
+];
+const QUOTE: Chain = &[
+    &["text.html.markdown", "markup.quote.markdown"],
+    &["comment"],
+];
+// Weight and slant already carry these; a palette that does not colour them
+// leaves them at the page foreground rather than borrowing a code hue.
+const BOLD: Chain = &[&["text.html.markdown", "markup.bold.markdown"]];
+const ITALIC: Chain = &[&["text.html.markdown", "markup.italic.markdown"]];
+
+/// The first stack in `chain` the theme actually colours, skipping any whose
+/// colour is the page foreground: `InspiredGitHub` paints `markup.raw.inline`
+/// in its own `#323232` text colour, which is a derivation that derives
+/// nothing. `foreground: None` from syntect means no rule matched at all.
+fn first_colour(
+    highlighter: &syntect::highlighting::Highlighter<'_>,
+    fg: Option<syntect::highlighting::Color>,
+    chain: Chain,
+) -> Option<crate::chrome::Rgb> {
+    for stack in chain {
+        let scopes: Vec<syntect::parsing::Scope> =
+            stack.iter().filter_map(|s| syntect::parsing::Scope::new(s).ok()).collect();
+        if scopes.len() != stack.len() {
+            continue;
+        }
+        let Some(colour) = highlighter.style_mod_for_stack(&scopes).foreground else {
+            continue;
+        };
+        if fg.is_some_and(|f| (f.r, f.g, f.b) == (colour.r, colour.g, colour.b)) {
+            continue;
+        }
+        return Some(crate::chrome::Rgb { r: colour.r, g: colour.g, b: colour.b });
+    }
+    None
+}
+
+/// What one palette says about Markdown's own constructs, so the document can
+/// be painted from the same source as the code inside it.
+///
+/// Deliberately a sibling of `palette_for` rather than a widening of it: that
+/// function has three callers who want the CSS and the two page colours, and
+/// nothing else.
+pub fn markup_palette_for(name: &str) -> Option<crate::chrome::MarkupPalette> {
+    let theme = theme_named(name)?;
+    // syntect's own `Highlighter`. The bare name in this module is the local
+    // struct above, which wraps a SyntaxSet and is a different thing.
+    let highlighter = syntect::highlighting::Highlighter::new(theme);
+    let fg = theme.settings.foreground;
+    let probe = |chain| first_colour(&highlighter, fg, chain);
+    Some(crate::chrome::MarkupPalette {
+        heading: probe(HEADING),
+        link: probe(LINK),
+        raw: probe(RAW),
+        quote: probe(QUOTE),
+        bold: probe(BOLD),
+        italic: probe(ITALIC),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +402,75 @@ mod tests {
             assert!(css.contains(".string"), "{name} strings must be coloured: {css}");
             assert!(css.contains(".keyword"), "{name} keywords must be coloured: {css}");
         }
+    }
+
+    /// A palette that says nothing about a role must still hand back a
+    /// colour, or the document loses that element on that theme.
+    #[test]
+    fn every_named_palette_colours_every_document_role() {
+        use crate::theme::Theme;
+
+        let mut checked = 0;
+        for theme in Theme::all().iter().filter(|t| **t != Theme::System) {
+            let name = theme.syntect_name().expect("named theme has a palette");
+            let markup = markup_palette_for(name).expect("named theme has a markup palette");
+            let (_, _, fg) = palette_for(name).expect("named theme has a palette");
+            for (role, hue) in [
+                ("heading", markup.heading),
+                ("link", markup.link),
+                ("raw", markup.raw),
+                ("quote", markup.quote),
+            ] {
+                let hue = hue
+                    .unwrap_or_else(|| panic!("{} has no {role} colour", theme.label()));
+                // A hue equal to the page's own text is a derivation that
+                // derived nothing; the chain is supposed to keep looking.
+                assert_ne!(hue, fg, "{}: {role} is just the foreground", theme.label());
+            }
+            checked += 1;
+        }
+        assert_eq!(
+            checked,
+            Theme::all().len() - 1,
+            "a theme was added without a markup palette"
+        );
+    }
+
+    /// InspiredGitHub styles Markdown structurally -- `markup.heading` carries
+    /// a font weight and no colour -- so the chain has to fall through to a
+    /// code scope. Pinned because the naive single-scope probe silently
+    /// returned the page foreground here.
+    #[test]
+    fn a_palette_that_only_styles_markdown_structurally_falls_back() {
+        let markup = markup_palette_for("InspiredGitHub").expect("built-in palette");
+        assert_eq!(markup.heading, Some(crate::chrome::Rgb { r: 0x79, g: 0x5d, b: 0xa3 }));
+        assert_eq!(markup.quote, Some(crate::chrome::Rgb { r: 0x96, g: 0x98, b: 0x96 }));
+        // Its markup.raw.inline is its own #323232 text colour: nothing said.
+        assert_eq!(markup.raw, Some(crate::chrome::Rgb { r: 0x18, g: 0x36, b: 0x91 }));
+        // Nothing colours bold or italic; weight and slant carry them.
+        assert_eq!(markup.bold, None);
+        assert_eq!(markup.italic, None);
+    }
+
+    /// The base16 family colours only the `#` marks under `markup.heading`
+    /// and puts the heading text under `entity.name.section`. A bare
+    /// `markup.heading` probe finds neither.
+    #[test]
+    fn a_heading_colour_hiding_under_entity_name_section_is_found() {
+        let markup = markup_palette_for("base16-eighties.dark").expect("built-in palette");
+        assert_eq!(markup.heading, Some(crate::chrome::Rgb { r: 0x66, g: 0x99, b: 0xcc }));
+    }
+
+    /// The reverse: a palette with a plain `markup.heading` must use it, not
+    /// whatever it happens to give `entity.name.section`. Chiroptera gives
+    /// them different colours, which is what makes it the case to pin.
+    #[test]
+    fn a_plain_markup_heading_wins_over_entity_name_section() {
+        let markup = markup_palette_for("Chiroptera Dark Hard").expect("bundled palette");
+        // Title, #79caaf -- not the #61b197 it gives labels and sections.
+        assert_eq!(markup.heading, Some(crate::chrome::Rgb { r: 0x79, g: 0xca, b: 0xaf }));
+        assert_eq!(markup.link, Some(crate::chrome::Rgb { r: 0x85, g: 0xc6, b: 0xc9 }));
+        assert_eq!(markup.raw, Some(crate::chrome::Rgb { r: 0xa9, g: 0xa7, b: 0x2d }));
     }
 
     #[test]

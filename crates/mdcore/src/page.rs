@@ -170,7 +170,8 @@ fn build_page_view(
             continue;
         };
         let is_dark = candidate.is_dark().unwrap_or(false);
-        let tokens = chrome::tokens(bg, fg, is_dark);
+        let markup = highlight::markup_palette_for(syntect_name).unwrap_or_default();
+        let tokens = chrome::tokens(bg, fg, is_dark, markup);
         chrome_css.push_str(&format!(
             "<style>:root[data-theme=\"{}\"]{{{}}}</style>\n",
             candidate.as_wire(),
@@ -330,6 +331,75 @@ mod tests {
         assert!(vars.contains("--comment-bg:"), "no light fallback for --comment-bg");
         assert!(vars.contains("--comment-fg:"), "no light fallback for --comment-fg");
         assert!(html[dark..].contains("--comment-bg:"), "no dark fallback");
+    }
+
+    /// The document's colours are scoped to `#mdview-content`, which is also
+    /// where both diff views live. An ID selector outranks the class rules
+    /// that paint a diff row, so the one document tag the raw diff also uses
+    /// -- `<code class="mdview-diff-code">`, a row per line -- has to be
+    /// excluded, or every added and removed line loses `--diff-add-fg` and
+    /// `--diff-del-fg` to the inline-code hue.
+    #[test]
+    fn the_inline_code_hue_stays_off_the_raw_diff() {
+        let css = assets::PAGE_CSS;
+        assert!(
+            css.contains("#mdview-content code:not(.mdview-diff-code) {"),
+            "the inline-code rule must exclude diff lines"
+        );
+        assert!(
+            !css.contains("#mdview-content code {"),
+            "an unqualified rule would repaint every diff line"
+        );
+        // The rules it must keep losing to.
+        assert!(css.contains("color: var(--diff-add-fg)"));
+        assert!(css.contains("color: var(--diff-del-fg)"));
+        // And the reset that keeps it off fenced code has to outrank it,
+        // which it only does while it carries the same :not().
+        assert!(
+            css.contains("#mdview-content pre code:not(.mdview-diff-code) { color: inherit; }"),
+            "the fenced-code reset must outrank the inline-code rule"
+        );
+    }
+
+    /// The chrome heads its own panels with `h2`/`h3` and the sidebar with an
+    /// `h2`. The heading hue must reach the document and nothing else.
+    #[test]
+    fn the_heading_hue_is_confined_to_the_document() {
+        let css = assets::PAGE_CSS;
+        let at = css
+            .find("color: var(--heading, var(--fg));")
+            .expect("no heading colour rule");
+        let rule_start = css[..at].rfind('}').map(|i| i + 1).unwrap_or(0);
+        let rule = &css[rule_start..at];
+        for tag in ["h1", "h2", "h3", "h4", "h5", "h6"] {
+            assert!(
+                rule.contains(&format!("#mdview-content {tag},"))
+                    || rule.contains(&format!("#mdview-content {tag} ")),
+                "{tag} must be scoped to the document: {rule}"
+            );
+        }
+    }
+
+    /// Every document colour is written `var(--x, var(--y))`. System stamps
+    /// no `data-theme`, so `chrome::tokens` never runs for it and an
+    /// unguarded var paints nothing -- the bug the comment-anchor test above
+    /// exists to prevent, in a place that would take the whole document.
+    #[test]
+    fn the_document_colours_cannot_paint_nothing_under_the_system_theme() {
+        let css = assets::PAGE_CSS;
+        for (name, fallback) in [
+            ("--heading", "var(--fg)"),
+            ("--strong", "var(--fg)"),
+            ("--em", "var(--fg)"),
+            ("--code-fg", "var(--fg)"),
+            ("--quote-fg", "var(--muted)"),
+            ("--table-head-fg", "var(--fg)"),
+        ] {
+            assert!(
+                css.contains(&format!("var({name}, {fallback})")),
+                "{name} is used without a fallback System can render"
+            );
+        }
     }
 
     #[test]
@@ -1186,6 +1256,14 @@ mod tests {
             assert!(
                 html.contains(&format!("id:\"{wire}\"")),
                 "{wire} must reach the palette's catalogue"
+            );
+            let block = html
+                .find(&format!(":root[data-theme=\"{wire}\"]"))
+                .expect("scoped chrome block");
+            let end = html[block..].find('}').expect("block close") + block;
+            assert!(
+                html[block..end].contains("--heading:"),
+                "{wire} must carry the document's own colours, not just the chrome"
             );
         }
         // Only the active theme's sheet is live; the rest wait behind `not all`.

@@ -61,6 +61,25 @@ pub fn mix_to_contrast(from: Rgb, to: Rgb, against: Rgb, target: f32) -> Rgb {
     best
 }
 
+/// The colours a syntax palette states for Markdown's own constructs.
+///
+/// Every field is optional because most palettes describe code and say
+/// nothing about prose: `InspiredGitHub` styles headings with `font-weight`
+/// and no colour at all. `None` means "this palette has nothing to say here",
+/// and `tokens` falls back to the page foreground rather than inventing a hue.
+/// `highlight::markup_palette_for` is what fills this in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MarkupPalette {
+    pub heading: Option<Rgb>,
+    pub link: Option<Rgb>,
+    /// `markup.raw` — inline code, and nothing else: fenced blocks are
+    /// coloured token by token by syntect's own sheet.
+    pub raw: Option<Rgb>,
+    pub quote: Option<Rgb>,
+    pub bold: Option<Rgb>,
+    pub italic: Option<Rgb>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChromeTokens {
     pub bg: Rgb,
@@ -88,10 +107,21 @@ pub struct ChromeTokens {
     pub find_current_fg: Rgb,
     pub comment_bg: Rgb,
     pub comment_fg: Rgb,
+    /// The document's own colours, as opposed to the chrome around it. Each
+    /// is the palette's hue lifted toward `fg` until it clears 4.5:1 against
+    /// the surface it is actually laid on -- `code_bg` for the two that sit
+    /// on the tinted surface, `bg` for the rest.
+    pub heading: Rgb,
+    pub strong: Rgb,
+    pub em: Rgb,
+    pub code_fg: Rgb,
+    pub quote_fg: Rgb,
+    pub table_head_fg: Rgb,
 }
 
-/// Derive every chrome token from a theme's background and foreground.
-pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
+/// Derive every chrome token from a theme's background and foreground, and
+/// the document's own colours from what that theme says about Markdown.
+pub fn tokens(bg: Rgb, fg: Rgb, dark: bool, markup: MarkupPalette) -> ChromeTokens {
     // A dark theme's code surface reads better slightly lighter than the page;
     // a light theme's slightly darker. Both are a small step toward the text.
     let code_bg = mix(bg, fg, if dark { 0.07 } else { 0.05 });
@@ -138,6 +168,37 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
     let diff_add_bg = mix(bg, add, 0.18);
     let diff_del_bg = mix(bg, delete, 0.18);
     let diff_hunk_bg = mix(bg, hunk, 0.12);
+    // A palette's own hue is chosen to sit on the palette's own background,
+    // which is not always this page's: base16-ocean.light heads its sections
+    // in #8fa1b3, which is 2.4:1 on its #eff1f5 page. Lift each hue toward
+    // the text colour by the smallest step that reaches the target -- against
+    // the surface the text actually lands on, which for inline code and table
+    // headings is `code_bg` and not `bg`.
+    //
+    // Where the target is unreachable, `mix_to_contrast` hands back the full
+    // blend -- which is `fg`, and no accent at all. Some palettes cannot ever
+    // reach 4.5 for an accent: Solarized Light runs its own teal at 2.9:1
+    // against its page and its own body text at 4.13:1, so a flat demand
+    // turns that whole theme's document monochrome, which is the thing this
+    // derivation exists to prevent. Settle for the 3:1 floor instead of
+    // giving up the hue.
+    let readable = |hue: Option<Rgb>, on: Rgb, target: f32| match hue {
+        Some(hue) => {
+            let lifted = mix_to_contrast(hue, fg, on, target);
+            if lifted == fg && target > 3.0 {
+                mix_to_contrast(hue, fg, on, 3.0)
+            } else {
+                lifted
+            }
+        }
+        // Nothing to say: the page foreground, which is already readable.
+        None => fg,
+    };
+    // Headings are large text, where 3:1 is the WCAG floor. Holding them to
+    // the body-text 4.5 costs real hue for nothing: Solarized Dark heads its
+    // sections in #b58900, which lands at 4.46:1 -- four hundredths short,
+    // and enough to walk the yellow all the way to grey.
+    let heading = readable(markup.heading, bg, 3.0);
     ChromeTokens {
         bg,
         fg,
@@ -148,7 +209,10 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         muted: mix_to_contrast(bg, fg, bg, 4.5),
         border: mix_to_contrast(bg, fg, bg, 3.0),
         code_bg,
-        link: accent,
+        // The palette's own link hue, not the chrome accent: a document whose
+        // links are GitHub blue on every theme is the one place the page
+        // visibly disagrees with the code inside it.
+        link: readable(markup.link, bg, 4.5),
         banner_bg: mix(bg, warn, if dark { 0.18 } else { 0.22 }),
         banner_fg: warn,
         banner_border: mix(bg, warn, 0.45),
@@ -166,6 +230,15 @@ pub fn tokens(bg: Rgb, fg: Rgb, dark: bool) -> ChromeTokens {
         find_current_fg: mix_to_contrast(find_current_bg, fg, find_current_bg, 4.5),
         comment_bg,
         comment_fg: mix_to_contrast(comment_bg, fg, comment_bg, 4.5),
+        heading,
+        strong: readable(markup.bold, bg, 4.5),
+        em: readable(markup.italic, bg, 4.5),
+        code_fg: readable(markup.raw, code_bg, 4.5),
+        quote_fg: readable(markup.quote, bg, 4.5),
+        // A table's head is the heading hue on the code surface -- the same
+        // role, and `th` already carries that background. Body size, though,
+        // so it is held to the body target rather than the heading's.
+        table_head_fg: readable(markup.heading, code_bg, 4.5),
     }
 }
 
@@ -178,7 +251,8 @@ impl ChromeTokens {
 --diff-del-bg:{};--diff-del-fg:{};--diff-del-border:{};\
 --diff-hunk-bg:{};--diff-hunk-fg:{};\
 --find-hit-bg:{};--find-hit-fg:{};--find-current-bg:{};--find-current-fg:{};\
---comment-bg:{};--comment-fg:{};",
+--comment-bg:{};--comment-fg:{};\
+--heading:{};--strong:{};--em:{};--code-fg:{};--quote-fg:{};--table-head-fg:{};",
             self.bg.hex(),
             self.fg.hex(),
             self.muted.hex(),
@@ -202,6 +276,12 @@ impl ChromeTokens {
             self.find_current_fg.hex(),
             self.comment_bg.hex(),
             self.comment_fg.hex(),
+            self.heading.hex(),
+            self.strong.hex(),
+            self.em.hex(),
+            self.code_fg.hex(),
+            self.quote_fg.hex(),
+            self.table_head_fg.hex(),
         )
     }
 }
@@ -232,7 +312,7 @@ mod tests {
         // A code block must read as a distinct surface on every theme, or
         // fenced code vanishes into the page.
         for (bg, fg, dark) in [(LIGHT_BG, LIGHT_FG, false), (DARK_BG, DARK_FG, true)] {
-            let t = tokens(bg, fg, dark);
+            let t = tokens(bg, fg, dark, MarkupPalette::default());
             assert_ne!(t.code_bg, t.bg, "code surface must differ from page");
         }
     }
@@ -242,7 +322,7 @@ mod tests {
         // Muted text must be dimmer than body text but still legible, i.e.
         // strictly between the two endpoints on every channel.
         for (bg, fg, dark) in [(LIGHT_BG, LIGHT_FG, false), (DARK_BG, DARK_FG, true)] {
-            let t = tokens(bg, fg, dark);
+            let t = tokens(bg, fg, dark, MarkupPalette::default());
             let between = |c: u8, a: u8, b: u8| (c >= a.min(b)) && (c <= a.max(b));
             assert!(between(t.muted.r, bg.r, fg.r), "muted.r outside bg..fg");
             assert!(between(t.muted.g, bg.g, fg.g), "muted.g outside bg..fg");
@@ -253,15 +333,17 @@ mod tests {
 
     #[test]
     fn every_token_is_emitted_as_a_css_variable() {
-        let css = tokens(DARK_BG, DARK_FG, true).to_css_vars();
+        let css = tokens(DARK_BG, DARK_FG, true, MarkupPalette::default()).to_css_vars();
         for name in [
             "--bg", "--fg", "--muted", "--border", "--code-bg", "--link",
             "--banner-bg", "--banner-fg", "--banner-border",
-            "--diff-add-bg", "--diff-add-fg", "--diff-del-bg", "--diff-del-fg",
+            "--diff-add-bg", "--diff-add-fg", "--diff-add-border",
+            "--diff-del-bg", "--diff-del-fg", "--diff-del-border",
             "--diff-hunk-bg", "--diff-hunk-fg",
             "--find-hit-bg", "--find-hit-fg",
             "--find-current-bg", "--find-current-fg",
             "--comment-bg", "--comment-fg",
+            "--heading", "--strong", "--em", "--code-fg", "--quote-fg", "--table-head-fg",
         ] {
             assert!(css.contains(name), "missing {name}");
         }
@@ -270,15 +352,15 @@ mod tests {
     #[test]
     fn tokens_differ_between_a_light_and_a_dark_source() {
         assert_ne!(
-            tokens(LIGHT_BG, LIGHT_FG, false).to_css_vars(),
-            tokens(DARK_BG, DARK_FG, true).to_css_vars()
+            tokens(LIGHT_BG, LIGHT_FG, false, MarkupPalette::default()).to_css_vars(),
+            tokens(DARK_BG, DARK_FG, true, MarkupPalette::default()).to_css_vars()
         );
     }
 
     #[test]
     fn diff_foregrounds_are_readable_on_their_backgrounds() {
         for (bg, fg, dark) in [(LIGHT_BG, LIGHT_FG, false), (DARK_BG, DARK_FG, true)] {
-            let t = tokens(bg, fg, dark);
+            let t = tokens(bg, fg, dark, MarkupPalette::default());
             assert!(contrast(t.diff_add_fg, t.diff_add_bg) >= 4.5);
             assert!(contrast(t.diff_del_fg, t.diff_del_bg) >= 4.5);
             assert!(contrast(t.diff_hunk_fg, t.diff_hunk_bg) >= 4.5);
@@ -288,7 +370,7 @@ mod tests {
     #[test]
     fn find_highlights_are_readable_and_distinct_from_each_other() {
         for (bg, fg, dark) in [(LIGHT_BG, LIGHT_FG, false), (DARK_BG, DARK_FG, true)] {
-            let t = tokens(bg, fg, dark);
+            let t = tokens(bg, fg, dark, MarkupPalette::default());
             assert!(contrast(t.find_hit_fg, t.find_hit_bg) >= 4.5);
             assert!(contrast(t.find_current_fg, t.find_current_bg) >= 4.5);
             // The current match has to be tellable from the other matches, or
@@ -348,6 +430,34 @@ mod contrast_tests {
         assert_eq!(mix_to_contrast(bg, fg, bg, 10.0), fg);
     }
 
+    /// v0.16 painted every theme's links the same GitHub blue, because
+    /// `link` was assigned the chrome accent rather than anything the palette
+    /// said. This is the test that fails if that assignment comes back.
+    #[test]
+    fn links_come_from_the_palette_and_not_the_chrome_accent() {
+        use crate::theme::Theme;
+
+        let accents = [
+            Rgb { r: 0x6c, g: 0xb6, b: 0xff },
+            Rgb { r: 0x09, g: 0x69, b: 0xda },
+        ];
+        let mut differ = 0;
+        for theme in Theme::all().iter().filter(|t| **t != Theme::System) {
+            let name = theme.syntect_name().expect("named theme has a palette");
+            let (_, bg, fg) = crate::highlight::palette_for(name).expect("palette");
+            let markup = crate::highlight::markup_palette_for(name).expect("markup palette");
+            let t = tokens(bg, fg, theme.is_dark().expect("darkness"), markup);
+            if !accents.contains(&t.link) {
+                differ += 1;
+            }
+        }
+        assert_eq!(
+            differ,
+            Theme::all().len() - 1,
+            "some theme still paints its links the hard-coded accent"
+        );
+    }
+
     /// These assertions are the point of fix 8: the old fixed blend fractions
     /// measured at 2.16:1-2.62:1 for `--muted` (below even the 3:1 large-text
     /// floor) and 1.29:1-1.74:1 for `--border` (below the 3:1 non-text floor)
@@ -363,7 +473,9 @@ mod contrast_tests {
             let (_, bg, fg) = crate::highlight::palette_for(syntect_name)
                 .unwrap_or_else(|| panic!("no bundled syntect palette for {}", theme.label()));
             let is_dark = theme.is_dark().expect("named theme has a darkness");
-            let t = tokens(bg, fg, is_dark);
+            let markup = crate::highlight::markup_palette_for(syntect_name)
+                .unwrap_or_else(|| panic!("no markup palette for {}", theme.label()));
+            let t = tokens(bg, fg, is_dark, markup);
             checked += 1;
 
             // fg/bg pass straight through unchanged.
@@ -377,6 +489,36 @@ mod contrast_tests {
             );
 
             assert_ne!(t.code_bg, t.bg, "{}: code surface must differ from the page", theme.label());
+
+            // The document's own colours, each measured against the surface
+            // it is actually laid on. 3:1 is the floor `readable` settles for
+            // when a palette's hue cannot reach the body target at all --
+            // Solarized Light's accents are all below its own text contrast.
+            for (name, colour, on) in [
+                ("heading", t.heading, t.bg),
+                ("link", t.link, t.bg),
+                ("strong", t.strong, t.bg),
+                ("em", t.em, t.bg),
+                ("quote-fg", t.quote_fg, t.bg),
+                ("code-fg", t.code_fg, t.code_bg),
+                ("table-head-fg", t.table_head_fg, t.code_bg),
+            ] {
+                let ratio = contrast(colour, on);
+                assert!(
+                    ratio >= 3.0,
+                    "{}: {name} contrast {ratio:.2} below the 3:1 floor",
+                    theme.label()
+                );
+            }
+
+            // The point of the whole derivation: a document that is not the
+            // same page on every theme. Heading, link and inline code all
+            // collapsing to fg means the probe found nothing at all.
+            assert!(
+                t.heading != t.fg || t.link != t.fg || t.code_fg != t.fg,
+                "{}: the document has no colour of its own",
+                theme.label()
+            );
 
             let border_contrast = contrast(t.border, t.bg);
             assert!(
