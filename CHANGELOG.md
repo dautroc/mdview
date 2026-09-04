@@ -3,6 +3,64 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.17.0](https://github.com/dautroc/mdview/releases/tag/v0.17.0) — 2026-09-04
+
+### What's new
+
+- **The document takes the theme's colours, not just the code inside it.**
+  Every named theme has derived its page chrome from its syntax palette for
+  six versions, but only six of those colours ever reached the document:
+  background, text, muted, border, code surface and link. Everything a
+  Markdown file actually says — every heading, every table, every bold run,
+  every inline code span — was painted in one colour. Headings, links, inline
+  code, emphasis and table headings now come from what the theme itself says
+  about Markdown, so a page reads the way it does in the editor the theme came
+  from.
+- **Links are the palette's, at last.** They were GitHub blue on all eight
+  themes, because the link colour was assigned the chrome accent rather than
+  anything the palette said. Chiroptera painted its links `#6cb6ff` while its
+  own link colour sat unused at `#85c6c9`. The chrome keeps the accent, which
+  is what the find bar and the jump labels want; the document gets the theme.
+- **Read out of the palette, not guessed at.** The eight themes disagree about
+  how a heading is even expressed — a plain `markup.heading` rule, or only the
+  `#` marks coloured with the text left to `entity.name.section`, or a font
+  weight and no colour at all. Asking for the scope name you expect finds one
+  of those three. MDView hands syntect the scope stack its own Markdown syntax
+  would push and lets the matcher answer, and reads silence as silence: a
+  palette that says nothing about prose falls through to the code scopes every
+  palette does define, so no theme is left without a colour and none is
+  invented.
+- **A colour that cannot be read is corrected, and one that can is left
+  alone.** Each hue is measured against the surface it actually lands on —
+  the code surface for inline code and table headings, the page for the rest —
+  and lifted toward the text colour only as far as legibility needs. Solarized
+  Light runs its own body text at 4.13:1, so an unbending 4.5 target would
+  walk every hue to the foreground and hand back the monochrome page this
+  change exists to remove; it settles for the 3:1 floor instead of giving up
+  the colour. Headings take 3:1 as large text, which is what keeps Solarized
+  Dark's yellow from turning grey over four hundredths of a ratio.
+- **The minimap heads its sections in the same colour the page does.**
+- **Chiroptera Dark Hard.** An eighth theme, translated from the Neovim
+  colourscheme's own palette file and the mapping in its `core.vim` rather
+  than eyeballed from a screenshot: String green, Number and Type blue,
+  Function and Boolean bright magenta, Keyword yellow, Conditional red,
+  Operator and PreProc magenta, Label and Constant cyan, Comment dim and
+  italic. It ships as a tmTheme beside Monokai Pro, so its page chrome derives
+  from it exactly as every other theme's does. Its comment colour sits at
+  about 4:1 against the page, under WCAG AA — that is the palette's own value,
+  and a theme that reads differently here than in the editor is not the theme.
+- **The reading column is 150 characters wide.** It had been capped at 46rem
+  since the first commit, about ninety characters — the width a page of
+  running text wants, and narrower than a lot of what people keep in Markdown.
+  A six-column table no longer has to scroll inside its own box to be read.
+  `g w` still removes the cap entirely.
+
+### Notes
+
+- The System theme is unchanged. It stamps no theme attribute, so none of the
+  new colours are defined for it, and every rule names a fallback: it renders
+  the monochrome GitHub renders, as before.
+
 ## [v0.16.0](https://github.com/dautroc/mdview/releases/tag/v0.16.0) — 2026-09-03
 
 ### What's new
