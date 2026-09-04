@@ -3,6 +3,63 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.18.0](https://github.com/dautroc/mdview/releases/tag/v0.18.0) — 2026-09-04
+
+### What's new
+
+- **A tour, and the demos in it are generated rather than recorded.**
+  `docs/tour.md` shows the app working in seven sections, grouped by what a
+  reader is doing at the time rather than by which key does it — reading
+  something long, finding your way, reviewing a draft with Claude, seeing what
+  changed, coming back to a document, what it renders, making it yours. The
+  README kept one image from v0.9 and a list of features nobody could see; the
+  minimap, both palettes, the rendered diff layouts and the theme-derived
+  document colours had all shipped since without ever being shown.
+- **`make reels`.** The whole interface is JavaScript in `init.js`, and
+  `tools/shot.swift` already rendered a generated page headlessly and ran
+  JavaScript against it. `tools/reel.swift` is that, stepped: a list of steps
+  in `reels/*.json`, a snapshot after each, and the dwell time recorded beside
+  it for ffmpeg. So a demo is rebuilt when the interface changes rather than
+  re-shot by hand, every demo is pinned to one theme and one size, and the
+  recents and bookmarks in them are literals in a spec rather than whatever
+  was on the machine that pressed record.
+- **The reel answers the bridge.** The page asks the app before it offers:
+  `postToHost` returns false with no handler and `hasHost` gates `c` outright,
+  so a bare web view answers `c` with "Comments need the app", drops `m`, and
+  does nothing for `g d`. `reel.swift` registers the same `mdview` message
+  handler `window.rs` does and answers from the spec — a page load, or one of
+  the `window.mdview*` hooks, which is what the app answers with. Without it,
+  four of the seven sections could not have been filmed at all.
+- **`mdview --print-html --diff [--diff-layout LAYOUT]`.** The diff is a whole
+  other page — `build_diff_page`, not a state the normal one can be put into —
+  so the four layouts were the one part of the app that could not be rendered
+  outside it, which is why `make shot` has never been able to show one. An
+  unrecognised layout name is refused rather than defaulted: `--diff-layout
+  renderd` quietly printing a unified diff is the kind of typo a demo bakes
+  into a GIF.
+- **Three tests keep the tour from rotting.** Nothing can check that a demo is
+  current, but a demo referenced and never generated can be caught, and so can
+  a retired shortcut still advertised in the one document that names keys
+  outside the README's table.
+
+### Notes
+
+- Frames are drawn to an explicit pixel size. `takeSnapshot` hands back an
+  image backed by whichever screen the offscreen window landed on, so the same
+  reel came back 900×620 on one run and 1800×1240 on the next; a demo that
+  changes size when it is rebuilt is not a demo that can be rebuilt.
+- ffmpeg is a developer's dependency and nothing else. It is not in the binary,
+  not in the bundle, and `all`, `test` and `dist` never reach it. Without it
+  the frames are still written and `make reel` says where they are.
+- The comment cards are shown in the sidebar rather than the margin, because
+  that is where they now land: the reading column caps at 150 characters, and
+  the rail wants 180px beyond it, so the margin only appears past about a
+  2000px window. The behaviour is unchanged since v0.17 — the demo just makes
+  it visible.
+- `docs/screenshot.png` is still from v0.9. It is the only image showing the
+  real macOS window, so it is left for a manual retake rather than replaced by
+  a generated page-only still.
+
 ## [v0.17.0](https://github.com/dautroc/mdview/releases/tag/v0.17.0) — 2026-09-04
 
 ### What's new
