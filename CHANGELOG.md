@@ -3,6 +3,22 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.18.1](https://github.com/dautroc/mdview/releases/tag/v0.18.1) — 2026-09-05
+
+### Fixes
+
+- **A zoomed diagram stays sharp.** `z` on a Mermaid diagram opened it, and
+  past about 2x the labels the zoom exists to make readable were the one thing
+  that stopped being readable. The overlay scaled its content with a CSS
+  transform on a box marked `will-change: transform`, which promotes it to its
+  own compositing layer; WebKit rasterises a layer once, at the size it was
+  laid out, so every step after that magnified those pixels rather than
+  redrawing the text. The zoom now sets the content's own width and height and
+  leaves the transform carrying the pan, so the diagram is laid out larger and
+  its text is drawn again from the vectors at every step. Sharp to the 8x
+  ceiling that was already there. Images take the same path and look the same
+  as before, a bitmap having nothing extra to give.
+
 ## [v0.18.0](https://github.com/dautroc/mdview/releases/tag/v0.18.0) — 2026-09-04
 
 ### What's new
