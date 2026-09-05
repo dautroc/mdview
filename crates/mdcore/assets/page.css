@@ -185,24 +185,23 @@ img { max-width: 100%; }
 
 .mdview-lightbox-stage.mdview-dragging { cursor: grabbing; }
 
+/* Anchored at the stage's top-left and shrunk to its content: the zoom sets
+   the content's own width and height, and this box's transform only pans, so
+   both have to grow from the same fixed origin. Centring is part of the pan
+   (see resetZoom), not a flex property, and there is no will-change: a layer
+   promoted for scaling is exactly what used to blur the text. */
 .mdview-lightbox-inner {
-  align-items: center;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
   left: 0;
   position: absolute;
-  right: 0;
   top: 0;
   transform-origin: 0 0;
-  will-change: transform;
 }
 
+/* No max-width/max-height cap: the fit to the stage is computed once, on
+   open, and a cap here would silently undo every zoom step past it. */
 .mdview-lightbox-inner img,
 .mdview-lightbox-inner svg {
   display: block;
-  max-height: 100%;
-  max-width: 100%;
 }
 
 .mdview-lightbox-controls {

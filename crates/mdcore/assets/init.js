@@ -84,7 +84,10 @@
   var MIN_SCALE = 0.25;
   var MAX_SCALE = 8;
 
-  var zoomState = null; // { scale, x, y } while the overlay is open, else null
+  // { scale, x, y, baseW, baseH, resizable } while the overlay is open, else
+  // null. baseW/baseH are the fitted size scale 1 means; see applyTransform
+  // for why zoom resizes the content instead of scaling it.
+  var zoomState = null;
   var dragState = null;
   var savedScrollY = 0;
   var savedBodyOverflow = "";
@@ -211,11 +214,27 @@
     return overlay;
   }
 
+  // Zoom RESIZES the content rather than scaling a painted copy of it. WebKit
+  // rasterises a layer once, at the size it was laid out, and a CSS scale then
+  // magnifies those pixels -- which is why a diagram's labels used to go soft
+  // the moment you zoomed in. Laying the SVG out larger makes WebKit draw its
+  // text from the vector again, so it stays sharp all the way to MAX_SCALE.
+  // The transform is left carrying the pan alone.
+  //
+  // Anything that is not an SVG or an image (an unrendered diagram left as its
+  // source text) has no size to set, and falls back to the scaling transform.
   function applyTransform() {
     var overlay = document.getElementById("mdview-lightbox");
     if (!overlay || !zoomState) return;
-    overlay._inner.style.transform =
-      "translate(" + zoomState.x + "px, " + zoomState.y + "px) scale(" + zoomState.scale + ")";
+    var pan = "translate(" + zoomState.x + "px, " + zoomState.y + "px)";
+    var content = overlay._inner.firstElementChild;
+    if (content && zoomState.resizable) {
+      content.style.width = zoomState.baseW * zoomState.scale + "px";
+      content.style.height = zoomState.baseH * zoomState.scale + "px";
+      overlay._inner.style.transform = pan;
+      return;
+    }
+    overlay._inner.style.transform = pan + " scale(" + zoomState.scale + ")";
   }
 
   // Zooms about a point given in stage-local coordinates, keeping the
@@ -238,11 +257,16 @@
     zoomAbout(rect.width / 2, rect.height / 2, factor);
   }
 
+  // Scale 1, centred: the view the overlay opened at, the whole diagram fitted
+  // to the stage. The inner box sits at the stage's top-left corner and the
+  // pan does the centring, so that has to be recomputed rather than zeroed.
   function resetZoom() {
-    if (!zoomState) return;
+    var overlay = document.getElementById("mdview-lightbox");
+    if (!overlay || !zoomState) return;
+    var rect = overlay._stage.getBoundingClientRect();
     zoomState.scale = 1;
-    zoomState.x = 0;
-    zoomState.y = 0;
+    zoomState.x = (rect.width - zoomState.baseW) / 2;
+    zoomState.y = (rect.height - zoomState.baseH) / 2;
     applyTransform();
   }
 
@@ -343,6 +367,24 @@
     event.preventDefault();
   }
 
+  // The content's own size in CSS pixels, before anything is fitted to the
+  // stage: a diagram's viewBox (mermaid always writes one), an image's
+  // intrinsic size, and the laid-out box for anything else.
+  function naturalSize(el) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : "";
+    if (tag === "svg") {
+      var box = el.viewBox && el.viewBox.baseVal;
+      if (box && box.width > 0 && box.height > 0) {
+        return { w: box.width, h: box.height };
+      }
+    }
+    if (tag === "img" && el.naturalWidth > 0) {
+      return { w: el.naturalWidth, h: el.naturalHeight };
+    }
+    var rect = el.getBoundingClientRect();
+    return { w: rect.width, h: rect.height };
+  }
+
   function openLightbox(node) {
     var overlay = getLightbox();
 
@@ -351,14 +393,44 @@
     clone.removeAttribute("data-mdview-zoom");
     overlay._inner.appendChild(clone);
 
-    zoomState = { scale: 1, x: 0, y: 0 };
-    applyTransform();
+    var tag = clone.tagName ? clone.tagName.toLowerCase() : "";
+    var resizable = tag === "svg" || tag === "img";
+    if (resizable) {
+      // Mermaid ships its SVG at width="100%" under an inline max-width, and
+      // an image carries whatever the document sized it to. Both would fight
+      // the explicit size the zoom sets.
+      clone.removeAttribute("width");
+      clone.removeAttribute("height");
+      clone.style.maxWidth = "none";
+      clone.style.maxHeight = "none";
+    }
+
+    // Shown before measuring: a hidden overlay lays nothing out, and the stage
+    // and the content would both come back zero-sized.
+    overlay.hidden = false;
+
+    var rect = overlay._stage.getBoundingClientRect();
+    var size = naturalSize(clone);
+    // Scale 1 is the whole diagram, fitted -- but never enlarged, so a small
+    // diagram opens at the size it has in the document rather than filling the
+    // stage with a magnified version of itself.
+    var fit = resizable ? Math.min(1, rect.width / size.w, rect.height / size.h) : 1;
+    if (!isFinite(fit) || fit <= 0) fit = 1;
+
+    zoomState = {
+      scale: 1,
+      x: 0,
+      y: 0,
+      baseW: size.w * fit,
+      baseH: size.h * fit,
+      resizable: resizable,
+    };
+    resetZoom();
 
     savedScrollY = window.scrollY;
     savedBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    overlay.hidden = false;
     document.addEventListener("keydown", onKeyDown);
   }
 
