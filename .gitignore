@@ -6,6 +6,10 @@
 # Superpowers agent scratch (reports, ledgers, review packages)
 .superpowers/
 
+# Serena's per-project config, written on startup by whoever has the MCP
+# server enabled. A tool preference rather than something the repo needs.
+.serena/
+
 /dist
 
 # Design specs and implementation plans: kept locally, not published.
