@@ -69,6 +69,21 @@ pub(crate) struct WorkspaceRestore {
     positions: HashMap<PathBuf, u32>,
 }
 
+/// Aggregate persisted reviews against a document allowlist. This is cheap
+/// (it reads the already-small review files, not the documents), so it is
+/// built as soon as the snapshot arrives rather than waiting for the link
+/// graph that shares `analyze_workspace` with it.
+fn build_review_index(
+    root: &std::path::Path,
+    files: impl Iterator<Item = (PathBuf, PathBuf)>,
+) -> crate::review_index::ReviewIndex {
+    let mut reviews = crate::review_index::ReviewIndex::new(root.to_path_buf(), files);
+    for (path, review) in crate::store::enumerate().unwrap_or_default() {
+        reviews.update(path, review);
+    }
+    reviews
+}
+
 fn analyze_workspace(index: mdcore::WorkspaceIndex) -> Result<WorkspaceAnalysis, String> {
     let links = mdcore::LinkGraph::build(
         index.root().path(),
@@ -77,15 +92,12 @@ fn analyze_workspace(index: mdcore::WorkspaceIndex) -> Result<WorkspaceAnalysis,
             .map(|(file, source)| (file.path.clone(), source.to_string())),
     )
     .map_err(|error| error.to_string())?;
-    let mut reviews = crate::review_index::ReviewIndex::new(
-        index.root().path().to_path_buf(),
+    let reviews = build_review_index(
+        index.root().path(),
         index
             .files()
             .map(|file| (file.relative_path.clone(), file.path.clone())),
     );
-    for (path, review) in crate::store::enumerate().unwrap_or_default() {
-        reviews.update(path, review);
-    }
     Ok(WorkspaceAnalysis {
         index,
         links,
@@ -1402,11 +1414,22 @@ impl AppDelegate {
                         Ok(snapshot) => {
                             let first = snapshot.files.first().map(|file| file.path.clone());
                             let root = snapshot.root.path().to_path_buf();
+                            // The review index only needs the file allowlist, which the
+                            // snapshot already has. Building it here lets the Review Inbox
+                            // (and its copy-prompt) work immediately instead of blocking
+                            // behind the full link-graph analysis.
+                            let reviews = build_review_index(
+                                &root,
+                                snapshot
+                                    .files
+                                    .iter()
+                                    .map(|file| (file.relative_path.clone(), file.path.clone())),
+                            );
                             *self.ivars().workspace.borrow_mut() = Some(WorkspaceData {
                                 snapshot,
                                 index: None,
                                 links: None,
-                                reviews: None,
+                                reviews: Some(reviews),
                             });
                             let watcher_matches =
                                 self.ivars().workspace_watcher_root.borrow().as_ref()
