@@ -17,7 +17,7 @@ const MARKDOWN_EXTENSIONS: [&str; 3] = ["md", "markdown", "mdown"];
 pub enum NavigationRequest {
     /// Hand this URL to the user's default browser.
     OpenExternal(String),
-    /// Open this local Markdown file in a new MDView window.
+    /// Open this local Markdown file in a new MDView tab.
     OpenDocument(PathBuf),
 }
 

@@ -179,6 +179,52 @@ mod bundle_version_tests {
     }
 
     #[test]
+    fn every_opened_document_gets_a_native_tab_instead_of_repointing_one() {
+        let app = include_str!("app.rs");
+        assert!(app.contains("fn open_documents("));
+        assert!(app.contains("addTabbedWindow_ordered"));
+        assert!(!app.contains("open_first_record_rest"));
+        assert!(!app.contains("existing.load("));
+        assert!(
+            app.contains("handle_message_from(Some(id), message)"),
+            "a page callback must keep the tab that emitted it"
+        );
+
+        let window = include_str!("window.rs");
+        assert!(
+            !window.contains("pub fn load("),
+            "a document tab must never be repointed at another path"
+        );
+    }
+
+    #[test]
+    fn tab_navigation_is_wired_through_both_native_and_vim_shortcuts() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(selectNextDocumentTab:)"));
+        assert!(menu.contains("sel!(selectPreviousDocumentTab:)"));
+        assert!(menu.contains("NSEventModifierFlags::Control"));
+
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(selectNextDocumentTab:))]"));
+        assert!(app.contains("#[unsafe(method(selectPreviousDocumentTab:))]"));
+        assert!(app.contains("Message::NextTab"));
+        assert!(app.contains("Message::PreviousTab"));
+        assert!(
+            app.contains("group.windows().len() > 1"),
+            "tab navigation should be disabled when it cannot move"
+        );
+
+        let page = mdcore::assets::INIT_JS;
+        assert!(page.contains("keys: [\"g n\"]"));
+        assert!(page.contains("keys: [\"g p\"]"));
+        assert!(
+            page.contains("event.ctrlKey && !event.metaKey && !event.altKey && event.key === \"Tab\""),
+            "WebKit must not consume Control-Tab as focus traversal"
+        );
+        assert!(page.contains("event.shiftKey ? \"previousTab\" : \"nextTab\""));
+    }
+
+    #[test]
     fn the_sidebar_tabs_are_reachable_without_the_keyboard() {
         let menu = include_str!("menu.rs");
         assert!(menu.contains("sel!(showOutline:)"));
@@ -218,7 +264,9 @@ mod bundle_version_tests {
     #[test]
     fn copying_the_review_prompt_reports_through_the_transient_note() {
         let app = include_str!("app.rs");
-        let start = app.find("fn copy_review_prompt(&self)").expect("no copy_review_prompt");
+        let start = app
+            .find("fn copy_review_prompt(&self, source_id: Option<u64>)")
+            .expect("no copy_review_prompt");
         let end = start + app[start..].find("\n    /// Send the bookmark").expect("end of fn");
         let body = &app[start..end];
         assert!(body.contains("show_note("), "C must speak through the note");
@@ -248,15 +296,15 @@ mod bundle_version_tests {
             "drain_pending_banners owns the readiness check"
         );
         // One document's comments never reach another document's page.
-        assert!(body.contains("window.path.borrow()"));
+        assert!(body.contains("window.path.to_string_lossy()"));
     }
 
     /// `C` asks Claude to delete the records it addressed, so something has
     /// to notice the file changing. Nothing else does: comments are re-read on
     /// open and after MDView's own writes, and an edit by anyone else would sit
-    /// unseen until the document happened to be reloaded. The watch is its own
-    /// per-window watcher, and it must be torn down with the document's --
-    /// a stale one would report the PREVIOUS document's review into this window.
+    /// unseen until the document happened to be reloaded. Every tab owns one
+    /// immutable document path and one review watcher, so closing that tab tears
+    /// down exactly the resources that belong to it.
     #[test]
     fn the_review_file_is_watched_and_a_change_re_reads_it() {
         let window = include_str!("window.rs");
@@ -265,10 +313,15 @@ mod bundle_version_tests {
         // Started before the first comment exists, so the directory has to be
         // there: `save` does not make it until something is written.
         assert!(window.contains("review_watch_path"));
-        let load = &window[window.find("pub fn load(").expect("load")..];
-        let load = &load[..load.find("\n    pub fn ").expect("end of load")];
-        assert!(load.contains("*self.review_watcher.borrow_mut() = None;"), "stale watch kept");
-        assert!(load.contains("watch_review(path)"), "the new document is not watched");
+        assert!(
+            window.contains("review_watcher: RefCell::new(watch_review(path))"),
+            "a new tab does not start its review watch"
+        );
+        assert!(window.contains("pub path: PathBuf"), "tab identity must be immutable");
+        assert!(
+            !window.contains("pub fn load("),
+            "a tab must not be repointed at another document"
+        );
 
         let app = include_str!("app.rs");
         let start = app.find("fn watch_tick").expect("no tick");
@@ -483,12 +536,11 @@ mod bundle_version_tests {
             menu.contains("sel!(toggleFullWidth:)"),
             "View item must target the native action"
         );
-        // Full Width has no key equivalent any more -- `w` in the page is the
-        // only binding, so there is nothing here to keep in sync with it.
-        // Scoped to the menu it builds: the tests below mention the setter.
-        let install = &menu[menu.find("pub fn install(").expect("install")
-            ..menu.find("#[cfg(test)]").expect("tests")];
-        assert!(!install.contains("setKeyEquivalentModifierMask"));
+        // Full Width itself still has no key equivalent; the only explicit
+        // modifier masks in this menu belong to native tab navigation.
+        assert!(menu.contains(
+            "item(mtm, FULL_WIDTH_TITLE, sel!(toggleFullWidth:), \"\")"
+        ));
         let app = include_str!("app.rs");
         assert!(app.contains("#[unsafe(method(toggleFullWidth:))]"));
         assert!(app.contains("set_bool(crate::defaults::FULL_WIDTH_KEY, enabled)"));

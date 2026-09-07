@@ -102,8 +102,9 @@ belong in the app rather than in a GIF:
   `mdview notes.md` from a shell, or Open With from Finder.
 - **The menu bar.** Every command has a menu item, which is how a mouse
   reaches it. The recordings are the page; the menu bar is the window.
-- **The window itself** — the title bar, and opening a second document into
-  the same window rather than scattering windows across the desktop.
+- **The window itself** — the title bar and its native tabs. Opening another
+  document adds a tab without replacing the one you were reading; ⌃Tab and
+  ⌃⇧Tab move between them.
 
 ## Every key
 

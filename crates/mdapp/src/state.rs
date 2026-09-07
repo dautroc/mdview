@@ -148,6 +148,24 @@ pub fn push_history(list: &[String], path: &str, cap: usize) -> Vec<String> {
     out
 }
 
+/// Record one ordered open request. The first requested path stays newest,
+/// while repeated paths in the same batch are represented only once.
+#[allow(dead_code)]
+pub fn push_history_batch(list: &[String], paths: &[String], cap: usize) -> Vec<String> {
+    let mut unique = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !unique.contains(path) {
+            unique.push(path.clone());
+        }
+    }
+
+    let mut out = list.to_vec();
+    for path in unique.iter().rev() {
+        out = push_history(&out, path, cap);
+    }
+    out
+}
+
 /// The name a recent-files row is labelled with. A path with no last
 /// component -- only `/` has none -- falls back to the whole thing rather than
 /// to an empty row.
@@ -210,6 +228,8 @@ pub enum Message {
     ToggleDiff,
     SetDiffLayout(DiffLayout),
     ToggleFullWidth,
+    NextTab,
+    PreviousTab,
     OpenPath(String),
     SetSidebar { open: bool, tab: String },
     SetSidebarWidth(u32),
@@ -243,6 +263,12 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     if raw == "reloadDocument" {
         return Some(Message::ReloadDocument);
+    }
+    if raw == "nextTab" {
+        return Some(Message::NextTab);
+    }
+    if raw == "previousTab" {
+        return Some(Message::PreviousTab);
     }
     if raw == "zoomIn" {
         return Some(Message::ZoomIn);
@@ -784,6 +810,22 @@ mod tests {
     }
 
     #[test]
+    fn an_open_batch_keeps_the_first_requested_document_newest() {
+        assert_eq!(
+            push_history_batch(&v(&["/old"]), &v(&["/a", "/b", "/c"]), 50),
+            v(&["/a", "/b", "/c", "/old"])
+        );
+    }
+
+    #[test]
+    fn an_open_batch_deduplicates_without_changing_request_order() {
+        assert_eq!(
+            push_history_batch(&v(&["/old", "/b"]), &v(&["/a", "/b", "/a"]), 50),
+            v(&["/a", "/b", "/old"])
+        );
+    }
+
+    #[test]
     fn a_recent_row_is_labelled_with_the_file_name() {
         assert_eq!(recent_label("/Users/bo/notes/README.md"), "README.md");
         // Nothing to take a name from, so the row shows the path itself
@@ -866,6 +908,8 @@ mod tests {
             Some(Message::SetDiffLayout(DiffLayout::Split))
         );
         assert_eq!(parse_message("toggleFullWidth"), Some(Message::ToggleFullWidth));
+        assert_eq!(parse_message("nextTab"), Some(Message::NextTab));
+        assert_eq!(parse_message("previousTab"), Some(Message::PreviousTab));
         assert_eq!(parse_message("reloadDocument"), Some(Message::ReloadDocument));
         assert_eq!(parse_message("zoomIn"), Some(Message::ZoomIn));
         assert_eq!(parse_message("zoomOut"), Some(Message::ZoomOut));

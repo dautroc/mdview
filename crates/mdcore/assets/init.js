@@ -4318,6 +4318,13 @@
       ],
     },
     {
+      title: "Tabs",
+      items: [
+        { keys: ["g n"], hint: "g  n", label: "Next tab", run: function () { postToHost("nextTab"); } },
+        { keys: ["g p"], hint: "g  p", label: "Previous tab", run: function () { postToHost("previousTab"); } },
+      ],
+    },
+    {
       title: "Sidebar",
       items: [
         { keys: ["g s"], hint: "g  s", label: "Toggle the sidebar", run: toggleSidebarKey },
@@ -4540,10 +4547,18 @@
     // Any key at all means the hint has been read, or at least overtaken.
     // Above the modifier check on purpose, so ⌘-anything dismisses it too.
     dismissHint();
-    // ⌘ and ⌥ belong to the menu bar (⌘O, ⌘F, ⌘R) and to the browser. ⌃ does
-    // not: menu.rs installs no ⌃ equivalent and asserts it, so the scroll keys
-    // ⌃d ⌃u ⌃f ⌃b are the page's to claim. Any other ⌃ combo is handed straight
-    // back -- WebKit and AppKit have their own uses for it.
+    // WebKit treats Control-Tab as focus traversal before AppKit's menu key
+    // equivalent can act reliably. Reserve the native tab-navigation pair here
+    // and send it through the same host actions as the Window menu. This stays
+    // above modal and text-entry guards because changing tabs is app-level UI.
+    if (event.ctrlKey && !event.metaKey && !event.altKey && event.key === "Tab") {
+      event.preventDefault();
+      postToHost(event.shiftKey ? "previousTab" : "nextTab");
+      return;
+    }
+    // ⌘ and ⌥ belong to the menu bar (⌘O, ⌘F, ⌘R) and to the browser. Other ⌃
+    // chords are claimed only when they appear in the shortcut table; unknown
+    // ones are handed back to WebKit and AppKit for their native behavior.
     if (event.metaKey || event.altKey) return;
     if (event.ctrlKey && !isCtrlBound(event.key)) return;
     // The lightbox is modal and owns the keyboard while it is up; its own

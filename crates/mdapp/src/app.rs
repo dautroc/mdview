@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -8,7 +8,7 @@ use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu,
-    NSMenuItem, NSMenuItemValidation,
+    NSMenuItem, NSMenuItemValidation, NSWindowOrderingMode,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString,
@@ -20,6 +20,10 @@ use crate::window::DocumentWindow;
 /// Everything the delegate owns. Held in the delegate's ivars.
 pub struct AppState {
     pub windows: RefCell<Vec<Rc<DocumentWindow>>>,
+    /// Stable identity for the native tab AppKit most recently made key. It
+    /// remains meaningful while an Open panel temporarily owns key focus.
+    pub active_tab: Rc<Cell<Option<u64>>>,
+    pub next_tab_id: Cell<u64>,
     /// Built once: loading syntect's syntax set costs tens of milliseconds and
     /// every window and every live reload shares this one.
     pub highlighter: Highlighter,
@@ -57,6 +61,15 @@ define_class!(
                 return false.into();
             };
             let valid = match item.action() {
+                Some(action)
+                    if action == objc2::sel!(selectNextDocumentTab:)
+                        || action == objc2::sel!(selectPreviousDocumentTab:) =>
+                {
+                    window
+                        .window
+                        .tabGroup()
+                        .is_some_and(|group| group.windows().len() > 1)
+                }
                 Some(action) if action == objc2::sel!(toggleDiff:) => {
                     window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff
                 },
@@ -78,12 +91,10 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let paths = self.ivars().startup_paths.take();
-            // One reusable window can only show one document, so open the
-            // FIRST argument for the same reason `application:openURLs:` and
-            // `present_open_panel` do, and record the rest in history so
-            // they stay reachable from File > Open Recent instead of being
-            // silently dropped.
-            self.open_first_record_rest(&paths);
+            // A multi-file launch is one ordered request: every document gets
+            // a tab, while the first path remains selected just as it was when
+            // only one document could be displayed.
+            self.open_documents(&paths);
 
             // Refill Open Recent after the menu system is ready.
             self.rebuild_recent_menu();
@@ -112,10 +123,8 @@ define_class!(
 
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
-            // With one reusable window, opening N files can only show one.
-            // Open the FIRST and record the rest in history rather than
-            // dropping them — discarding them entirely would throw away
-            // files the user explicitly selected.
+            // Preserve the event's order: every local file becomes a tab and
+            // the first requested document is selected when the batch is done.
             let mut paths = Vec::new();
             for url in urls.iter() {
                 // Ignore anything that is not a local file; the app has no
@@ -127,7 +136,7 @@ define_class!(
                 let Some(path) = url.path() else { continue };
                 paths.push(std::path::PathBuf::from(path.to_string()));
             }
-            self.open_first_record_rest(&paths);
+            self.open_documents(&paths);
         }
 
         #[unsafe(method(applicationShouldOpenUntitledFile:))]
@@ -218,6 +227,16 @@ define_class!(
         #[unsafe(method(openDocument:))]
         fn open_document_action(&self, _sender: Option<&NSObject>) {
             self.present_open_panel();
+        }
+
+        #[unsafe(method(selectNextDocumentTab:))]
+        fn select_next_document_tab_action(&self, _sender: Option<&NSObject>) {
+            self.select_document_tab(None, true);
+        }
+
+        #[unsafe(method(selectPreviousDocumentTab:))]
+        fn select_previous_document_tab_action(&self, _sender: Option<&NSObject>) {
+            self.select_document_tab(None, false);
         }
 
         #[unsafe(method(reloadDocument:))]
@@ -482,6 +501,8 @@ impl AppDelegate {
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(AppState {
             windows: RefCell::new(Vec::new()),
+            active_tab: Rc::new(Cell::new(None)),
+            next_tab_id: Cell::new(1),
             highlighter: Highlighter::new(),
             startup_paths: RefCell::new(startup_paths),
             recent_menu: RefCell::new(Some(recent_menu)),
@@ -546,124 +567,237 @@ impl AppDelegate {
         menu.addItem(&clear);
     }
 
-    /// Open the first path and record the rest in history without displaying
-    /// them. One window can only show one document, but the user asked for
-    /// all of them, so the others stay reachable from File > Open Recent.
-    fn open_first_record_rest(&self, paths: &[std::path::PathBuf]) {
-        let Some((first, rest)) = paths.split_first() else { return };
-        for path in rest.iter().rev() {
-            // Canonicalize here too. `open_document` normalises the path it
-            // opens, so recording the extras as-given would key the same
-            // document two different ways — a relative argv path against the
-            // process CWD, or an unresolved symlink — which is the identity
-            // split canonicalization exists to prevent.
-            let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-            if let Some(s) = path.to_str() {
-                let history = crate::state::push_history(
-                    &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
-                    s,
-                    50,
-                );
-                crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &history);
-            }
-        }
-        self.open_document(first);
+    /// Open one ordered batch of documents as tabs. Canonical paths are tab
+    /// identities: asking for an already-open document selects it rather than
+    /// creating a second watcher and web view for the same file.
+    fn open_documents(&self, paths: &[std::path::PathBuf]) {
+        self.open_documents_from(paths, None);
     }
 
-    /// The single entry point every way of opening a file funnels into:
-    /// startup arguments, Finder, the Open panel, and dropped files.
-    pub fn open_document(&self, path: &std::path::Path) {
+    fn open_documents_from(&self, paths: &[std::path::PathBuf], source_id: Option<u64>) {
         use crate::navigation::NavigationRequest;
         use objc2_app_kit::NSWorkspace;
 
-        // Persisted history and bookmarks are keyed by path string, so a
-        // relative path would produce a second identity for the same document
-        // and would resolve against whatever CWD the process happens to have.
-        let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-
-        // Every way of opening a document funnels through here, which makes
-        // this the one correct place to record history.
-        //
-        // `path.to_str()` silently omits a non-UTF-8 path from history (and
-        // from Open Recent) while still opening it in the window below — a
-        // deliberate, if narrow, gap rather than an oversight.
-        if let Some(path_str) = path.to_str() {
-            let history = crate::state::push_history(
-                &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
-                path_str,
-                50,
-            );
-            crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &history);
+        let mut canonical = Vec::with_capacity(paths.len());
+        for path in paths {
+            // Persisted state and open-tab identity are keyed by path string, so
+            // relative and symlinked spellings must converge before either is
+            // inspected. Resolving the parent and rejoining the filename also
+            // gives a stable absolute identity to a file that is missing now but
+            // may reappear while its error tab remains open.
+            let path = crate::watcher::watch_target(path);
+            if !canonical.contains(&path) {
+                canonical.push(path);
+            }
         }
-
-        let state = self.ivars();
-
-        // Reuse the window the user is looking at rather than stacking a new
-        // one per document. `frontmost_window` is the same notion of "current
-        // window" that Reload and the zoom items use, so they cannot disagree.
-        if let Some(existing) = self.frontmost_window() {
-            existing.load(path, &state.highlighter);
-            existing.window.makeKeyAndOrderFront(None);
-            // The reuse branch returns early, so the new-window branch's call
-            // is unreachable here — and this is the path nearly every open
-            // takes. Without it the star and list describe the PREVIOUS
-            // document, and a ⌘D against that stale state would toggle the
-            // wrong way.
-            self.push_bookmarks_to_pages();
-            self.push_comments_to_pages();
-            self.push_recents_to_pages();
-            self.rebuild_recent_menu();
-            self.maybe_queue_shortcuts_hint(&existing);
+        if canonical.is_empty() {
             return;
         }
 
+        // A non-UTF-8 path still opens, but cannot be represented in the
+        // string-backed recent-file store. Record the rest as one batch so the
+        // first requested path remains the newest entry.
+        let history_paths: Vec<String> = canonical
+            .iter()
+            .filter_map(|path| path.to_str().map(str::to_owned))
+            .collect();
+        let history = crate::state::push_history_batch(
+            &crate::defaults::get_strings(crate::defaults::HISTORY_KEY),
+            &history_paths,
+            50,
+        );
+        crate::defaults::set_strings(crate::defaults::HISTORY_KEY, &history);
+
+        let state = self.ivars();
         let mtm = MainThreadMarker::from(self);
+        let mut insertion_anchor = source_id
+            .and_then(|id| self.window_by_id(id))
+            .or_else(|| self.frontmost_window());
+        let mut first_requested = None;
 
-        // The web view calls back on the main thread, so a plain Rc closure
-        // holding a pointer to the delegate is sound here.
-        let delegate: Retained<AppDelegate> = unsafe { Retained::retain(self as *const _ as *mut _) }
-            .expect("delegate is alive while its windows are");
+        for path in &canonical {
+            let existing = state
+                .windows
+                .borrow()
+                .iter()
+                .find(|window| !window.is_closed() && window.path.as_path() == path)
+                .cloned();
 
-        let handler: Rc<dyn Fn(NavigationRequest)> = Rc::new(move |request| match request {
-            NavigationRequest::OpenExternal(url) => {
-                let workspace = NSWorkspace::sharedWorkspace();
-                if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url)) {
-                    workspace.openURL(&url);
+            let (document, created) = if let Some(existing) = existing {
+                (existing, false)
+            } else {
+                let id = state.next_tab_id.get();
+                state
+                    .next_tab_id
+                    .set(id.checked_add(1).expect("tab identity overflow"));
+
+                // The web view calls back on the main thread, so a plain Rc
+                // closure holding a retained delegate is sound here.
+                let delegate: Retained<AppDelegate> =
+                    unsafe { Retained::retain(self as *const _ as *mut _) }
+                        .expect("delegate is alive while its windows are");
+                let handler: Rc<dyn Fn(NavigationRequest)> =
+                    Rc::new(move |request| match request {
+                        NavigationRequest::OpenExternal(url) => {
+                            let workspace = NSWorkspace::sharedWorkspace();
+                            if let Some(url) =
+                                NSURL::URLWithString(&NSString::from_str(&url))
+                            {
+                                workspace.openURL(&url);
+                            }
+                        }
+                        NavigationRequest::OpenDocument(path) => {
+                            delegate.open_document_from(id, &path)
+                        }
+                    });
+
+                let msg_delegate: Retained<AppDelegate> =
+                    unsafe { Retained::retain(self as *const _ as *mut _) }
+                        .expect("delegate is alive while its windows are");
+                let on_message: Rc<dyn Fn(crate::state::Message)> = Rc::new(move |message| {
+                    msg_delegate.handle_message_from(Some(id), message)
+                });
+
+                // DocumentWindow constructs and renders without presenting.
+                // Attach it first so opening a tab never flashes a detached
+                // centered window on screen.
+                let document = DocumentWindow::open(
+                    id,
+                    path,
+                    mtm,
+                    &state.highlighter,
+                    state.active_tab.clone(),
+                    handler,
+                    on_message,
+                );
+                if let Some(anchor) = insertion_anchor.as_ref() {
+                    if let Some(group) = anchor.window.tabGroup() {
+                        let tabs = group.windows();
+                        let index = tabs
+                            .iter()
+                            .position(|candidate| {
+                                std::ptr::eq(
+                                    Retained::as_ptr(&candidate),
+                                    Retained::as_ptr(&anchor.window),
+                                )
+                            })
+                            .map(|index| index + 1)
+                            .unwrap_or_else(|| tabs.len());
+                        group.insertWindow_atIndex(&document.window, index as isize);
+                    } else {
+                        anchor.window.addTabbedWindow_ordered(
+                            &document.window,
+                            NSWindowOrderingMode::Above,
+                        );
+                    }
+                } else {
+                    document.window.center();
                 }
+                state.windows.borrow_mut().push(document.clone());
+                (document, true)
+            };
+
+            if first_requested.is_none() {
+                first_requested = Some(document.clone());
             }
-            NavigationRequest::OpenDocument(path) => delegate.open_document(&path),
-        });
+            // Only newly created tabs advance the insertion point. Existing tabs
+            // keep their position and cannot redirect the rest of a batch into a
+            // different native tab group.
+            if created {
+                insertion_anchor = Some(document);
+            }
+        }
 
-        let msg_delegate: Retained<AppDelegate> =
-            unsafe { Retained::retain(self as *const _ as *mut _) }
-                .expect("delegate is alive while its windows are");
-        let on_message: Rc<dyn Fn(crate::state::Message)> = Rc::new(move |message| {
-            msg_delegate.handle_message(message);
-        });
-
-        let window = DocumentWindow::open(path, mtm, &state.highlighter, handler, on_message);
-        state.windows.borrow_mut().push(window);
+        if let Some(document) = first_requested {
+            state.active_tab.set(Some(document.id));
+            document.window.makeKeyAndOrderFront(None);
+            self.maybe_queue_shortcuts_hint(&document);
+        }
         self.push_bookmarks_to_pages();
         self.push_comments_to_pages();
         self.push_recents_to_pages();
         self.rebuild_recent_menu();
-        if let Some(window) = self.frontmost_window() {
-            self.maybe_queue_shortcuts_hint(&window);
+    }
+
+    /// The single-document form used by local links, recents, and bookmarks.
+    /// Every other opening source funnels into `open_documents` directly.
+    pub fn open_document(&self, path: &std::path::Path) {
+        self.open_documents(&[path.to_path_buf()]);
+    }
+
+    fn open_document_from(&self, source_id: u64, path: &std::path::Path) {
+        // A late navigation from a tab that has already closed must not create
+        // new UI beside whichever document happens to be active now.
+        if self.window_by_id(source_id).is_some() {
+            self.open_documents_from(&[path.to_path_buf()], Some(source_id));
         }
     }
 
-    /// The window the user is looking at, or None when every window is closed.
+    fn window_by_id(&self, id: u64) -> Option<Rc<DocumentWindow>> {
+        self.ivars()
+            .windows
+            .borrow()
+            .iter()
+            .find(|document| document.id == id && !document.is_closed())
+            .cloned()
+    }
+
+    /// The document tab the user is looking at, or None when all tabs are
+    /// closed. The key window is authoritative during normal interaction. A
+    /// modal panel temporarily becomes key itself, so fall back to AppKit's
+    /// selected window in the native tab group before using creation order.
     fn frontmost_window(&self) -> Option<Rc<DocumentWindow>> {
         let windows = self.ivars().windows.borrow();
         windows
             .iter()
-            .find(|w| w.window.isKeyWindow())
-            .or_else(|| windows.last())
+            .find(|document| !document.is_closed() && document.window.isKeyWindow())
+            .or_else(|| {
+                let active = self.ivars().active_tab.get()?;
+                windows
+                    .iter()
+                    .find(|document| document.id == active && !document.is_closed())
+            })
+            .or_else(|| {
+                windows.iter().find(|document| {
+                    !document.is_closed()
+                        && document
+                        .window
+                        .tabGroup()
+                        .and_then(|group| group.selectedWindow())
+                        .is_some_and(|selected| {
+                            std::ptr::eq(
+                                Retained::as_ptr(&selected),
+                                Retained::as_ptr(&document.window),
+                            )
+                        })
+                })
+            })
+            .or_else(|| windows.iter().rev().find(|document| !document.is_closed()))
             .cloned()
     }
 
-    fn adjust_zoom(&self, factor: f64) {
-        if let Some(window) = self.frontmost_window() {
+    fn select_document_tab(&self, source_id: Option<u64>, forward: bool) {
+        let Some(document) = self.message_window(source_id) else {
+            return;
+        };
+        if forward {
+            document.window.selectNextTab(None);
+        } else {
+            document.window.selectPreviousTab(None);
+        }
+    }
+
+    fn message_window(&self, source_id: Option<u64>) -> Option<Rc<DocumentWindow>> {
+        match source_id {
+            // Page-originated callbacks are dropped if their tab has closed;
+            // falling back here would apply a late message to another document.
+            Some(id) => self.window_by_id(id),
+            None => self.frontmost_window(),
+        }
+    }
+
+    fn adjust_zoom(&self, source_id: Option<u64>, factor: f64) {
+        if let Some(window) = self.message_window(source_id) {
             let current = unsafe { window.webview.pageZoom() };
             // Clamp so repeated presses cannot make the document unreadable.
             let next = (current * factor).clamp(0.5, 3.0);
@@ -672,6 +806,10 @@ impl AppDelegate {
     }
 
     pub(crate) fn handle_message(&self, message: crate::state::Message) {
+        self.handle_message_from(None, message);
+    }
+
+    fn handle_message_from(&self, source_id: Option<u64>, message: crate::state::Message) {
         use crate::state::Message;
         match message {
             Message::SetTheme(theme, scroll_opt) => {
@@ -681,7 +819,7 @@ impl AppDelegate {
                 // theme indefinitely. Collect the Rcs first, then reload outside
                 // the borrow — matching watch_tick's pattern — since reload can
                 // reenter `windows` (e.g. via message handling on the new page).
-                let source = self.frontmost_window();
+                let source = self.message_window(source_id);
                 let windows: Vec<Rc<DocumentWindow>> =
                     self.ivars().windows.borrow().iter().cloned().collect();
                 for window in &windows {
@@ -711,8 +849,8 @@ impl AppDelegate {
                 }
             }
             Message::ToggleBookmark => {
-                let Some(window) = self.frontmost_window() else { return };
-                let path = window.path.borrow().to_string_lossy().into_owned();
+                let Some(window) = self.message_window(source_id) else { return };
+                let path = window.path.to_string_lossy().into_owned();
                 let updated = crate::state::toggle_bookmark(
                     &crate::defaults::get_strings(crate::defaults::BOOKMARKS_KEY),
                     &path,
@@ -722,22 +860,25 @@ impl AppDelegate {
                 self.push_comments_to_pages();
             }
             Message::ToggleDiff => {
-                if let Some(window) = self.frontmost_window() {
+                if let Some(window) = self.message_window(source_id) {
                     if window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff {
                         window.toggle_diff(&self.ivars().highlighter);
                     }
                 }
             }
             Message::SetDiffLayout(layout) => {
-                if let Some(window) = self.frontmost_window() {
+                if let Some(window) = self.message_window(source_id) {
                     window.set_diff_layout(layout, &self.ivars().highlighter);
                 }
             }
             Message::ToggleFullWidth => {
                 self.toggle_full_width_native();
             }
-            Message::OpenPath(path) => {
-                self.open_document(std::path::Path::new(&path));
+            Message::NextTab => self.select_document_tab(source_id, true),
+            Message::PreviousTab => self.select_document_tab(source_id, false),
+            Message::OpenPath(path) => match source_id {
+                Some(id) => self.open_document_from(id, std::path::Path::new(&path)),
+                None => self.open_document(std::path::Path::new(&path)),
             }
             Message::SetSidebar { open, tab } => {
                 crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);
@@ -753,7 +894,7 @@ impl AppDelegate {
             // These four go through the same paths as their menu items, so the
             // page's `r`, `+`, `-` and `0` cannot drift from ⌘R and ⌘=/⌘-/⌘0.
             Message::ReloadDocument => {
-                if let Some(window) = self.frontmost_window() {
+                if let Some(window) = self.message_window(source_id) {
                     window.reload(&self.ivars().highlighter);
                     self.push_bookmarks_to_pages();
                     self.push_comments_to_pages();
@@ -761,8 +902,8 @@ impl AppDelegate {
                 }
             }
             Message::AddComment { heading, nth, quote, note } => {
-                let Some(window) = self.frontmost_window() else { return };
-                let doc = window.path.borrow().clone();
+                let Some(window) = self.message_window(source_id) else { return };
+                let doc = window.path.clone();
                 let key = doc.to_string_lossy().into_owned();
                 let mut comments = crate::store::load(&key).comments;
                 if comments.len() >= crate::store::COMMENT_LIMIT {
@@ -777,8 +918,8 @@ impl AppDelegate {
                 self.write_review(&window, &doc, &comments);
             }
             Message::EditComment { id, note } => {
-                let Some(window) = self.frontmost_window() else { return };
-                let doc = window.path.borrow().clone();
+                let Some(window) = self.message_window(source_id) else { return };
+                let doc = window.path.clone();
                 let key = doc.to_string_lossy().into_owned();
                 let mut comments = crate::store::load(&key).comments;
                 let Some(target) = comments.iter_mut().find(|c| c.id == id) else {
@@ -797,8 +938,8 @@ impl AppDelegate {
                 self.write_review(&window, &doc, &comments);
             }
             Message::DeleteComment { id } => {
-                let Some(window) = self.frontmost_window() else { return };
-                let doc = window.path.borrow().clone();
+                let Some(window) = self.message_window(source_id) else { return };
+                let doc = window.path.clone();
                 let key = doc.to_string_lossy().into_owned();
                 // `x` has no undo, so the previous file is the recovery.
                 crate::store::backup(&key);
@@ -806,11 +947,11 @@ impl AppDelegate {
                 comments.retain(|c| c.id != id);
                 self.write_review(&window, &doc, &comments);
             }
-            Message::CopyReview => self.copy_review_prompt(),
-            Message::ZoomIn => self.adjust_zoom(ZOOM_STEP),
-            Message::ZoomOut => self.adjust_zoom(1.0 / ZOOM_STEP),
+            Message::CopyReview => self.copy_review_prompt(source_id),
+            Message::ZoomIn => self.adjust_zoom(source_id, ZOOM_STEP),
+            Message::ZoomOut => self.adjust_zoom(source_id, 1.0 / ZOOM_STEP),
             Message::ZoomReset => {
-                if let Some(window) = self.frontmost_window() {
+                if let Some(window) = self.message_window(source_id) {
                     unsafe { window.webview.setPageZoom(1.0) };
                 }
             }
@@ -865,7 +1006,7 @@ impl AppDelegate {
     /// window's comments to all of them would anchor them in the wrong text.
     pub(crate) fn push_comments_to_pages(&self) {
         for window in self.ivars().windows.borrow().iter() {
-            let key = window.path.borrow().to_string_lossy().into_owned();
+            let key = window.path.to_string_lossy().into_owned();
             let review = crate::store::load(&key);
             // What could be read still goes to the page. Showing nothing
             // because one record is bad would hide the comments that are fine.
@@ -892,11 +1033,11 @@ impl AppDelegate {
     }
 
     /// Put the review prompt on the pasteboard, for pasting into Claude.
-    fn copy_review_prompt(&self) {
+    fn copy_review_prompt(&self, source_id: Option<u64>) {
         use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 
-        let Some(window) = self.frontmost_window() else { return };
-        let doc = window.path.borrow().clone();
+        let Some(window) = self.message_window(source_id) else { return };
+        let doc = window.path.clone();
         let key = doc.to_string_lossy().into_owned();
         let comments = crate::store::load(&key).comments;
         if comments.is_empty() {
@@ -951,7 +1092,7 @@ impl AppDelegate {
             .collect::<Vec<_>>()
             .join(",");
         for window in self.ivars().windows.borrow().iter() {
-            let current = window.path.borrow().to_string_lossy().into_owned();
+            let current = window.path.to_string_lossy().into_owned();
             let starred = crate::state::is_bookmarked(&stored, &current);
             let script = format!(
                 "window.mdviewSetBookmarks && window.mdviewSetBookmarks([{items}], {starred});"
@@ -978,7 +1119,7 @@ impl AppDelegate {
         let live = self.live_history();
         let home = std::env::var("HOME").ok();
         for window in self.ivars().windows.borrow().iter() {
-            let current = window.path.borrow().to_string_lossy().into_owned();
+            let current = window.path.to_string_lossy().into_owned();
             let script = crate::state::recents_script(&live, &current, home.as_deref());
             // Queued, never evaluated. See push_bookmarks_to_pages.
             window.pending_scripts.borrow_mut().push(script);
@@ -1007,7 +1148,7 @@ impl AppDelegate {
                 paths.push(std::path::PathBuf::from(path.to_string()));
             }
         }
-        self.open_first_record_rest(&paths);
+        self.open_documents(&paths);
     }
 }
 

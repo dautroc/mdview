@@ -2,17 +2,15 @@ use objc2::rc::Retained;
 use objc2::sel;
 use objc2::MainThreadOnly;
 use objc2_app_kit::{
-    NSApplication, NSControlStateValue, NSControlStateValueOff, NSControlStateValueOn, NSMenu,
-    NSMenuItem,
+    NSApplication, NSControlStateValue, NSControlStateValueOff, NSControlStateValueOn,
+    NSEventModifierFlags, NSMenu, NSMenuItem,
 };
 use objc2_foundation::{MainThreadMarker, NSString};
 
-// Only three of MDView's own commands keep a key equivalent: ⌘O, ⌘F and ⌘R,
-// the ones whose muscle memory predates this app. Everything else the app
-// does has a key or a two-key `g` sequence in the page (see the ? sheet), so a
-// second shortcut for it would be a second thing to keep in sync. The macOS standards -- ⌘C,
-// ⌘A, ⌘Q, ⌘W, ⌘M, ⌘H -- stay: they are not duplicates of anything, and ⌘C is
-// the only way to copy out of the web view.
+// Only three document commands keep a Command-key equivalent: ⌘O, ⌘F and
+// ⌘R, whose muscle memory predates this app. Everything else the page can do
+// stays behind its single key or `g` sequence. Window management keeps the
+// macOS standards too, including ⌃Tab / ⌃⇧Tab for native tab navigation.
 const MINIMAP_TITLE: &str = "Toggle Minimap";
 const FULL_WIDTH_TITLE: &str = "Full Width";
 const DIFF_TITLE: &str = "Show Diff";
@@ -91,6 +89,18 @@ fn item(
             &NSString::from_str(key),
         )
     }
+}
+
+fn modified_item(
+    mtm: MainThreadMarker,
+    title: &str,
+    action: objc2::runtime::Sel,
+    key: &str,
+    modifiers: NSEventModifierFlags,
+) -> Retained<NSMenuItem> {
+    let entry = item(mtm, title, action, key);
+    entry.setKeyEquivalentModifierMask(modifiers);
+    entry
 }
 
 fn submenu(mtm: MainThreadMarker, title: &str) -> (Retained<NSMenuItem>, Retained<NSMenu>) {
@@ -215,6 +225,21 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
 
     let (window_holder, window_menu) = submenu(mtm, "Window");
     window_menu.addItem(&item(mtm, "Minimize", sel!(performMiniaturize:), "m"));
+    window_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    window_menu.addItem(&modified_item(
+        mtm,
+        "Next Tab",
+        sel!(selectNextDocumentTab:),
+        "\t",
+        NSEventModifierFlags::Control,
+    ));
+    window_menu.addItem(&modified_item(
+        mtm,
+        "Previous Tab",
+        sel!(selectPreviousDocumentTab:),
+        "\t",
+        NSEventModifierFlags::Control | NSEventModifierFlags::Shift,
+    ));
     menubar.addItem(&window_holder);
 
     // MDView has no help book, so the only item here is the one thing a user
@@ -236,15 +261,11 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
 mod tests {
     use super::*;
 
-    /// The whole shortcut policy in one place. Every command the page can do
-    /// has a key or a two-key `g` sequence (the ? sheet is the list), so a
-    /// modifier shortcut for it would be a second binding to keep in sync with
-    /// the first. Only three of MDView's own commands keep one, because their
-    /// muscle memory predates this app and no page key can replace them: ⌘O
-    /// opens a native panel,
-    /// and ⌘F / ⌘R are what hands reach for without looking.
+    /// The whole shortcut policy in one place. Document commands keep only the
+    /// established ⌘O, ⌘F and ⌘R equivalents; native window management adds
+    /// the standard Control-Tab pair without taking another Command binding.
     #[test]
-    fn only_open_find_and_reload_keep_a_key_equivalent() {
+    fn only_deliberate_commands_keep_a_key_equivalent() {
         let source = include_str!("menu.rs");
         let install = &source[source.find("pub fn install(").expect("install")
             ..source.find("#[cfg(test)]").expect("tests")]
@@ -272,10 +293,9 @@ mod tests {
         sorted.sort_unstable();
         assert_eq!(
             sorted,
-            // MDView's own: Open, Find, Reload. The rest are macOS standards
-            // that are not duplicates of anything -- and ⌘C is the only way to
-            // copy out of the web view at all.
-            vec!["a", "c", "f", "h", "m", "o", "q", "r", "w"],
+            // The two tab entries use the same Tab key and differ by their
+            // Control / Control+Shift modifier masks.
+            vec!["\\t", "\\t", "a", "c", "f", "h", "m", "o", "q", "r", "w"],
             "unexpected key equivalents: {bound:?}"
         );
     }
@@ -289,10 +309,13 @@ mod tests {
         let source = include_str!("menu.rs");
         let install = &source[source.find("pub fn install(").expect("install")
             ..source.find("#[cfg(test)]").expect("tests")];
-        assert!(
-            !install.contains("setKeyEquivalentModifierMask"),
-            "a modifier mask means a shortcut beyond the plain ⌘ ones"
+        assert_eq!(
+            install.matches("modified_item(").count(),
+            2,
+            "only next/previous tab should need a non-Command modifier mask"
         );
+        assert!(install.contains("NSEventModifierFlags::Control"));
+        assert!(install.contains("NSEventModifierFlags::Control | NSEventModifierFlags::Shift"));
     }
 
     #[test]

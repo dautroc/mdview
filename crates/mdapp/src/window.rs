@@ -24,9 +24,12 @@ pub enum ViewMode {
     Diff,
 }
 
-/// Ivars for `WindowCloseDelegate`: just the shared flag it flips.
+/// Ivars for `WindowCloseDelegate`: the tab identity plus the shared selection
+/// and lifecycle flags it updates without retaining the application delegate.
 pub struct WindowCloseState {
+    id: u64,
     closed: Rc<Cell<bool>>,
+    active_tab: Rc<Cell<Option<u64>>>,
 }
 
 define_class!(
@@ -39,16 +42,34 @@ define_class!(
     unsafe impl NSObjectProtocol for WindowCloseDelegate {}
 
     unsafe impl NSWindowDelegate for WindowCloseDelegate {
+        #[unsafe(method(windowDidBecomeKey:))]
+        fn window_did_become_key(&self, _notification: &NSNotification) {
+            self.ivars().active_tab.set(Some(self.ivars().id));
+        }
+
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
-            self.ivars().closed.set(true);
+            let state = self.ivars();
+            state.closed.set(true);
+            if state.active_tab.get() == Some(state.id) {
+                state.active_tab.set(None);
+            }
         }
     }
 );
 
 impl WindowCloseDelegate {
-    fn new(mtm: MainThreadMarker, closed: Rc<Cell<bool>>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(WindowCloseState { closed });
+    fn new(
+        mtm: MainThreadMarker,
+        id: u64,
+        closed: Rc<Cell<bool>>,
+        active_tab: Rc<Cell<Option<u64>>>,
+    ) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(WindowCloseState {
+            id,
+            closed,
+            active_tab,
+        });
         unsafe { objc2::msg_send![super(this), init] }
     }
 }
@@ -61,12 +82,13 @@ fn watch_review(doc: &Path) -> Option<crate::watcher::FileWatcher> {
     crate::watcher::FileWatcher::start(&path).ok()
 }
 
-/// One window showing one document. Owns its web view and its own file
-/// watcher; closing a window tears down only that window's resources.
+/// One native window tab showing one document. Owns its web view and file
+/// watchers; closing a tab tears down only that document's resources.
 pub struct DocumentWindow {
+    pub id: u64,
     pub window: Retained<NSWindow>,
     pub webview: Retained<WKWebView>,
-    pub path: RefCell<PathBuf>,
+    pub path: PathBuf,
     /// Held so the delegate outlives the web view; WKWebView keeps only a
     /// weak reference to its navigation delegate.
     _navigation: Retained<crate::navigation::NavigationDelegate>,
@@ -120,9 +142,11 @@ pub struct DocumentWindow {
 
 impl DocumentWindow {
     pub fn open(
+        id: u64,
         path: &Path,
         mtm: MainThreadMarker,
         highlighter: &Highlighter,
+        active_tab: Rc<Cell<Option<u64>>>,
         on_navigate: Rc<dyn Fn(crate::navigation::NavigationRequest)>,
         on_message: Rc<dyn Fn(crate::state::Message)>,
     ) -> Rc<Self> {
@@ -179,7 +203,8 @@ impl DocumentWindow {
         window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
 
         let closed = Rc::new(Cell::new(false));
-        let window_delegate = WindowCloseDelegate::new(mtm, closed.clone());
+        let window_delegate =
+            WindowCloseDelegate::new(mtm, id, closed.clone(), active_tab);
         unsafe {
             window.setDelegate(Some(ProtocolObject::from_ref(&*window_delegate)));
 
@@ -201,12 +226,11 @@ impl DocumentWindow {
                 webview.setUnderPageBackgroundColor(Some(&NSColor::textBackgroundColor()));
             }
         }
-        window.center();
-
         let doc_window = Rc::new(DocumentWindow {
+            id,
             window,
             webview,
-            path: RefCell::new(path.to_path_buf()),
+            path: path.to_path_buf(),
             _navigation: navigation,
             _bridge: bridge,
             _window_delegate: window_delegate,
@@ -224,7 +248,6 @@ impl DocumentWindow {
         });
 
         doc_window.reload(highlighter);
-        doc_window.window.makeKeyAndOrderFront(None);
         doc_window
     }
 
@@ -241,7 +264,7 @@ impl DocumentWindow {
     /// as the recovery path when live reload lands on a window that is
     /// currently showing the error page.
     pub fn reload(&self, highlighter: &Highlighter) {
-        let path = self.path.borrow().clone();
+        let path = self.path.clone();
 
         // Clear unconditionally, before we know whether this load succeeds:
         // a stale queue from a previous load must never survive onto either
@@ -352,12 +375,6 @@ impl DocumentWindow {
         }
     }
 
-    /// Point this window at a different document: swap the path, rebuild the
-    /// watcher for the new parent directory, and re-render.
-    ///
-    /// The old watcher MUST be dropped before the new one starts. A stale
-    /// watcher keeps firing live updates for the previous document's
-    /// directory, which would re-render this window from the wrong file.
     /// Give the window chrome the page's own colouring, so the titlebar reads
     /// as the top of the document rather than a grey band above it. Runs on
     /// every load, which is also how a theme change arrives: `SetTheme`
@@ -420,23 +437,6 @@ impl DocumentWindow {
             }
         };
         self.window.setBackgroundColor(Some(&background));
-    }
-
-    pub fn load(&self, path: &Path, highlighter: &Highlighter) {
-        *self.path.borrow_mut() = path.to_path_buf();
-        self.view_mode.set(ViewMode::Rendered);
-        *self.watcher.borrow_mut() = None;
-        *self.watcher.borrow_mut() = crate::watcher::FileWatcher::start(path).ok();
-        // Dropped first, for the reason above: a stale watch would keep
-        // reporting the PREVIOUS document's review into this window.
-        *self.review_watcher.borrow_mut() = None;
-        *self.review_watcher.borrow_mut() = watch_review(path);
-        self.pending_banners.borrow_mut().clear();
-        self.reload(highlighter);
-        // Defensive: `reload` clears these banners, but make `load` correct on
-        // its own terms rather than depending on a detail of `reload`.
-        self.clear_banner("missing");
-        self.clear_banner("lossy");
     }
 
     pub fn view_mode(&self) -> ViewMode {
@@ -507,7 +507,7 @@ impl DocumentWindow {
             return;
         }
 
-        let path = self.path.borrow().clone();
+        let path = self.path.clone();
         self.diff_state.set(mdcore::diff::availability(&path));
         self.eval_script(&format!(
             "window.mdviewSetDiffAvailability && window.mdviewSetDiffAvailability({}, {});",

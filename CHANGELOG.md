@@ -3,6 +3,30 @@
 Release notes for MDView, organized around user-visible features, fixes, and
 the commits that introduced them. The newest release is listed first.
 
+## [v0.19.0](https://github.com/dautroc/mdview/releases/tag/v0.19.0) — 2026-09-07
+
+### What's new
+
+- **Opening a document opens a native macOS tab instead of replacing the page
+  you were reading.** Each tab keeps its own document, scroll position, live
+  reload watcher, review watcher, and WebKit page. The tab bar stays out of the
+  way when only one document is open, and `⌘W` closes only the active tab.
+- **Every opening path follows the same tab rules.** A multi-file command,
+  Finder request, or Open panel selection opens all requested documents in
+  order. Asking for a document that is already open selects its existing tab
+  rather than duplicating it.
+- **Tab navigation works from both macOS and the document keyboard.** `⌃Tab`
+  selects the next tab, `⌃⇧Tab` selects the previous one, and `g n` / `g p`
+  provide the same movement in MDView's Vim-style vocabulary. The Window menu
+  exposes the native commands and disables them when there is nowhere to move.
+
+### Notes
+
+- Page callbacks carry the identity of the tab that sent them. A reload,
+  bookmark, comment, diff command, or local Markdown link therefore stays with
+  its originating document even if another tab becomes active before WebKit
+  finishes the callback; callbacks arriving after a tab closes are discarded.
+
 ## [v0.18.1](https://github.com/dautroc/mdview/releases/tag/v0.18.1) — 2026-09-05
 
 ### Fixes

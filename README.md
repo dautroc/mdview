@@ -24,8 +24,8 @@ file that never closes it.
 
 ## What it does
 
-- **No buttons.** The window is the document. Everything is a key, and the
-  macOS menu bar carries the same commands for a mouse. Press **?** for the
+- **No document toolbar.** The window is the document. Everything is a key,
+  and the macOS menu bar carries the same commands for a mouse. Press **?** for the
   list; the app offers it once, on first launch.
 - **Outline** built from the document's headings, in a sidebar you can toggle
   and drag to resize; the width is remembered across launches. The heading you
@@ -98,8 +98,8 @@ file that never closes it.
   `h`/`j`/`k`/`l` pan it.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
-- **One window.** Opening another document reuses the current window rather
-  than scattering windows across the desktop.
+- **Native tabs.** Opening another document adds it to the current window
+  instead of replacing what you were reading or scattering windows across the desktop.
 
 ## Install
 
@@ -146,7 +146,8 @@ Moving around is a single key; the commands that are not motion sit behind `g`,
 which keeps the vim alphabet free for the document itself. Press **?** for the
 full list, which the app also offers once on first launch, or **:** to search
 the commands that are this app's own — the ones a vim alphabet does not
-already cover — and run what you find.
+already cover — and run what you find. Tabs also use the macOS standards:
+**⌃Tab** moves to the next tab and **⌃⇧Tab** moves to the previous one.
 
 | Key | |
 | --- | --- |
@@ -167,6 +168,7 @@ already cover — and run what you find.
 | / | Find in this document |
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
+| g n / g p | Next / previous tab |
 | g s | Toggle the sidebar |
 | g m | Toggle the minimap |
 | g o / g b | Outline / bookmarks in the sidebar |

@@ -55,9 +55,19 @@ pub fn watch_target(path: &Path) -> PathBuf {
         return resolved;
     }
     match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) => match std::fs::canonicalize(parent) {
-            Ok(directory) => directory.join(name),
-            Err(_) => path.to_path_buf(),
+        (Some(parent), Some(name)) => {
+            // `Path::parent` returns an empty path for a bare relative name such
+            // as `notes.md`. Treat that as the current directory so a missing
+            // file and the same file after it appears keep one absolute identity.
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            match std::fs::canonicalize(parent) {
+                Ok(directory) => directory.join(name),
+                Err(_) => path.to_path_buf(),
+            }
         },
         _ => path.to_path_buf(),
     }
@@ -155,6 +165,15 @@ mod tests {
     /// comparison never matches and the watch is dead with nothing to show
     /// for it. The temp directory is itself under a symlink on macOS, so this
     /// is the real case and not a contrived one.
+    #[test]
+    fn a_missing_bare_relative_path_resolves_from_the_current_directory() {
+        let directory = std::fs::canonicalize(".").expect("current directory");
+        assert_eq!(
+            watch_target(Path::new("not-written-yet.md")),
+            directory.join("not-written-yet.md")
+        );
+    }
+
     #[test]
     fn a_file_that_does_not_exist_yet_resolves_through_its_symlinked_parent() {
         let base = std::env::temp_dir().join(format!("mdview-watch-{}", std::process::id()));
