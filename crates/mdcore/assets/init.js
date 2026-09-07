@@ -747,6 +747,8 @@
   var workspaceError = null;
   var documentLinks = [];
   var documentBacklinks = [];
+  var reviewInbox = [];
+  var reviewInboxFilter = "unresolved";
   var currentDocumentLink = null;
   var linkPreviewTimer = 0;
   var linkPreviewCloseTimer = 0;
@@ -792,8 +794,9 @@
       title.textContent =
         sidebarTab === "files" ? "Files" :
           sidebarTab === "links" ? "Links" :
-            sidebarTab === "bookmarks" ? "Bookmarks" :
-              sidebarTab === "comments" ? "Comments" : "Outline";
+            sidebarTab === "inbox" ? "Review Inbox" :
+              sidebarTab === "bookmarks" ? "Bookmarks" :
+                sidebarTab === "comments" ? "Comments" : "Outline";
     }
     renderSidebarBody();
     layoutCommentRail();
@@ -980,6 +983,11 @@
     documentBacklinks = Array.isArray(backlinks) ? backlinks : [];
     enhanceDocumentLinks();
     if (sidebarTab === "links") renderSidebarBody();
+  };
+
+  window.mdviewSetReviewInbox = function (items) {
+    reviewInbox = Array.isArray(items) ? items : [];
+    if (sidebarTab === "inbox") renderSidebarBody();
   };
 
   function linkSummary(anchor) {
@@ -1240,6 +1248,105 @@
     }
   }
 
+  function reviewMatchesFilter(item) {
+    if (reviewInboxFilter === "unresolved") return item.status !== "resolved";
+    if (reviewInboxFilter === "all") return true;
+    return item.status === reviewInboxFilter;
+  }
+
+  function renderReviewInbox(body) {
+    body.textContent = "";
+    var filters = document.createElement("div");
+    filters.className = "mdview-review-filters";
+    ["unresolved", "open", "resolved", "stale", "all"].forEach(function (filter) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = filter.charAt(0).toUpperCase() + filter.slice(1);
+      button.className = filter === reviewInboxFilter ? "is-active" : "";
+      button.addEventListener("click", function () {
+        reviewInboxFilter = filter;
+        renderSidebarBody();
+      });
+      filters.appendChild(button);
+    });
+    var copyPrompt = document.createElement("button");
+    copyPrompt.type = "button";
+    copyPrompt.className = "mdview-review-copy-prompt";
+    copyPrompt.textContent = "Copy filtered prompt";
+    copyPrompt.addEventListener("click", function () {
+      postToHost("copyInboxReview:" + reviewInboxFilter);
+    });
+    body.appendChild(filters);
+    body.appendChild(copyPrompt);
+
+    var visible = reviewInbox.filter(reviewMatchesFilter);
+    if (!workspaceRoot) {
+      var noWorkspace = document.createElement("p");
+      noWorkspace.className = "mdview-sidebar-empty";
+      noWorkspace.textContent = "Open a folder to collect reviews across documents.";
+      body.appendChild(noWorkspace);
+      return;
+    }
+    if (!visible.length) {
+      var empty = document.createElement("p");
+      empty.className = "mdview-sidebar-empty";
+      empty.textContent = "No " + (reviewInboxFilter === "all" ? "review comments" : reviewInboxFilter + " comments") + ".";
+      body.appendChild(empty);
+      return;
+    }
+
+    var grouped = {};
+    visible.forEach(function (item) {
+      if (!grouped[item.relative]) grouped[item.relative] = [];
+      grouped[item.relative].push(item);
+    });
+    Object.keys(grouped).sort().forEach(function (relative) {
+      var heading = document.createElement("h3");
+      heading.className = "mdview-sidebar-section mdview-review-document";
+      heading.textContent = relative;
+      body.appendChild(heading);
+      var list = document.createElement("ul");
+      grouped[relative].forEach(function (item) {
+        var li = document.createElement("li");
+        li.className = "mdview-review-item status-" + item.status;
+        if (item.damaged) li.classList.add("is-damaged");
+        var row = document.createElement("div");
+        row.className = "mdview-review-row";
+        var link = document.createElement("a");
+        link.href = "#";
+        link.textContent = excerpt(item.note || item.quote, 120);
+        link.title = excerpt(item.quote, 300);
+        link.addEventListener("click", function (event) {
+          event.preventDefault();
+          postToHost("openReviewItem:" + encodeURIComponent(item.path) + ":" + encodeURIComponent(item.id));
+        });
+        var status = document.createElement("button");
+        status.type = "button";
+        status.className = "mdview-review-status";
+        status.textContent = item.status;
+        status.title = item.status === "resolved" ? "Reopen comment" : "Mark resolved";
+        status.addEventListener("click", function () {
+          var next = item.status === "resolved" ? "open" : "resolved";
+          postToHost(
+            "setReviewStatus:" + encodeURIComponent(item.path) + ":" +
+            encodeURIComponent(item.id) + ":" + next
+          );
+        });
+        row.appendChild(link);
+        row.appendChild(status);
+        li.appendChild(row);
+        if (item.damaged) {
+          var warning = document.createElement("span");
+          warning.className = "mdview-review-warning";
+          warning.textContent = "Review file needs repair";
+          li.appendChild(warning);
+        }
+        list.appendChild(li);
+      });
+      body.appendChild(list);
+    });
+  }
+
   function renderSidebarBody() {
     var body = document.getElementById("mdview-sidebar-body");
     if (!body) return;
@@ -1247,6 +1354,8 @@
       renderWorkspaceFiles(body);
     } else if (sidebarTab === "links") {
       renderLinks(body);
+    } else if (sidebarTab === "inbox") {
+      renderReviewInbox(body);
     } else if (sidebarTab === "outline") {
       body.innerHTML = buildOutline();
       var links = body.querySelectorAll("a[data-outline-id]");
@@ -1272,7 +1381,8 @@
       for (var n = 0; n < comments.length; n++) {
         (function (comment) {
           var li = document.createElement("li");
-          li.className = "mdview-comment-item";
+          li.className = "mdview-comment-item status-" + (comment.status || "open");
+          li.setAttribute("data-comment-id", comment.id);
           var a = document.createElement("a");
           a.href = "#";
           // textContent, never innerHTML: both fields are document text.
@@ -1317,6 +1427,22 @@
       }
     }
   }
+
+  window.mdviewRevealReviewComment = function (id) {
+    var marks = anchorMarks(id);
+    if (marks && marks.length) {
+      marks[0].scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    setSidebar(true, "comments");
+    var rows = document.querySelectorAll("#mdview-sidebar-body [data-comment-id]");
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute("data-comment-id") === id) {
+        rows[i].scrollIntoView({ block: "center" });
+        break;
+      }
+    }
+  };
 
   // ---- The outline follows the reader --------------------------------------
   //
@@ -2904,6 +3030,8 @@
   var comments = [];
   var commentAnchors = [];
   var commentOrphans = {};
+  var commentMissing = {};
+  var pendingCommentStatuses = {};
   var pendingComment = null;
   var editingCommentId = null;
   // A sanity bound, not an anchoring constraint. indexOf does not care how
@@ -3049,6 +3177,7 @@
   function applyCommentAnchors() {
     clearCommentAnchors();
     commentOrphans = {};
+    commentMissing = {};
     var content = contentEl();
     if (!content || !comments.length) return;
     var index = textIndex(content);
@@ -3056,7 +3185,10 @@
     var found = [];
     for (var i = 0; i < comments.length; i++) {
       var comment = comments[i];
-      if (!comment.quote) continue;
+      if (!comment.quote) {
+        commentMissing[comment.id] = true;
+        continue;
+      }
       var range = sectionRange(index, starts, comment.heading);
       var section = index.text.slice(range.from, range.to);
       var at = -1;
@@ -3074,6 +3206,7 @@
         // The text it quoted is gone. Kept in the list, marked orphaned: a
         // comment whose subject was edited away is still something you wrote.
         commentOrphans[comment.id] = true;
+        commentMissing[comment.id] = true;
         continue;
       }
       found.push({
@@ -3129,6 +3262,22 @@
       var marks = wrapRuns(runsFor(index, winner.from, winner.to), winner.comment.id);
       if (marks.length) commentAnchors.push({ id: winner.comment.id, marks: marks });
       else commentOrphans[winner.comment.id] = true;
+    }
+    synchronizeStaleStatuses();
+  }
+
+  function synchronizeStaleStatuses() {
+    if (!hasHost() || document.documentElement.getAttribute("data-view") === "diff") return;
+    for (var i = 0; i < comments.length; i++) {
+      var comment = comments[i];
+      var next = null;
+      if (comment.status === "open" && commentMissing[comment.id]) next = "stale";
+      else if (comment.status === "stale" && !commentMissing[comment.id]) next = "open";
+      if (!next || pendingCommentStatuses[comment.id] === next) continue;
+      pendingCommentStatuses[comment.id] = next;
+      postToHost(
+        "setCurrentReviewStatus:" + encodeURIComponent(comment.id) + ":" + next
+      );
     }
   }
 
@@ -3548,7 +3697,10 @@
   }
 
   function copyReviewKey() {
-    if (!postToHost("copyReview")) showNote("Comments need the app.");
+    var message = sidebarTab === "inbox"
+      ? "copyInboxReview:" + reviewInboxFilter
+      : "copyReview";
+    if (!postToHost(message)) showNote("Comments need the app.");
   }
 
   // Whether the app is behind this page at all, asked without sending
@@ -3786,6 +3938,7 @@
 
   window.mdviewSetComments = function (items) {
     comments = Array.isArray(items) ? items : [];
+    pendingCommentStatuses = {};
     refreshHighlights();
     if (sidebarTab === "comments") renderSidebarBody();
   };
@@ -5106,6 +5259,7 @@
         { keys: ["c"], hint: "c", label: "Comment on the selection, or show the comments", run: commentKey },
         { keys: [")"], hint: ")", label: "Next comment", run: function () { stepComment(1); } },
         { keys: ["("], hint: "(", label: "Previous comment", run: function () { stepComment(-1); } },
+        { keys: ["g v"], hint: "g  v", label: "Review Inbox", run: function () { showSidebarTab("inbox"); } },
         { keys: ["g c"], hint: "g  c", label: "Edit the comment you are looking at", run: editCommentKey },
         { keys: ["x"], hint: "x", label: "Delete the comment you are looking at", run: deleteCommentKey },
         { keys: ["C"], hint: "C", label: "Copy the review prompt for Claude", run: copyReviewKey },

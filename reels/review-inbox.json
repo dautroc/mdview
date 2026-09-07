@@ -1,0 +1,30 @@
+{
+  "page": "tour.html",
+  "width": 1180,
+  "height": 680,
+  "openHold": 900,
+  "seed": [
+    "window.demoInbox=[{path:'/docs/guide.md',relative:'guide.md',id:'1',heading:1,nth:0,quote:'retry policy',note:'State the retry ceiling.',status:'open',damaged:false},{path:'/docs/runbook.md',relative:'runbook.md',id:'2',heading:2,nth:0,quote:'old queue name',note:'This passage moved.',status:'stale',damaged:false},{path:'/docs/release.md',relative:'release.md',id:'3',heading:1,nth:0,quote:'release gate',note:'Verified in staging.',status:'resolved',damaged:false}];window.mdviewSetWorkspace('/docs',[{path:'/docs/guide.md',relative:'guide.md'},{path:'/docs/runbook.md',relative:'runbook.md'},{path:'/docs/release.md',relative:'release.md'}],false,null);window.mdviewSetReviewInbox(window.demoInbox);"
+  ],
+  "bridge": {
+    "setReviewStatus:": {
+      "js": "(function(a){var p=a.split(':');var id=decodeURIComponent(p[1]);window.demoInbox.forEach(function(x){if(x.id===id)x.status=p[2];});window.mdviewSetReviewInbox(window.demoInbox);})('%s')"
+    },
+    "copyInboxReview:": {
+      "js": "window.mdviewNote('Filtered Review Inbox prompt copied.')"
+    },
+    "openReviewItem:": {
+      "ignore": true
+    },
+    "*": {
+      "ignore": true
+    }
+  },
+  "steps": [
+    { "key": "g v", "hold": 1800 },
+    { "js": "Array.from(document.querySelectorAll('.mdview-review-filters button')).find(function(b){return b.textContent==='Stale';}).click()", "hold": 1500 },
+    { "js": "Array.from(document.querySelectorAll('.mdview-review-filters button')).find(function(b){return b.textContent==='Unresolved';}).click()", "hold": 1200 },
+    { "js": "document.querySelector('.mdview-review-status').click()", "settle": 500, "hold": 1500 },
+    { "key": "C", "settle": 400, "hold": 1600 }
+  ]
+}

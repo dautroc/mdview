@@ -940,6 +940,47 @@ body.mdview-resizing #mdview-sidebar-resizer {
   color: var(--link);
 }
 .mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }
+.mdview-review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin-bottom: .8rem;
+}
+.mdview-review-filters button,
+.mdview-review-status,
+.mdview-review-copy-prompt {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+.mdview-review-filters button { font-size: .7rem; padding: .2rem .45rem; }
+.mdview-review-copy-prompt {
+  font-size: .72rem;
+  margin-bottom: .6rem;
+  padding: .25rem .55rem;
+}
+.mdview-review-filters button:hover,
+.mdview-review-filters button.is-active,
+.mdview-review-copy-prompt:hover {
+  border-color: var(--link);
+  color: var(--link);
+}
+.mdview-review-document { overflow-wrap: anywhere; }
+.mdview-review-row { align-items: flex-start; display: flex; gap: .35rem; }
+#mdview-sidebar-body .mdview-review-row a { flex: 1 1 auto; min-width: 0; }
+.mdview-review-status {
+  flex: 0 0 auto;
+  font-size: .65rem;
+  margin-top: .15rem;
+  padding: .12rem .4rem;
+}
+.mdview-review-item.status-resolved a,
+.mdview-comment-item.status-resolved a { color: var(--muted); text-decoration: line-through; }
+.mdview-review-item.status-stale a { color: var(--diff-del-border); }
+.mdview-review-warning { color: var(--diff-del-border); display: block; font-size: .68rem; }
 .mdview-sidebar-section {
   color: var(--muted);
   font-size: .72rem;

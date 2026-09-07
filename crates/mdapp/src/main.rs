@@ -3,7 +3,9 @@ mod bridge;
 mod defaults;
 mod menu;
 mod navigation;
+mod portable_review;
 mod review;
+mod review_index;
 mod state;
 mod store;
 mod watcher;
@@ -556,7 +558,7 @@ mod bundle_version_tests {
             );
             found += 1;
         }
-        assert_eq!(found, 10, "the tour is ten sections, one demo each");
+        assert_eq!(found, 11, "the tour is eleven sections, one demo each");
     }
 
     /// The same list main.rs already holds the README to. The tour is the only
@@ -601,7 +603,7 @@ mod bundle_version_tests {
             );
             seen += 1;
         }
-        assert_eq!(seen, 10, "ten reels, one per section of the tour");
+        assert_eq!(seen, 11, "eleven reels, one per section of the tour");
     }
 
     #[test]

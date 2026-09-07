@@ -71,6 +71,22 @@ so a comment leaves as soon as it is dealt with. A comment whose passage was
 rewritten instead stays, struck through, rather than vanishing with the words
 it was about.
 
+## Managing reviews across a workspace
+
+![Filtering the Review Inbox and resolving a comment](gifs/review-inbox.gif)
+
+Press `g v` to collect workspace comments by document. **Unresolved** includes
+both open comments, whose quotes still anchor, and stale comments, whose quoted
+passages have changed. Resolving a comment keeps it in history; deleting remains
+a separate permanent action. `C` copies a prompt containing only the active
+Inbox filter and names every review file the agent must update.
+
+File → Export Review Session… writes a deterministic bundle containing only
+workspace-relative document identities and content fingerprints. Import matches
+the relative path first, asks before a unique fingerprint-based relocation, and
+keeps the local record when a stable comment ID conflicts. After every comment
+is resolved, File → Export Review Summary… writes a path-safe Markdown summary.
+
 ## Reading a document's history
 
 ![Choosing a commit from the document history and opening its rendered comparison](gifs/history.gif)

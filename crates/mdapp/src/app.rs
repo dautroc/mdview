@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -29,6 +29,7 @@ pub(crate) struct HistoryResponse {
 pub(crate) struct WorkspaceAnalysis {
     index: mdcore::WorkspaceIndex,
     links: mdcore::LinkGraph,
+    reviews: crate::review_index::ReviewIndex,
 }
 
 pub(crate) enum WorkspaceResponse {
@@ -59,6 +60,7 @@ pub(crate) struct WorkspaceData {
     snapshot: mdcore::WorkspaceSnapshot,
     index: Option<Arc<mdcore::WorkspaceIndex>>,
     links: Option<Arc<mdcore::LinkGraph>>,
+    reviews: Option<crate::review_index::ReviewIndex>,
 }
 
 pub(crate) struct WorkspaceRestore {
@@ -75,7 +77,20 @@ fn analyze_workspace(index: mdcore::WorkspaceIndex) -> Result<WorkspaceAnalysis,
             .map(|(file, source)| (file.path.clone(), source.to_string())),
     )
     .map_err(|error| error.to_string())?;
-    Ok(WorkspaceAnalysis { index, links })
+    let mut reviews = crate::review_index::ReviewIndex::new(
+        index.root().path().to_path_buf(),
+        index
+            .files()
+            .map(|file| (file.relative_path.clone(), file.path.clone())),
+    );
+    for (path, review) in crate::store::enumerate().unwrap_or_default() {
+        reviews.update(path, review);
+    }
+    Ok(WorkspaceAnalysis {
+        index,
+        links,
+        reviews,
+    })
 }
 
 /// Everything the delegate owns. Held in the delegate's ivars.
@@ -106,6 +121,9 @@ pub struct AppState {
     pub workspace_watcher: RefCell<Option<crate::watcher::WorkspaceWatcher>>,
     pub workspace_watcher_root: RefCell<Option<PathBuf>>,
     pub workspace_watch_retry_at: Cell<Option<std::time::Instant>>,
+    pub review_store_watcher: RefCell<Option<crate::watcher::WorkspaceWatcher>>,
+    pub review_watch_retry_at: Cell<Option<std::time::Instant>>,
+    pub pending_review_changes: RefCell<BTreeSet<PathBuf>>,
     pub pending_workspace_changes: RefCell<Vec<PathBuf>>,
     pub pending_workspace_restore: RefCell<Option<WorkspaceRestore>>,
     pub workspace_positions: RefCell<HashMap<PathBuf, u32>>,
@@ -147,6 +165,11 @@ define_class!(
             if item.action() == Some(objc2::sel!(showWorkspaceFiles:))
                 || item.action() == Some(objc2::sel!(showWorkspaceSearch:))
                 || item.action() == Some(objc2::sel!(showLinks:))
+                || item.action() == Some(objc2::sel!(showReviewInbox:))
+                || item.action() == Some(objc2::sel!(importReviewSession:))
+                || item.action() == Some(objc2::sel!(exportReviewSession:))
+                || item.action() == Some(objc2::sel!(exportReviewSummary:))
+                || item.action() == Some(objc2::sel!(copyReviewInboxPrompt:))
             {
                 return self
                     .ivars()
@@ -339,6 +362,37 @@ define_class!(
                         .extend(workspace_changes);
                 }
             }
+
+            if state.workspace.borrow().is_some()
+                && state.review_store_watcher.borrow().is_none()
+                && state
+                    .review_watch_retry_at
+                    .get()
+                    .map_or(true, |retry_at| now >= retry_at)
+            {
+                let watcher = crate::store::review_watch_directory()
+                    .and_then(|directory| crate::watcher::WorkspaceWatcher::start(&directory).ok());
+                if watcher.is_some() {
+                    state.review_watch_retry_at.set(None);
+                } else {
+                    state.review_watch_retry_at.set(Some(
+                        now + std::time::Duration::from_secs(2),
+                    ));
+                }
+                *state.review_store_watcher.borrow_mut() = watcher;
+            }
+            let review_store_changes = state
+                .review_store_watcher
+                .borrow_mut()
+                .as_mut()
+                .map(|watcher| watcher.poll(now))
+                .unwrap_or_default();
+            for path in &review_store_changes {
+                self.refresh_review_index_path(path);
+            }
+            if !review_store_changes.is_empty() {
+                self.push_workspace_to_pages();
+            }
             self.persist_workspace_session();
 
             // Collect first, then update: live_update can trigger reentrancy
@@ -374,16 +428,28 @@ define_class!(
             // `windows` too. MDView's own writes come back through here as
             // well; the push is idempotent, so that costs a rebuilt rail and
             // nothing else.
-            let reviews_changed = state.windows.borrow().iter().any(|window| {
-                window
-                    .review_watcher
-                    .borrow_mut()
-                    .as_mut()
-                    .map(|w| w.poll(now))
-                    .unwrap_or(false)
-            });
-            if reviews_changed {
+            let changed_reviews: Vec<_> = state
+                .windows
+                .borrow()
+                .iter()
+                .filter(|window| {
+                    window
+                        .review_watcher
+                        .borrow_mut()
+                        .as_mut()
+                        .map(|w| w.poll(now))
+                        .unwrap_or(false)
+                })
+                .filter_map(|window| {
+                    crate::store::review_path(&window.path.to_string_lossy())
+                })
+                .collect();
+            for path in &changed_reviews {
+                self.refresh_review_index_path(path);
+            }
+            if !changed_reviews.is_empty() {
                 self.push_comments_to_pages();
+                self.push_workspace_to_pages();
             }
         }
 
@@ -395,6 +461,21 @@ define_class!(
         #[unsafe(method(openFolder:))]
         fn open_folder_action(&self, _sender: Option<&NSObject>) {
             self.present_open_folder_panel();
+        }
+
+        #[unsafe(method(importReviewSession:))]
+        fn import_review_session_action(&self, _sender: Option<&NSObject>) {
+            self.present_import_review_session();
+        }
+
+        #[unsafe(method(exportReviewSession:))]
+        fn export_review_session_action(&self, _sender: Option<&NSObject>) {
+            self.present_export_review_session();
+        }
+
+        #[unsafe(method(exportReviewSummary:))]
+        fn export_review_summary_action(&self, _sender: Option<&NSObject>) {
+            self.present_export_review_summary();
         }
 
         #[unsafe(method(selectNextDocumentTab:))]
@@ -468,6 +549,11 @@ define_class!(
             self.show_sidebar_tab("comments");
         }
 
+        #[unsafe(method(showReviewInbox:))]
+        fn show_review_inbox_action(&self, _sender: Option<&NSObject>) {
+            self.show_sidebar_tab("inbox");
+        }
+
         #[unsafe(method(showWorkspaceFiles:))]
         fn show_workspace_files_action(&self, _sender: Option<&NSObject>) {
             self.show_sidebar_tab("files");
@@ -508,6 +594,13 @@ define_class!(
             // Through handle_message, so the menu and the page's C cannot
             // drift apart.
             self.handle_message(crate::state::Message::CopyReview);
+        }
+
+        #[unsafe(method(copyReviewInboxPrompt:))]
+        fn copy_review_inbox_prompt_action(&self, _sender: Option<&NSObject>) {
+            self.handle_message(crate::state::Message::CopyInboxReview(
+                "unresolved".to_string(),
+            ));
         }
 
         #[unsafe(method(findInPage:))]
@@ -736,6 +829,9 @@ impl AppDelegate {
             workspace_watcher: RefCell::new(None),
             workspace_watcher_root: RefCell::new(None),
             workspace_watch_retry_at: Cell::new(None),
+            review_store_watcher: RefCell::new(None),
+            review_watch_retry_at: Cell::new(None),
+            pending_review_changes: RefCell::new(BTreeSet::new()),
             pending_workspace_changes: RefCell::new(Vec::new()),
             pending_workspace_restore: RefCell::new(None),
             workspace_positions: RefCell::new(HashMap::new()),
@@ -969,6 +1065,18 @@ impl AppDelegate {
         state.workspace_search_cache.borrow_mut().clear();
         self.push_workspace_to_pages();
 
+        // Register before the worker enumerates Application Support. Otherwise
+        // a review changed in the gap between enumeration and the first timer
+        // tick has no event to replay into the completed index.
+        if state.review_store_watcher.borrow().is_none() {
+            let watcher = crate::store::review_watch_directory()
+                .and_then(|directory| crate::watcher::WorkspaceWatcher::start(&directory).ok());
+            if watcher.is_some() {
+                state.review_watch_retry_at.set(None);
+            }
+            *state.review_store_watcher.borrow_mut() = watcher;
+        }
+
         let sender = state.workspace_sender.clone();
         std::thread::spawn(move || {
             let result = mdcore::WorkspaceSnapshot::discover(
@@ -1066,6 +1174,71 @@ impl AppDelegate {
                 result,
             });
         });
+    }
+
+    fn open_review_item(&self, source_id: Option<u64>, raw_path: &str, id: &str) {
+        let path = PathBuf::from(raw_path);
+        let allowed = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .and_then(|workspace| workspace.reviews.as_ref())
+            .is_some_and(|reviews| reviews.contains_comment(&path, id));
+        if !allowed {
+            if let Some(window) = self.message_window(source_id) {
+                window.show_note("That review comment is no longer available.");
+            }
+            return;
+        }
+        self.open_documents_from(&[path.clone()], source_id);
+        if let Some(window) = self
+            .ivars()
+            .windows
+            .borrow()
+            .iter()
+            .find(|window| window.path == path)
+            .cloned()
+        {
+            window
+                .pending_scripts
+                .borrow_mut()
+                .push(crate::state::review_reveal_script(id));
+        }
+    }
+
+    fn set_review_status(
+        &self,
+        source_id: Option<u64>,
+        raw_path: &str,
+        id: &str,
+        status: crate::review::Status,
+    ) {
+        let Some(source) = self.message_window(source_id) else {
+            return;
+        };
+        let path = PathBuf::from(raw_path);
+        let allowed = source.path == path
+            || self
+                .ivars()
+                .workspace
+                .borrow()
+                .as_ref()
+                .and_then(|workspace| workspace.reviews.as_ref())
+                .is_some_and(|reviews| reviews.contains_comment(&path, id));
+        if !allowed {
+            source.show_note("That review comment is no longer available.");
+            return;
+        }
+        let key = path.to_string_lossy().into_owned();
+        let mut comments = crate::store::load(&key).comments;
+        let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) else {
+            source.show_note("That review comment is no longer available.");
+            self.push_workspace_to_pages();
+            return;
+        };
+        comment.status = status;
+        self.write_review(&source, &path, &comments);
     }
 
     fn open_workspace_path(&self, source_id: Option<u64>, raw_path: &str) {
@@ -1218,6 +1391,7 @@ impl AppDelegate {
                                 snapshot,
                                 index: None,
                                 links: None,
+                                reviews: None,
                             });
                             let watcher_matches =
                                 self.ivars().workspace_watcher_root.borrow().as_ref()
@@ -1315,14 +1489,20 @@ impl AppDelegate {
                     }
                     match result {
                         Ok(analysis) => {
-                            let WorkspaceAnalysis { index, links } = analysis;
+                            let WorkspaceAnalysis {
+                                index,
+                                links,
+                                reviews,
+                            } = analysis;
                             if let Some(workspace) = self.ivars().workspace.borrow_mut().as_mut() {
                                 workspace.snapshot.files = index.files().cloned().collect();
                                 workspace.snapshot.indexed_bytes =
                                     workspace.snapshot.files.iter().map(|file| file.size).sum();
                                 workspace.index = Some(Arc::new(index));
                                 workspace.links = Some(Arc::new(links));
+                                workspace.reviews = Some(reviews);
                             }
+                            self.replay_pending_review_changes();
                             self.push_workspace_to_pages();
                             let pending = std::mem::take(
                                 &mut *self.ivars().pending_workspace_changes.borrow_mut(),
@@ -1355,14 +1535,20 @@ impl AppDelegate {
                     }
                     match result {
                         Ok(analysis) => {
-                            let WorkspaceAnalysis { index, links } = analysis;
+                            let WorkspaceAnalysis {
+                                index,
+                                links,
+                                reviews,
+                            } = analysis;
                             if let Some(workspace) = self.ivars().workspace.borrow_mut().as_mut() {
                                 workspace.snapshot.files = index.files().cloned().collect();
                                 workspace.snapshot.indexed_bytes =
                                     workspace.snapshot.files.iter().map(|file| file.size).sum();
                                 workspace.index = Some(Arc::new(index));
                                 workspace.links = Some(Arc::new(links));
+                                workspace.reviews = Some(reviews);
                             }
+                            self.replay_pending_review_changes();
                             self.push_workspace_to_pages();
                         }
                         Err(_) => {
@@ -1451,6 +1637,11 @@ impl AppDelegate {
             workspace.as_ref().map(|workspace| &workspace.snapshot),
             None,
         );
+        let inbox_script = crate::state::review_inbox_script(
+            workspace
+                .as_ref()
+                .and_then(|workspace| workspace.reviews.as_ref()),
+        );
         for window in self.ivars().windows.borrow().iter() {
             window
                 .pending_scripts
@@ -1469,6 +1660,10 @@ impl AppDelegate {
                 &window.path,
             );
             window.pending_scripts.borrow_mut().push(links_script);
+            window
+                .pending_scripts
+                .borrow_mut()
+                .push(inbox_script.clone());
         }
     }
 
@@ -2098,6 +2293,22 @@ impl AppDelegate {
             Message::SelectHistory(revision) => self.select_history(source_id, &revision),
             Message::SearchWorkspace(query) => self.search_workspace(source_id, &query),
             Message::OpenWorkspacePath(path) => self.open_workspace_path(source_id, &path),
+            Message::OpenReviewItem { path, id } => {
+                self.open_review_item(source_id, &path, &id)
+            }
+            Message::SetReviewStatus { path, id, status } => {
+                self.set_review_status(source_id, &path, &id, status)
+            }
+            Message::SetCurrentReviewStatus { id, status } => {
+                if let Some(window) = self.message_window(source_id) {
+                    self.set_review_status(
+                        source_id,
+                        &window.path.to_string_lossy(),
+                        &id,
+                        status,
+                    );
+                }
+            }
             Message::PreviewLink(destination) => self.preview_link(source_id, &destination),
             Message::OpenLink {
                 destination,
@@ -2198,13 +2409,7 @@ impl AppDelegate {
                     self.push_comments_to_pages();
                     return;
                 };
-                *target = crate::review::Comment::new(
-                    &target.id,
-                    target.heading,
-                    target.nth,
-                    &target.quote,
-                    &note,
-                );
+                *target = target.clone().with_note(&note);
                 self.write_review(&window, &doc, &comments);
             }
             Message::DeleteComment { id } => {
@@ -2220,6 +2425,9 @@ impl AppDelegate {
                 self.write_review(&window, &doc, &comments);
             }
             Message::CopyReview => self.copy_review_prompt(source_id),
+            Message::CopyInboxReview(filter) => {
+                self.copy_inbox_review_prompt(source_id, &filter)
+            }
             Message::ZoomIn => self.adjust_zoom(source_id, ZOOM_STEP),
             Message::ZoomOut => self.adjust_zoom(source_id, 1.0 / ZOOM_STEP),
             Message::ZoomReset => {
@@ -2227,6 +2435,45 @@ impl AppDelegate {
                     unsafe { window.webview.setPageZoom(1.0) };
                 }
             }
+        }
+    }
+
+    fn refresh_review_index_path(&self, review_path: &std::path::Path) {
+        if !crate::store::is_review_file(review_path) {
+            return;
+        }
+        self.ivars()
+            .pending_review_changes
+            .borrow_mut()
+            .insert(review_path.to_path_buf());
+        self.apply_review_index_path(review_path);
+    }
+
+    fn apply_review_index_path(&self, review_path: &std::path::Path) {
+        let mut workspace = self.ivars().workspace.borrow_mut();
+        let Some(index) = workspace
+            .as_mut()
+            .and_then(|workspace| workspace.reviews.as_mut())
+        else {
+            return;
+        };
+        match crate::store::load_path(review_path) {
+            Ok(review) => {
+                index.update(review_path.to_path_buf(), review);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                index.remove(review_path);
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn replay_pending_review_changes(&self) {
+        let pending = std::mem::take(
+            &mut *self.ivars().pending_review_changes.borrow_mut(),
+        );
+        for path in pending {
+            self.apply_review_index_path(&path);
         }
     }
 
@@ -2251,8 +2498,20 @@ impl AppDelegate {
             return;
         }
         let headings = crate::store::headings_of(doc);
-        match crate::store::save(&key, &headings, comments) {
-            Ok(()) => self.push_comments_to_pages(),
+        let workspace_root = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .map(|workspace| workspace.snapshot.root.path().to_path_buf());
+        match crate::store::save(&key, workspace_root.as_deref(), &headings, comments) {
+            Ok(()) => {
+                if let Some(path) = crate::store::review_path(&key) {
+                    self.refresh_review_index_path(&path);
+                }
+                self.push_comments_to_pages();
+                self.push_workspace_to_pages();
+            }
             Err(err) => window.show_banner(
                 "mdview-comments",
                 &format!("Could not save the review: {err}"),
@@ -2326,7 +2585,18 @@ impl AppDelegate {
         // about — the ones a previous round of this same prompt mangled.
         if !self.review_is_damaged(&window, &key) {
             let headings = crate::store::headings_of(&doc);
-            let _ = crate::store::save(&key, &headings, &comments);
+            let workspace_root = self
+                .ivars()
+                .workspace
+                .borrow()
+                .as_ref()
+                .map(|workspace| workspace.snapshot.root.path().to_path_buf());
+            let _ = crate::store::save(
+                &key,
+                workspace_root.as_deref(),
+                &headings,
+                &comments,
+            );
         }
         let Some(review) = crate::store::review_path(&key) else {
             return;
@@ -2341,6 +2611,38 @@ impl AppDelegate {
             pasteboard.setString_forType(&NSString::from_str(&prompt), NSPasteboardTypeString);
         }
         window.show_note("Review prompt copied — paste it into Claude.");
+    }
+
+    fn copy_inbox_review_prompt(&self, source_id: Option<u64>, filter: &str) {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
+        let prompt = {
+            let workspace = self.ivars().workspace.borrow();
+            workspace
+                .as_ref()
+                .and_then(|workspace| workspace.reviews.as_ref())
+                .ok_or_else(|| "The Review Inbox is still being indexed.".to_string())
+                .and_then(|reviews| {
+                    crate::portable_review::inbox_prompt(reviews, filter)
+                        .map_err(|error| error.to_string())
+                })
+        };
+        let prompt = match prompt {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                window.show_note(&error);
+                return;
+            }
+        };
+        let pasteboard = NSPasteboard::generalPasteboard();
+        unsafe {
+            pasteboard.clearContents();
+            pasteboard.setString_forType(&NSString::from_str(&prompt), NSPasteboardTypeString);
+        }
+        window.show_note("Filtered Review Inbox prompt copied.");
     }
 
     /// Send the bookmark list, and whether the current document is among
@@ -2401,6 +2703,308 @@ impl AppDelegate {
             // Queued, never evaluated. See push_bookmarks_to_pages.
             window.pending_scripts.borrow_mut().push(script);
         }
+    }
+
+    fn review_session(&self) -> Result<crate::portable_review::ReviewSession, String> {
+        let workspace = self.ivars().workspace.borrow();
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "Open a folder before exporting reviews.".to_string())?;
+        let index = workspace
+            .index
+            .as_ref()
+            .ok_or_else(|| "The workspace is still being indexed.".to_string())?;
+        let reviews = workspace
+            .reviews
+            .as_ref()
+            .ok_or_else(|| "The review inbox is still being indexed.".to_string())?;
+        let mut documents = Vec::new();
+        for review in reviews.entries().filter(|review| !review.comments.is_empty()) {
+            if review.damaged {
+                return Err(format!(
+                    "Repair the review for {} before exporting.",
+                    review.relative_path.display()
+                ));
+            }
+            let source = index
+                .documents()
+                .find(|(file, _)| file.path == review.document_path)
+                .map(|(_, source)| source)
+                .ok_or_else(|| {
+                    format!(
+                        "{} is no longer in the workspace index.",
+                        review.relative_path.display()
+                    )
+                })?;
+            documents.push(crate::portable_review::SessionDocument {
+                relative_path: review.relative_path.to_string_lossy().into_owned(),
+                fingerprint: crate::portable_review::fingerprint(source.as_bytes()),
+                comments: review.comments.clone(),
+            });
+        }
+        crate::portable_review::ReviewSession::new(documents).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn present_export_review_session(&self) {
+        use objc2_app_kit::{NSModalResponse, NSSavePanel};
+
+        let Some(window) = self.frontmost_window() else {
+            return;
+        };
+        let session = match self.review_session() {
+            Ok(session) if !session.documents.is_empty() => session,
+            Ok(_) => {
+                window.show_note("There are no workspace reviews to export.");
+                return;
+            }
+            Err(error) => {
+                window.show_note(&error);
+                return;
+            }
+        };
+        let default_name = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .and_then(|workspace| workspace.snapshot.root.path().file_name())
+            .and_then(|name| name.to_str())
+            .map(|name| format!("{name}-review.mdview-review"))
+            .unwrap_or_else(|| "workspace-review.mdview-review".to_string());
+        let panel = NSSavePanel::savePanel(MainThreadMarker::from(self));
+        panel.setNameFieldStringValue(&NSString::from_str(&default_name));
+        let response: NSModalResponse = panel.runModal();
+        if response != 1 {
+            return;
+        }
+        let Some(url) = panel.URL() else { return };
+        let Some(path) = url.path() else { return };
+        match crate::store::write_atomic(
+            &PathBuf::from(path.to_string()),
+            session.serialize().as_bytes(),
+        ) {
+            Ok(()) => window.show_note(&format!(
+                "Exported {} reviewed document{}.",
+                session.documents.len(),
+                if session.documents.len() == 1 { "" } else { "s" }
+            )),
+            Err(error) => window.show_note(&format!("Could not export the review session: {error}")),
+        }
+    }
+
+    pub(crate) fn present_export_review_summary(&self) {
+        use objc2_app_kit::{NSModalResponse, NSSavePanel};
+
+        let Some(window) = self.frontmost_window() else {
+            return;
+        };
+        let summary = {
+            let workspace = self.ivars().workspace.borrow();
+            workspace
+                .as_ref()
+                .and_then(|workspace| workspace.reviews.as_ref())
+                .ok_or_else(|| "The Review Inbox is still being indexed.".to_string())
+                .and_then(|reviews| {
+                    crate::portable_review::review_summary(reviews)
+                        .map_err(|error| error.to_string())
+                })
+        };
+        let summary = match summary {
+            Ok(summary) => summary,
+            Err(error) => {
+                window.show_note(&error);
+                return;
+            }
+        };
+        let panel = NSSavePanel::savePanel(MainThreadMarker::from(self));
+        panel.setNameFieldStringValue(&NSString::from_str("review-summary.md"));
+        let response: NSModalResponse = panel.runModal();
+        if response != 1 {
+            return;
+        }
+        let Some(url) = panel.URL() else { return };
+        let Some(path) = url.path() else { return };
+        match crate::store::write_atomic(&PathBuf::from(path.to_string()), summary.as_bytes()) {
+            Ok(()) => window.show_note("Review summary exported."),
+            Err(error) => window.show_note(&format!("Could not export the review summary: {error}")),
+        }
+    }
+
+    fn confirm_review_relocation(&self, from: &str, to: &std::path::Path) -> bool {
+        use objc2_app_kit::NSAlert;
+
+        let alert = NSAlert::new(MainThreadMarker::from(self));
+        alert.setMessageText(&NSString::from_str("Match moved review document?"));
+        alert.setInformativeText(&NSString::from_str(&format!(
+            "The session's {from} has the same content as {}. Import its comments there?",
+            to.display()
+        )));
+        alert.addButtonWithTitle(&NSString::from_str("Import"));
+        alert.addButtonWithTitle(&NSString::from_str("Skip"));
+        alert.runModal() == 1000
+    }
+
+    pub(crate) fn present_import_review_session(&self) {
+        use objc2_app_kit::{NSModalResponse, NSOpenPanel};
+
+        let Some(window) = self.frontmost_window() else {
+            return;
+        };
+        let targets = {
+            let workspace = self.ivars().workspace.borrow();
+            let Some(workspace) = workspace.as_ref() else {
+                window.show_note("Open a folder before importing reviews.");
+                return;
+            };
+            let Some(index) = workspace.index.as_ref() else {
+                window.show_note("The workspace is still being indexed.");
+                return;
+            };
+            index
+                .documents()
+                .map(|(file, source)| {
+                    (
+                        file.relative_path.to_string_lossy().into_owned(),
+                        file.path.clone(),
+                        crate::portable_review::fingerprint(source.as_bytes()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let panel = NSOpenPanel::openPanel(MainThreadMarker::from(self));
+        panel.setCanChooseFiles(true);
+        panel.setCanChooseDirectories(false);
+        panel.setAllowsMultipleSelection(false);
+        let response: NSModalResponse = panel.runModal();
+        if response != 1 {
+            return;
+        }
+        let Some(url) = panel.URL() else { return };
+        let Some(path) = url.path() else { return };
+        let import_path = PathBuf::from(path.to_string());
+        if std::fs::metadata(&import_path)
+            .map(|metadata| metadata.len() > crate::portable_review::MAX_SESSION_BYTES)
+            .unwrap_or(false)
+        {
+            window.show_note("Could not import the review session: the file exceeds 64 MiB.");
+            return;
+        }
+        let session = match std::fs::read_to_string(&import_path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                crate::portable_review::ReviewSession::parse(&text)
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(session) => session,
+            Err(error) => {
+                window.show_note(&format!("Could not import the review session: {error}"));
+                return;
+            }
+        };
+        let workspace_root = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .map(|workspace| workspace.snapshot.root.path().to_path_buf());
+        let mut imported = 0;
+        let mut unchanged = 0;
+        let mut conflicts = 0;
+        let mut conflict_labels = Vec::new();
+        let mut skipped = 0;
+        let mut changed_documents = 0;
+        let mut fingerprint_mismatches = 0;
+        for document in session.documents {
+            let direct = targets
+                .iter()
+                .find(|(relative, _, _)| relative == &document.relative_path);
+            let target = if let Some(target) = direct {
+                if target.2 != document.fingerprint {
+                    fingerprint_mismatches += 1;
+                }
+                Some(target)
+            } else {
+                let candidates = targets
+                    .iter()
+                    .filter(|(_, _, fingerprint)| fingerprint == &document.fingerprint)
+                    .collect::<Vec<_>>();
+                if candidates.len() == 1
+                    && self.confirm_review_relocation(&document.relative_path, &candidates[0].1)
+                {
+                    Some(candidates[0])
+                } else {
+                    None
+                }
+            };
+            let Some((_, path, _)) = target else {
+                skipped += 1;
+                continue;
+            };
+            let key = path.to_string_lossy().into_owned();
+            let local = crate::store::load(&key);
+            if !local.damage.is_empty() {
+                skipped += 1;
+                continue;
+            }
+            let merged = crate::portable_review::merge_comments(&local.comments, &document.comments);
+            unchanged += merged.unchanged;
+            conflicts += merged.conflicts.len();
+            conflict_labels.extend(
+                merged
+                    .conflicts
+                    .iter()
+                    .map(|id| format!("{}#{id}", document.relative_path)),
+            );
+            if merged.imported == 0 {
+                continue;
+            }
+            if merged.comments.len() > crate::store::COMMENT_LIMIT {
+                skipped += 1;
+                continue;
+            }
+            let headings = crate::store::headings_of(path);
+            match crate::store::save_if_unchanged(
+                &key,
+                workspace_root.as_deref(),
+                &headings,
+                &merged.comments,
+                &local,
+            ) {
+                Ok(()) => {
+                    imported += merged.imported;
+                    changed_documents += 1;
+                    if let Some(review_path) = crate::store::review_path(&key) {
+                        self.refresh_review_index_path(&review_path);
+                    }
+                }
+                Err(_) => skipped += 1,
+            }
+        }
+        self.push_comments_to_pages();
+        self.push_workspace_to_pages();
+        if conflict_labels.is_empty() {
+            window.clear_banner("mdview-import-conflicts");
+        } else {
+            window.show_banner(
+                "mdview-import-conflicts",
+                &format!(
+                    "Import kept the local versions of conflicting comments: {}",
+                    conflict_labels.join(", ")
+                ),
+            );
+        }
+        window.show_note(&format!(
+            "Imported {imported} comment{} across {changed_documents} document{}; \
+             {unchanged} unchanged, {conflicts} conflict{}, {skipped} skipped{}.",
+            if imported == 1 { "" } else { "s" },
+            if changed_documents == 1 { "" } else { "s" },
+            if conflicts == 1 { "" } else { "s" },
+            if fingerprint_mismatches == 0 {
+                "".to_string()
+            } else {
+                format!(", {fingerprint_mismatches} path-matched document fingerprints differed")
+            }
+        ));
     }
 
     pub(crate) fn present_open_folder_panel(&self) {

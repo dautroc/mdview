@@ -52,6 +52,16 @@ file that never closes it.
   If the review file ends up in a state MDView cannot wholly read, it says so
   and stops writing to it rather than saving over the part it did not
   understand.
+- **Review Inbox.** `g v` collects comments from every indexed workspace
+  document and filters them as unresolved, open, resolved, stale, or all.
+  Open comments still anchor to their quoted passage; stale comments no longer
+  do; resolved comments remain as review history instead of being deleted.
+  Selecting an item opens its document and passage, while its status pill
+  resolves or reopens it. `C` copies a prompt for the active Inbox filter.
+  File → Export Review Session… creates a deterministic, workspace-relative
+  bundle for another clone, and import merges stable comment IDs without
+  overwriting conflicts. Once every comment is resolved, File → Export Review
+  Summary… writes a path-safe Markdown record of the review.
 - **Project workspaces.** File → Open Folder… treats a documentation folder or
   repository as one collection. `g f` opens a fuzzy file palette and `g /`
   searches every indexed Markdown file, showing its nearest heading and a
@@ -196,11 +206,12 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | g m | Toggle the minimap |
 | g o / g b | Outline / bookmarks in the sidebar |
 | g i | Links, backlinks, and broken references in the sidebar |
+| g v | Review Inbox across the workspace |
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |
 | ) / ( | Next / previous comment |
 | g c / x | Edit / delete the comment you are looking at |
-| C | Copy the review prompt for Claude |
+| C | Copy the document prompt, or the active Review Inbox filter |
 | g t | Themes |
 | g r | Recent files |
 | g h | Document history (needs a tracked file) |

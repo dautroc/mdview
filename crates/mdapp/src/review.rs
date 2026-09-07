@@ -21,6 +21,49 @@
 //! and `serialize_review` regenerates it, so hand-editing the prose cannot
 //! move a comment.
 
+use std::path::{Component, Path};
+
+pub const CURRENT_VERSION: u32 = 2;
+
+/// A comment's lifecycle. Deletion remains a separate, permanent operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Open,
+    Resolved,
+    Stale,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Resolved => "resolved",
+            Self::Stale => "stale",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "open" => Some(Self::Open),
+            "resolved" => Some(Self::Resolved),
+            "stale" => Some(Self::Stale),
+            _ => None,
+        }
+    }
+}
+
+/// A path-safe identity stored in a v2 review. Standalone reviews intentionally
+/// carry only a display name; portable sessions may export workspace-relative
+/// identities, but never an arbitrary absolute path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentIdentity {
+    WorkspaceRelative(String),
+    Standalone(String),
+    /// Read-only migration identity from the unversioned format. V2 never emits
+    /// this variant, and portable exports must reject it.
+    LegacyAbsolute(String),
+}
+
 /// One comment: what was selected, where it was, and what was said about it.
 ///
 /// `heading` is a 1-based ordinal into the document's headings — the nearest
@@ -38,6 +81,7 @@ pub struct Comment {
     pub nth: usize,
     pub quote: String,
     pub note: String,
+    pub status: Status,
 }
 
 impl Comment {
@@ -53,7 +97,18 @@ impl Comment {
             nth,
             quote: normalize(quote),
             note: normalize(note),
+            status: Status::Open,
         }
+    }
+
+    pub fn with_status(mut self, status: Status) -> Self {
+        self.status = status;
+        self
+    }
+
+    pub fn with_note(mut self, note: &str) -> Self {
+        self.note = normalize(note);
+        self
     }
 }
 
@@ -92,11 +147,82 @@ pub fn fresh_id(existing: &[Comment]) -> String {
     unreachable!("u64 exhausted")
 }
 
-/// Render the review file. `headings` is the document's heading text in
-/// document order; a missing entry just costs a nicer label.
+/// Render a v2 review for a standalone document. Its absolute path remains the
+/// storage key, but is deliberately not copied into the review payload.
+#[allow(dead_code)]
 pub fn serialize_review(doc_path: &str, headings: &[String], comments: &[Comment]) -> String {
-    let name = doc_path.rsplit('/').next().unwrap_or(doc_path);
-    let mut out = format!("# Review — {name}\n{doc_path}\n");
+    serialize_review_with_root(doc_path, None, headings, comments)
+}
+
+/// Render a v2 review, using a portable workspace-relative identity when the
+/// document belongs to `workspace_root`.
+pub fn serialize_review_with_root(
+    doc_path: &str,
+    workspace_root: Option<&Path>,
+    headings: &[String],
+    comments: &[Comment],
+) -> String {
+    let path = Path::new(doc_path);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document.md");
+    let identity = workspace_root
+        .and_then(|root| path.strip_prefix(root).ok())
+        .and_then(path_identity)
+        .map(DocumentIdentity::WorkspaceRelative)
+        .unwrap_or_else(|| DocumentIdentity::Standalone(name.to_string()));
+    serialize_v2(name, &identity, headings, comments)
+}
+
+pub fn serialize_portable_review(
+    relative_path: &str,
+    headings: &[String],
+    comments: &[Comment],
+) -> Option<String> {
+    safe_relative_identity(relative_path, false).then(|| {
+        let name = Path::new(relative_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("document.md");
+        serialize_v2(
+            name,
+            &DocumentIdentity::WorkspaceRelative(relative_path.to_string()),
+            headings,
+            comments,
+        )
+    })
+}
+
+fn path_identity(path: &Path) -> Option<String> {
+    if path.as_os_str().is_empty()
+        || !path
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return None;
+    }
+    let value = path.to_str()?.replace('\\', "/");
+    (!value.is_empty()).then_some(value)
+}
+
+fn serialize_v2(
+    name: &str,
+    identity: &DocumentIdentity,
+    headings: &[String],
+    comments: &[Comment],
+) -> String {
+    let (scope, identity) = match identity {
+        DocumentIdentity::WorkspaceRelative(path) => ("workspace-relative", path.as_str()),
+        DocumentIdentity::Standalone(name) => ("standalone", name.as_str()),
+        DocumentIdentity::LegacyAbsolute(_) => {
+            unreachable!("v2 serialization never emits an absolute identity")
+        }
+    };
+    let identity_fence = fence_for(identity);
+    let mut out = format!(
+        "# Review — {name}\n\n{identity_fence} mdview-review {CURRENT_VERSION} {scope}\n{identity}\n{identity_fence}\n"
+    );
     for (index, comment) in comments.iter().enumerate() {
         let label = match comment.heading.checked_sub(1).and_then(|i| headings.get(i)) {
             Some(text) => text.clone(),
@@ -105,8 +231,12 @@ pub fn serialize_review(doc_path: &str, headings: &[String], comments: &[Comment
         out.push_str(&format!("\n## {}. {}\n\n", index + 1, label));
         let fence = fence_for(&comment.quote);
         out.push_str(&format!(
-            "{fence} mdview-quote {} {} {}\n{}\n{fence}\n",
-            comment.id, comment.heading, comment.nth, comment.quote
+            "{fence} mdview-quote {} {} {} {}\n{}\n{fence}\n",
+            comment.id,
+            comment.heading,
+            comment.nth,
+            comment.status.as_str(),
+            comment.quote
         ));
         if !comment.note.is_empty() {
             let fence = fence_for(&comment.note);
@@ -156,7 +286,12 @@ fn closes(line: &str, width: usize) -> bool {
 /// Why one record could not be read. Short enough for a banner, specific
 /// enough to find the record it is about.
 pub const BAD_INFO: &str =
-    "its `~~~~ mdview-quote` line is missing the id, heading and occurrence numbers";
+    "its `~~~~ mdview-quote` line has invalid id, heading, occurrence, or status fields";
+pub const BAD_HEADER: &str = "its `~~~~ mdview-review` schema or document identity is invalid";
+pub const UNSUPPORTED_VERSION: &str = "its review schema version is not supported by this MDView";
+pub const UNKNOWN_RECORD: &str = "it uses an unknown `mdview-*` record type";
+pub const MISSING_HEADER: &str =
+    "it uses v2 comment fields but has no `mdview-review` schema record";
 pub const ORPHAN_NOTE: &str = "a `~~~~ mdview-note` block with no comment above it to attach to";
 pub const MERGED: &str = "its closing fence is missing, so it has swallowed the record below it";
 
@@ -175,10 +310,23 @@ pub struct Damage {
 /// understood erases every record we skipped — and this file is shared with
 /// Claude, which `C` now asks to edit it on every pass. Silence there costs
 /// someone a comment with nothing to show that it ever existed.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Review {
+    pub schema_version: u32,
+    pub document: Option<DocumentIdentity>,
     pub comments: Vec<Comment>,
     pub damage: Vec<Damage>,
+}
+
+impl Default for Review {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            document: None,
+            comments: Vec::new(),
+            damage: Vec::new(),
+        }
+    }
 }
 
 /// Has this payload swallowed a record whose opening fence is still in it?
@@ -213,19 +361,24 @@ fn swallows_a_record(payload: &[&str], width: usize) -> bool {
 pub fn parse_review(text: &str) -> Review {
     let lines: Vec<&str> = text.lines().collect();
     let mut review = Review::default();
+    if let Some(path) = lines.get(1).filter(|line| Path::new(line).is_absolute()) {
+        review.document = Some(DocumentIdentity::LegacyAbsolute((*path).to_string()));
+    }
     let mut index = 0;
+    let mut header_line = None;
+    let mut saw_v2_comment = None;
     while index < lines.len() {
         let Some(open) = opener(lines[index]) else {
             index += 1;
             continue;
         };
-        if open.kind != "mdview-quote" && open.kind != "mdview-note" {
+        if !open.kind.starts_with("mdview-") {
             index += 1;
             continue;
         }
         let at = index + 1;
-        // Consume the payload even for a record we are going to discard, or
-        // its text would be re-read as structure on the next pass.
+        // Consume every MDView payload, including records from an unknown
+        // version, so payload text can never be re-read as structure.
         let mut payload: Vec<&str> = Vec::new();
         index += 1;
         while index < lines.len() && !closes(lines[index], open.width) {
@@ -235,42 +388,138 @@ pub fn parse_review(text: &str) -> Review {
         index += 1; // step over the closing fence, or off the end
         let body = payload.join("\n");
 
-        // A fence that simply runs off the end of the file is a write that was
-        // cut short, and the payload is what survived it — kept, as it always
-        // was. A fence that has eaten the record below it is a different thing
-        // entirely, and that record has stopped existing.
         if swallows_a_record(&payload, open.width) {
-            review.damage.push(Damage { line: at, reason: MERGED });
+            review.damage.push(Damage {
+                line: at,
+                reason: MERGED,
+            });
         }
 
-        if open.kind == "mdview-note" {
-            // Attaches to the most recent quote that has not been given one,
-            // so the decorative headings between them do not break the pair.
-            let attached = match review.comments.last_mut() {
-                Some(last) if last.note.is_empty() => {
-                    last.note = body;
-                    true
+        match open.kind.as_str() {
+            "mdview-review" => {
+                if header_line.is_some() {
+                    review.damage.push(Damage {
+                        line: at,
+                        reason: BAD_HEADER,
+                    });
+                    continue;
                 }
-                _ => false,
-            };
-            // Its quote block is gone, or the comment above it already has a
-            // note. Either way this text has nowhere to go.
-            if !attached {
-                review.damage.push(Damage { line: at, reason: ORPHAN_NOTE });
+                header_line = Some(at);
+                let [version, scope] = open.info.as_slice() else {
+                    review.damage.push(Damage {
+                        line: at,
+                        reason: BAD_HEADER,
+                    });
+                    continue;
+                };
+                let Ok(version) = version.parse::<u32>() else {
+                    review.damage.push(Damage {
+                        line: at,
+                        reason: BAD_HEADER,
+                    });
+                    continue;
+                };
+                review.schema_version = version;
+                if version != CURRENT_VERSION {
+                    review.damage.push(Damage {
+                        line: at,
+                        reason: UNSUPPORTED_VERSION,
+                    });
+                    continue;
+                }
+                review.document = match scope.as_str() {
+                    "workspace-relative" if safe_relative_identity(&body, false) => {
+                        Some(DocumentIdentity::WorkspaceRelative(body))
+                    }
+                    "standalone" if safe_relative_identity(&body, true) => {
+                        Some(DocumentIdentity::Standalone(body))
+                    }
+                    _ => {
+                        review.damage.push(Damage {
+                            line: at,
+                            reason: BAD_HEADER,
+                        });
+                        None
+                    }
+                };
             }
-            continue;
+            "mdview-note" => {
+                let attached = match review.comments.last_mut() {
+                    Some(last) if last.note.is_empty() => {
+                        last.note = body;
+                        true
+                    }
+                    _ => false,
+                };
+                if !attached {
+                    review.damage.push(Damage {
+                        line: at,
+                        reason: ORPHAN_NOTE,
+                    });
+                }
+            }
+            "mdview-quote" => {
+                let (id, heading, nth, status) = match open.info.as_slice() {
+                    [id, heading, nth] => (id, heading, nth, Status::Open),
+                    [id, heading, nth, status] => {
+                        let Some(status) = Status::parse(status) else {
+                            review.damage.push(Damage {
+                                line: at,
+                                reason: BAD_INFO,
+                            });
+                            continue;
+                        };
+                        saw_v2_comment.get_or_insert(at);
+                        (id, heading, nth, status)
+                    }
+                    _ => {
+                        review.damage.push(Damage {
+                            line: at,
+                            reason: BAD_INFO,
+                        });
+                        continue;
+                    }
+                };
+                let (Ok(heading), Ok(nth)) = (heading.parse::<usize>(), nth.parse::<usize>())
+                else {
+                    review.damage.push(Damage {
+                        line: at,
+                        reason: BAD_INFO,
+                    });
+                    continue;
+                };
+                review
+                    .comments
+                    .push(Comment::new(id, heading, nth, &body, "").with_status(status));
+            }
+            _ => review.damage.push(Damage {
+                line: at,
+                reason: UNKNOWN_RECORD,
+            }),
         }
-        let [id, heading, nth] = open.info.as_slice() else {
-            review.damage.push(Damage { line: at, reason: BAD_INFO });
-            continue;
-        };
-        let (Ok(heading), Ok(nth)) = (heading.parse::<usize>(), nth.parse::<usize>()) else {
-            review.damage.push(Damage { line: at, reason: BAD_INFO });
-            continue;
-        };
-        review.comments.push(Comment::new(id, heading, nth, &body, ""));
+    }
+    if header_line.is_none() {
+        if let Some(line) = saw_v2_comment {
+            review.damage.push(Damage {
+                line,
+                reason: MISSING_HEADER,
+            });
+        }
     }
     review
+}
+
+fn safe_relative_identity(value: &str, basename_only: bool) -> bool {
+    if value.is_empty() || value.contains('\\') {
+        return false;
+    }
+    let path = Path::new(value);
+    let components: Vec<_> = path.components().collect();
+    !components.is_empty()
+        && (!basename_only || components.len() == 1)
+        && components
+            .iter()
+            .all(|part| matches!(part, Component::Normal(_)))
 }
 
 #[cfg(test)]
@@ -282,7 +531,11 @@ mod tests {
     /// MDView would be willing to write the file back.
     fn read(text: &str) -> Vec<Comment> {
         let review = parse_review(text);
-        assert_eq!(review.damage, vec![], "unexpected damage in a well-formed file");
+        assert_eq!(
+            review.damage,
+            vec![],
+            "unexpected damage in a well-formed file"
+        );
         review.comments
     }
 
@@ -418,7 +671,10 @@ mod tests {
             // writing the file would erase it.
             assert_eq!(
                 review.damage,
-                vec![Damage { line: 1, reason: BAD_INFO }],
+                vec![Damage {
+                    line: 1,
+                    reason: BAD_INFO
+                }],
                 "silently dropped {bad:?}"
             );
         }
@@ -432,7 +688,13 @@ mod tests {
         let text = "~~~~~ mdview-quote bad\n~~~~ mdview-quote z 1 0\nsmuggled\n~~~~\n~~~~~\n";
         let review = parse_review(text);
         assert!(review.comments.is_empty());
-        assert_eq!(review.damage, vec![Damage { line: 1, reason: BAD_INFO }]);
+        assert_eq!(
+            review.damage,
+            vec![Damage {
+                line: 1,
+                reason: BAD_INFO
+            }]
+        );
     }
 
     /// The whole point of the exercise, done right: `C` tells Claude to delete
@@ -450,14 +712,21 @@ mod tests {
         let text = serialize_review("/tmp/notes.md", &[], &whole);
         // Both blocks of record 2, opening and closing fences included, which
         // is what the prompt spells out.
-        let quote = "~~~~ mdview-quote 2 2 0\nsecond quote\n~~~~\n";
+        let quote = "~~~~ mdview-quote 2 2 0 open\nsecond quote\n~~~~\n";
         let note = "~~~~ mdview-note\nsecond note\n~~~~\n";
-        assert!(text.contains(quote) && text.contains(note), "the file is not shaped as assumed");
+        assert!(
+            text.contains(quote) && text.contains(note),
+            "the file is not shaped as assumed"
+        );
         let pruned = text.replace(quote, "").replace(note, "");
 
         let review = parse_review(&pruned);
         assert_eq!(review.comments, vec![whole[0].clone(), whole[2].clone()]);
-        assert_eq!(review.damage, vec![], "a correct deletion must not read as damage");
+        assert_eq!(
+            review.damage,
+            vec![],
+            "a correct deletion must not read as damage"
+        );
     }
 
     /// The half-deletion `C` invites: Claude removes the quote block of the
@@ -469,7 +738,13 @@ mod tests {
         let text = "~~~~ mdview-note\nthe note nobody deleted\n~~~~\n";
         let review = parse_review(text);
         assert!(review.comments.is_empty());
-        assert_eq!(review.damage, vec![Damage { line: 1, reason: ORPHAN_NOTE }]);
+        assert_eq!(
+            review.damage,
+            vec![Damage {
+                line: 1,
+                reason: ORPHAN_NOTE
+            }]
+        );
     }
 
     /// The same edit made one record too far down: the note now lands on the
@@ -483,8 +758,17 @@ mod tests {
             "~~~~ mdview-note\nthe orphaned one\n~~~~\n",
         );
         let review = parse_review(text);
-        assert_eq!(review.comments, vec![Comment::new("a", 1, 0, "quote", "the first note")]);
-        assert_eq!(review.damage, vec![Damage { line: 7, reason: ORPHAN_NOTE }]);
+        assert_eq!(
+            review.comments,
+            vec![Comment::new("a", 1, 0, "quote", "the first note")]
+        );
+        assert_eq!(
+            review.damage,
+            vec![Damage {
+                line: 7,
+                reason: ORPHAN_NOTE
+            }]
+        );
     }
 
     /// The other half-deletion: the closing fence goes. Nothing looks
@@ -515,7 +799,13 @@ mod tests {
             "~~~~ mdview-note\nthe note\n",
         );
         let review = parse_review(text);
-        assert_eq!(review.damage, vec![Damage { line: 1, reason: MERGED }]);
+        assert_eq!(
+            review.damage,
+            vec![Damage {
+                line: 1,
+                reason: MERGED
+            }]
+        );
     }
 
     /// The distinction the rule turns on, from the other side: a fence that
@@ -525,7 +815,10 @@ mod tests {
     #[test]
     fn a_fence_that_runs_off_the_end_of_a_cut_file_swallows_nothing() {
         let review = parse_review("~~~~ mdview-quote a 1 0\nhalf a quo");
-        assert_eq!(review.comments, vec![Comment::new("a", 1, 0, "half a quo", "")]);
+        assert_eq!(
+            review.comments,
+            vec![Comment::new("a", 1, 0, "half a quo", "")]
+        );
         assert_eq!(review.damage, vec![]);
     }
 
@@ -562,9 +855,107 @@ mod tests {
     }
 
     #[test]
-    fn the_review_names_the_document_it_is_about() {
+    fn a_standalone_review_names_but_does_not_leak_the_absolute_document_path() {
         let text = serialize_review("/Users/x/notes/plan.md", &[], &[]);
-        assert!(text.starts_with("# Review — plan.md\n/Users/x/notes/plan.md\n"));
+        assert!(text.starts_with("# Review — plan.md\n"));
+        assert!(text.contains("mdview-review 2 standalone\nplan.md"));
+        assert!(!text.contains("/Users/x/notes"));
+    }
+
+    #[test]
+    fn a_workspace_review_uses_a_safe_relative_document_identity() {
+        let text = serialize_review_with_root(
+            "/Users/x/project/docs/plan.md",
+            Some(Path::new("/Users/x/project")),
+            &[],
+            &[],
+        );
+        let review = parse_review(&text);
+        assert_eq!(review.schema_version, CURRENT_VERSION);
+        assert_eq!(
+            review.document,
+            Some(DocumentIdentity::WorkspaceRelative("docs/plan.md".into()))
+        );
+        assert!(!text.contains("/Users/x/project"));
+    }
+
+    #[test]
+    fn the_v1_fixture_migrates_to_open_status_and_round_trips_as_v2() {
+        let legacy = include_str!("../tests/fixtures/reviews/v1.md");
+        let parsed = parse_review(legacy);
+        assert_eq!(parsed.schema_version, 1);
+        assert_eq!(
+            parsed.document,
+            Some(DocumentIdentity::LegacyAbsolute(
+                "/Users/example/project/docs/plan.md".into()
+            ))
+        );
+        assert_eq!(parsed.damage, vec![]);
+        assert_eq!(parsed.comments.len(), 1);
+        assert_eq!(parsed.comments[0].status, Status::Open);
+
+        let migrated = serialize_review_with_root(
+            "/Users/example/project/docs/plan.md",
+            Some(Path::new("/Users/example/project")),
+            &[],
+            &parsed.comments,
+        );
+        let reparsed = parse_review(&migrated);
+        assert_eq!(reparsed.schema_version, CURRENT_VERSION);
+        assert_eq!(reparsed.comments, parsed.comments);
+        assert_eq!(reparsed.damage, vec![]);
+    }
+
+    #[test]
+    fn the_v2_fixture_preserves_explicit_status_and_identity() {
+        let review = parse_review(include_str!("../tests/fixtures/reviews/v2.md"));
+        assert_eq!(review.schema_version, CURRENT_VERSION);
+        assert_eq!(
+            review.document,
+            Some(DocumentIdentity::WorkspaceRelative("docs/plan.md".into()))
+        );
+        assert_eq!(review.comments[0].status, Status::Resolved);
+        assert_eq!(review.damage, vec![]);
+    }
+
+    #[test]
+    fn an_unknown_version_still_displays_comments_but_blocks_rewriting() {
+        let review = parse_review(include_str!("../tests/fixtures/reviews/unsupported-v99.md"));
+        assert_eq!(review.schema_version, 99);
+        assert_eq!(review.comments.len(), 1);
+        assert_eq!(
+            review.damage,
+            vec![Damage {
+                line: 3,
+                reason: UNSUPPORTED_VERSION,
+            }]
+        );
+    }
+
+    #[test]
+    fn unsafe_or_unknown_v2_fields_are_damage() {
+        for text in [
+            "~~~~ mdview-review 2 workspace-relative\n../secret.md\n~~~~\n",
+            "~~~~ mdview-review 2 workspace-relative\n/absolute.md\n~~~~\n",
+            "~~~~ mdview-review 2 future-field\ndoc.md\n~~~~\n",
+            "~~~~ mdview-review 2 workspace-relative extra\ndoc.md\n~~~~\n",
+            "~~~~ mdview-future\npayload\n~~~~\n",
+            "~~~~ mdview-quote a 1 0 deferred\nquote\n~~~~\n",
+        ] {
+            assert!(!parse_review(text).damage.is_empty(), "accepted {text:?}");
+        }
+    }
+
+    #[test]
+    fn resolving_reopening_and_deleting_are_distinct_operations() {
+        let open = Comment::new("1", 1, 0, "quote", "note");
+        let resolved = open.clone().with_status(Status::Resolved);
+        let reopened = resolved.clone().with_status(Status::Open);
+        assert_eq!(resolved.status, Status::Resolved);
+        assert_eq!(reopened, open);
+        let mut comments = vec![resolved];
+        comments.retain(|comment| comment.id != "1");
+        assert!(comments.is_empty());
     }
 
     #[test]

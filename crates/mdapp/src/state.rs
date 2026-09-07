@@ -259,6 +259,19 @@ pub enum Message {
     SelectHistory(String),
     SearchWorkspace(String),
     OpenWorkspacePath(String),
+    OpenReviewItem {
+        path: String,
+        id: String,
+    },
+    SetReviewStatus {
+        path: String,
+        id: String,
+        status: crate::review::Status,
+    },
+    SetCurrentReviewStatus {
+        id: String,
+        status: crate::review::Status,
+    },
     PreviewLink(String),
     OpenLink {
         destination: String,
@@ -304,6 +317,7 @@ pub enum Message {
         id: String,
     },
     CopyReview,
+    CopyInboxReview(String),
 }
 
 /// Parse a bridge message. Returns `None` for anything unrecognised or
@@ -369,6 +383,41 @@ pub fn parse_message(raw: &str) -> Option<Message> {
                 Some(Message::OpenWorkspacePath(path))
             }
         }
+        "openReviewItem" => {
+            let (path, id) = rest.split_once(':')?;
+            let (path, id) = (percent_decode(path)?, percent_decode(id)?);
+            if path.is_empty() || id.is_empty() {
+                None
+            } else {
+                Some(Message::OpenReviewItem { path, id })
+            }
+        }
+        "setReviewStatus" => {
+            let parts: Vec<_> = rest.splitn(3, ':').collect();
+            let [path, id, status] = parts.as_slice() else {
+                return None;
+            };
+            let (path, id) = (percent_decode(path)?, percent_decode(id)?);
+            if path.is_empty() || id.is_empty() {
+                return None;
+            }
+            Some(Message::SetReviewStatus {
+                path,
+                id,
+                status: crate::review::Status::parse(status)?,
+            })
+        }
+        "setCurrentReviewStatus" => {
+            let (id, status) = rest.split_once(':')?;
+            let id = percent_decode(id)?;
+            if id.is_empty() {
+                return None;
+            }
+            Some(Message::SetCurrentReviewStatus {
+                id,
+                status: crate::review::Status::parse(status)?,
+            })
+        }
         "previewLink" => Some(Message::PreviewLink(percent_decode(rest)?)),
         "openLink" => {
             let mut parts = rest.splitn(4, ':');
@@ -383,6 +432,12 @@ pub fn parse_message(raw: &str) -> Option<Message> {
                 anchor: (!anchor.is_empty()).then_some(anchor),
             })
         }
+        "copyInboxReview" => match rest {
+            "unresolved" | "open" | "resolved" | "stale" | "all" => {
+                Some(Message::CopyInboxReview(rest.to_string()))
+            }
+            _ => None,
+        },
         "setTheme" => {
             // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
             let (wire, scroll_str) = match rest.split_once(':') {
@@ -769,17 +824,68 @@ pub fn workspace_search_script(hits: &[mdcore::SearchHit], error: Option<&str>) 
     )
 }
 
-pub fn comments_script(comments: &[crate::review::Comment]) -> String {
-    let items: Vec<String> = comments
-        .iter()
-        .map(|comment| {
+pub fn review_inbox_script(index: Option<&crate::review_index::ReviewIndex>) -> String {
+    let mut items = index
+        .into_iter()
+        .flat_map(|index| index.entries())
+        .flat_map(|review| {
+            review.comments.iter().map(move |comment| {
+                (
+                    review.relative_path.clone(),
+                    review.document_path.clone(),
+                    review.damaged,
+                    comment,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.3.id.cmp(&right.3.id))
+    });
+    let items = items
+        .into_iter()
+        .map(|(relative, path, damaged, comment)| {
             format!(
-                "{{id:{},heading:{},nth:{},quote:{},note:{}}}",
+                "{{path:{},relative:{},id:{},heading:{},nth:{},quote:{},note:{},status:{},damaged:{}}}",
+                mdcore::escape::js_string_literal(&path.to_string_lossy()),
+                mdcore::escape::js_string_literal(&relative.to_string_lossy()),
                 mdcore::escape::js_string_literal(&comment.id),
                 comment.heading,
                 comment.nth,
                 mdcore::escape::js_string_literal(&comment.quote),
                 mdcore::escape::js_string_literal(&comment.note),
+                mdcore::escape::js_string_literal(comment.status.as_str()),
+                damaged,
+            )
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "window.mdviewSetReviewInbox && window.mdviewSetReviewInbox([{}]);",
+        items.join(",")
+    )
+}
+
+pub fn review_reveal_script(id: &str) -> String {
+    format!(
+        "window.mdviewRevealReviewComment && window.mdviewRevealReviewComment({});",
+        mdcore::escape::js_string_literal(id)
+    )
+}
+
+pub fn comments_script(comments: &[crate::review::Comment]) -> String {
+    let items: Vec<String> = comments
+        .iter()
+        .map(|comment| {
+            format!(
+                "{{id:{},heading:{},nth:{},quote:{},note:{},status:{}}}",
+                mdcore::escape::js_string_literal(&comment.id),
+                comment.heading,
+                comment.nth,
+                mdcore::escape::js_string_literal(&comment.quote),
+                mdcore::escape::js_string_literal(&comment.note),
+                mdcore::escape::js_string_literal(comment.status.as_str()),
             )
         })
         .collect();
@@ -1066,6 +1172,36 @@ mod tests {
     }
 
     #[test]
+    fn review_inbox_messages_preserve_identity_and_validate_status() {
+        assert_eq!(
+            parse_message("openReviewItem:%2Ftmp%2Fplan.md:a%3A1"),
+            Some(Message::OpenReviewItem {
+                path: "/tmp/plan.md".into(),
+                id: "a:1".into(),
+            })
+        );
+        assert_eq!(
+            parse_message("setReviewStatus:%2Ftmp%2Fplan.md:a%3A1:stale"),
+            Some(Message::SetReviewStatus {
+                path: "/tmp/plan.md".into(),
+                id: "a:1".into(),
+                status: crate::review::Status::Stale,
+            })
+        );
+        assert_eq!(
+            parse_message("setCurrentReviewStatus:a%3A1:open"),
+            Some(Message::SetCurrentReviewStatus {
+                id: "a:1".into(),
+                status: crate::review::Status::Open,
+            })
+        );
+        assert_eq!(
+            parse_message("setReviewStatus:%2Ftmp%2Fplan.md:a%3A1:unknown"),
+            None
+        );
+    }
+
+    #[test]
     fn an_empty_comment_list_still_reaches_the_page() {
         // Otherwise deleting the last comment would leave its highlight up.
         assert_eq!(
@@ -1103,6 +1239,14 @@ mod tests {
                 "selectHistory:" => "selectHistory:abc123".to_string(),
                 "searchWorkspace:" => "searchWorkspace:retry".to_string(),
                 "openWorkspacePath:" => "openWorkspacePath:%2Ftmp%2Fx.md".to_string(),
+                "openReviewItem:" => "openReviewItem:%2Ftmp%2Fx.md:a%3A1".to_string(),
+                "setReviewStatus:" => {
+                    "setReviewStatus:%2Ftmp%2Fx.md:a%3A1:resolved".to_string()
+                }
+                "setCurrentReviewStatus:" => {
+                    "setCurrentReviewStatus:a%3A1:stale".to_string()
+                }
+                "copyInboxReview:" => "copyInboxReview:unresolved".to_string(),
                 "previewLink:" => "previewLink:guide.md%23intro".to_string(),
                 "openLink:" => "openLink:0:320:intro:guide.md%23intro".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),

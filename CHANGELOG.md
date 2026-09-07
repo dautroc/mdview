@@ -3,6 +3,44 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.23.0](https://github.com/dautroc/mdview/releases/tag/v0.23.0) — 2026-09-07
+
+### What's new
+
+- **Manage every workspace comment from one Review Inbox.** `g v` groups comments
+  by document and filters unresolved, open, resolved, stale, or all records.
+  Selecting an item opens its document and passage; status controls resolve or
+  reopen it without deleting review history. MDView marks an open comment stale
+  when its quote no longer anchors and reopens it when the passage returns.
+- **Exchange portable review sessions without leaking workspace paths.** File →
+  Export Review Session… writes a deterministic bundle containing relative
+  document identities, content fingerprints, comments, and statuses. Import
+  matches relative paths first, confirms unique fingerprint relocations, merges
+  stable comment IDs, and preserves local records when conflicts differ.
+- **Hand off or summarize a workspace review.** `C` copies a prompt for the
+  active Inbox filter and names every review file an agent must update. Once all
+  comments are resolved, File → Export Review Summary… writes a path-safe
+  Markdown record of the completed review.
+
+### Notes
+
+- Review files now use a versioned grammar with explicit `open`, `resolved`, and
+  `stale` statuses. The first valid write upgrades an older file and keeps its
+  previous contents as a backup. Deletion remains a separate permanent action.
+- The workspace review index is built off the main thread and updated from
+  targeted Application Support events. Backup and temporary files cannot enter
+  the Inbox.
+
+### Safety
+
+- Damaged, unsupported, non-UTF-8, or concurrently changed review files are not
+  overwritten. Portable imports reject absolute and traversal identities,
+  unknown schema records, duplicate identities, oversized sessions, and comment
+  counts beyond the normal per-document limit.
+- Session and summary exports use collision-safe temporary files in the
+  destination directory before atomic replacement. Diff and history pages never
+  persist stale-status transitions.
+
 ## [v0.22.0](https://github.com/dautroc/mdview/releases/tag/v0.22.0) — 2026-09-07
 
 ### What's new

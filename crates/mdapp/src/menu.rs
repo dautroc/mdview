@@ -143,6 +143,25 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     let (recent_holder, recent_menu) = submenu(mtm, "Open Recent");
     file_menu.addItem(&recent_holder);
     file_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    file_menu.addItem(&item(
+        mtm,
+        "Import Review Session…",
+        sel!(importReviewSession:),
+        "",
+    ));
+    file_menu.addItem(&item(
+        mtm,
+        "Export Review Session…",
+        sel!(exportReviewSession:),
+        "",
+    ));
+    file_menu.addItem(&item(
+        mtm,
+        "Export Review Summary…",
+        sel!(exportReviewSummary:),
+        "",
+    ));
+    file_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     file_menu.addItem(&item(mtm, "Close Window", sel!(performClose:), "w"));
     menubar.addItem(&file_holder);
 
@@ -166,6 +185,12 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     edit_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     // C on the keyboard. No key equivalent here: ⇧⌘C is not MDView's to take.
     edit_menu.addItem(&item(mtm, "Copy Review Prompt", sel!(copyReviewPrompt:), ""));
+    edit_menu.addItem(&item(
+        mtm,
+        "Copy Review Inbox Prompt",
+        sel!(copyReviewInboxPrompt:),
+        "",
+    ));
     menubar.addItem(&edit_holder);
 
     let (go_holder, go_menu) = submenu(mtm, "Go");
@@ -204,6 +229,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     view_menu.addItem(&item(mtm, "Outline", sel!(showOutline:), ""));
     view_menu.addItem(&item(mtm, "Bookmarks", sel!(showBookmarks:), ""));
     view_menu.addItem(&item(mtm, "Comments", sel!(showComments:), ""));
+    view_menu.addItem(&item(mtm, "Review Inbox", sel!(showReviewInbox:), ""));
     // Themes have no other native home: the in-page picker is a palette the
     // keyboard opens, so without this the menu bar could not reach them at all.
     // Checkmarks are stamped in the delegate's validateMenuItem:, not here, so
