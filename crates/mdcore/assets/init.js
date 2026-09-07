@@ -460,6 +460,7 @@
     // Painted again after the diagrams land: they arrive with a height, and
     // the first paint measured a document that did not have it yet.
     renderDiagrams().then(enhanceZoomables).then(scheduleMinimapPaint);
+    enhanceDocumentLinks();
     renderSidebarBody();
     refreshHighlights();
   };
@@ -744,6 +745,11 @@
   var workspaceFiles = [];
   var workspacePartial = false;
   var workspaceError = null;
+  var documentLinks = [];
+  var documentBacklinks = [];
+  var currentDocumentLink = null;
+  var linkPreviewTimer = 0;
+  var linkPreviewCloseTimer = 0;
   var SIDEBAR_WIDTH_MIN = 160;
   var SIDEBAR_WIDTH_MAX = 600;
   var SIDEBAR_WIDTH_DEFAULT = 260;
@@ -785,8 +791,9 @@
     if (title) {
       title.textContent =
         sidebarTab === "files" ? "Files" :
-          sidebarTab === "bookmarks" ? "Bookmarks" :
-            sidebarTab === "comments" ? "Comments" : "Outline";
+          sidebarTab === "links" ? "Links" :
+            sidebarTab === "bookmarks" ? "Bookmarks" :
+              sidebarTab === "comments" ? "Comments" : "Outline";
     }
     renderSidebarBody();
     layoutCommentRail();
@@ -968,6 +975,232 @@
     if (workspacePaletteIsOpen() && workspacePaletteMode === "files") renderWorkspaceRows(workspaceFiles);
   };
 
+  window.mdviewSetLinks = function (outgoing, backlinks) {
+    documentLinks = Array.isArray(outgoing) ? outgoing : [];
+    documentBacklinks = Array.isArray(backlinks) ? backlinks : [];
+    enhanceDocumentLinks();
+    if (sidebarTab === "links") renderSidebarBody();
+  };
+
+  function linkSummary(anchor) {
+    var raw = anchor.getAttribute("href") || "";
+    for (var i = 0; i < documentLinks.length; i++) {
+      if (documentLinks[i].raw === raw) return documentLinks[i];
+    }
+    return null;
+  }
+
+  function closeLinkPreview() {
+    clearTimeout(linkPreviewTimer);
+    var preview = document.getElementById("mdview-link-preview");
+    if (preview) preview.hidden = true;
+  }
+
+  function previewDestination(anchor) {
+    var summary = linkSummary(anchor);
+    if (summary) {
+      return summary.state === "document" || summary.state === "heading" ? summary.raw : null;
+    }
+    // Link summaries arrive asynchronously from the workspace index. Hover and
+    // keyboard preview must still work before that result lands, so permit only
+    // destinations that are unambiguously local Markdown and let the native
+    // resolver make the final decision. External schemes never reach the host.
+    var raw = anchor.getAttribute("href") || "";
+    if (raw.charAt(0) === "#") return raw;
+    var path = raw.split("#", 1)[0].split("?", 1)[0].toLowerCase();
+    return /\.(md|markdown|mdown|mkdn)$/.test(path) ? raw : null;
+  }
+
+  function requestLinkPreview(anchor) {
+    var destination = previewDestination(anchor);
+    if (!destination) return;
+    currentDocumentLink = anchor;
+    clearTimeout(linkPreviewTimer);
+    clearTimeout(linkPreviewCloseTimer);
+    linkPreviewTimer = setTimeout(function () {
+      postToHost("previewLink:" + encodeURIComponent(destination));
+    }, 280);
+  }
+
+  function openDocumentLink(anchor, newTab) {
+    var summary = linkSummary(anchor);
+    if (summary && (summary.state === "missing" || summary.state === "outside")) {
+      showNote("That local link is broken.");
+      return true;
+    }
+    var destination = previewDestination(anchor);
+    if (!destination) return false;
+    closeLinkPreview();
+    postToHost(
+      "openLink:" + (newTab ? "1" : "0") + ":" +
+      Math.max(0, Math.round(window.scrollY)) + ":" +
+      encodeURIComponent(currentHeadingId() || "") + ":" + encodeURIComponent(destination)
+    );
+    return true;
+  }
+
+  function nearestDocumentLink() {
+    if (currentDocumentLink && document.contains(currentDocumentLink) && previewDestination(currentDocumentLink)) {
+      return currentDocumentLink;
+    }
+    var links = document.querySelectorAll("#mdview-content a[href]");
+    var best = null;
+    var distance = Infinity;
+    for (var i = 0; i < links.length; i++) {
+      if (!previewDestination(links[i])) continue;
+      var rect = links[i].getBoundingClientRect();
+      var d = rect.bottom < 0 ? -rect.bottom : rect.top > window.innerHeight ? rect.top - window.innerHeight : 0;
+      if (d < distance) { distance = d; best = links[i]; }
+    }
+    return best;
+  }
+
+  function previewCurrentLink() {
+    var anchor = nearestDocumentLink();
+    if (!anchor) { showNote("No local link is nearby."); return; }
+    currentDocumentLink = anchor;
+    anchor.focus();
+    requestLinkPreview(anchor);
+  }
+
+  window.mdviewOpenCurrentLink = function (newTab) {
+    var anchor = nearestDocumentLink();
+    if (!anchor || !openDocumentLink(anchor, !!newTab)) showNote("No local link is selected.");
+  };
+
+  window.mdviewShowLinkPreview = function (title, html, truncated) {
+    var anchor = nearestDocumentLink();
+    if (!anchor) return;
+    var preview = document.getElementById("mdview-link-preview");
+    if (!preview) {
+      preview = document.createElement("aside");
+      preview.id = "mdview-link-preview";
+      preview.setAttribute("role", "dialog");
+      preview.setAttribute("aria-label", "Link preview");
+      preview.addEventListener("mouseenter", function () { clearTimeout(linkPreviewCloseTimer); });
+      preview.addEventListener("mouseleave", function () {
+        linkPreviewCloseTimer = setTimeout(closeLinkPreview, 120);
+      });
+      document.body.appendChild(preview);
+    }
+    preview.textContent = "";
+    var heading = document.createElement("header");
+    heading.textContent = title || "Link preview";
+    var body = document.createElement("div");
+    body.className = "mdview-link-preview-body";
+    body.innerHTML = html;
+    preview.appendChild(heading);
+    preview.appendChild(body);
+    if (truncated) {
+      var more = document.createElement("footer");
+      more.textContent = "Preview shortened";
+      preview.appendChild(more);
+    }
+    var rect = anchor.getBoundingClientRect();
+    preview.hidden = false;
+    var width = preview.offsetWidth;
+    var left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
+    var top = rect.bottom + 8;
+    if (top + preview.offsetHeight > window.innerHeight - 12) top = Math.max(12, rect.top - preview.offsetHeight - 8);
+    preview.style.left = left + "px";
+    preview.style.top = top + "px";
+  };
+
+  window.mdviewRestoreNavigation = function (anchor, position) {
+    requestAnimationFrame(function () {
+      var target = anchor ? document.getElementById(anchor) : null;
+      if (target) target.scrollIntoView({ block: "start" });
+      else window.scrollTo(0, Math.max(0, Number(position) || 0));
+    });
+  };
+
+  function enhanceDocumentLinks() {
+    var links = document.querySelectorAll("#mdview-content a[href]");
+    for (var i = 0; i < links.length; i++) {
+      var anchor = links[i];
+      var summary = linkSummary(anchor);
+      anchor.classList.toggle("mdview-broken-link", !!summary && (summary.state === "missing" || summary.state === "outside"));
+      var destination = previewDestination(anchor);
+      var intercepted = destination || (summary && (summary.state === "missing" || summary.state === "outside") ? summary.raw : null);
+      if (!intercepted || anchor.getAttribute("data-mdview-link") === intercepted) continue;
+      anchor.setAttribute("data-mdview-link", intercepted);
+      anchor.addEventListener("mouseenter", function (event) { requestLinkPreview(event.currentTarget); });
+      anchor.addEventListener("mouseleave", function () {
+        clearTimeout(linkPreviewTimer);
+        linkPreviewCloseTimer = setTimeout(closeLinkPreview, 120);
+      });
+      anchor.addEventListener("focus", function (event) { currentDocumentLink = event.currentTarget; });
+      anchor.addEventListener("click", function (event) {
+        if (openDocumentLink(event.currentTarget, event.metaKey || event.shiftKey)) event.preventDefault();
+      });
+    }
+  }
+
+  function renderLinks(body) {
+    var broken = documentLinks.filter(function (link) {
+      return link.state === "missing" || link.state === "outside";
+    });
+    body.textContent = "";
+    var backTitle = document.createElement("h3");
+    backTitle.className = "mdview-sidebar-section";
+    backTitle.textContent = "Backlinks (" + documentBacklinks.length + ")";
+    body.appendChild(backTitle);
+    if (!documentBacklinks.length) {
+      var none = document.createElement("p");
+      none.className = "mdview-sidebar-empty";
+      none.textContent = workspaceRoot ? "No workspace documents link here." : "Open a folder to find backlinks.";
+      body.appendChild(none);
+    } else {
+      var backList = document.createElement("ul");
+      documentBacklinks.forEach(function (entry) {
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.href = "#";
+        a.textContent = entry.label;
+        a.title = entry.path;
+        a.addEventListener("click", function (event) {
+          event.preventDefault();
+          postToHost("openWorkspacePath:" + encodeURIComponent(entry.path));
+        });
+        li.appendChild(a);
+        backList.appendChild(li);
+      });
+      body.appendChild(backList);
+    }
+    var brokenTitle = document.createElement("h3");
+    brokenTitle.className = "mdview-sidebar-section";
+    brokenTitle.textContent = "Broken outgoing (" + broken.length + ")";
+    body.appendChild(brokenTitle);
+    if (!broken.length) {
+      var clean = document.createElement("p");
+      clean.className = "mdview-sidebar-empty";
+      clean.textContent = "No broken local links.";
+      body.appendChild(clean);
+    } else {
+      var brokenList = document.createElement("ul");
+      broken.forEach(function (entry) {
+        var li = document.createElement("li");
+        li.className = "mdview-broken-link-row";
+        var a = document.createElement("a");
+        a.href = "#";
+        a.textContent = entry.raw;
+        a.addEventListener("click", function (event) {
+          event.preventDefault();
+          var candidates = document.querySelectorAll("#mdview-content a[data-mdview-link]");
+          for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i].getAttribute("data-mdview-link") === entry.raw) {
+              candidates[i].scrollIntoView({ block: "center" });
+              break;
+            }
+          }
+        });
+        li.appendChild(a);
+        brokenList.appendChild(li);
+      });
+      body.appendChild(brokenList);
+    }
+  }
+
   function renderWorkspaceFiles(body) {
     if (workspaceError) {
       body.innerHTML = "<p class=\"mdview-sidebar-empty\"></p>";
@@ -1012,6 +1245,8 @@
     if (!body) return;
     if (sidebarTab === "files") {
       renderWorkspaceFiles(body);
+    } else if (sidebarTab === "links") {
+      renderLinks(body);
     } else if (sidebarTab === "outline") {
       body.innerHTML = buildOutline();
       var links = body.querySelectorAll("a[data-outline-id]");
@@ -4695,7 +4930,7 @@
   // than toggling it, unlike the o and b keys: picking "Outline" from a menu and
   // having the panel shut is not what anyone means by it.
   window.mdviewShowSidebarTab = function (tab) {
-    var known = tab === "bookmarks" || tab === "comments" || tab === "files" ? tab : "outline";
+    var known = tab === "bookmarks" || tab === "comments" || tab === "files" || tab === "links" ? tab : "outline";
     setSidebar(true, known);
   };
 
@@ -4837,6 +5072,14 @@
       ],
     },
     {
+      title: "Links and history",
+      items: [
+        { keys: ["g e"], hint: "g  e", label: "Preview the nearest local link", run: previewCurrentLink },
+        { keys: ["g ["], hint: "g  [", label: "Back in link history", run: function () { postToHost("navigateBack"); } },
+        { keys: ["g ]"], hint: "g  ]", label: "Forward in link history", run: function () { postToHost("navigateForward"); } },
+      ],
+    },
+    {
       title: "Tabs",
       items: [
         { keys: ["g n"], hint: "g  n", label: "Next tab", run: function () { postToHost("nextTab"); } },
@@ -4854,6 +5097,7 @@
         { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
         { keys: ["g r"], hint: "g  r", label: "Recent files", run: toggleRecentPalette },
         { keys: ["g f"], hint: "g  f", label: "Workspace files", run: function () { window.mdviewOpenWorkspaceFiles(); } },
+        { keys: ["g i"], hint: "g  i", label: "Links and backlinks", run: function () { showSidebarTab("links"); } },
       ],
     },
     {
@@ -5123,6 +5367,21 @@
       return;
     }
 
+    var linkPreview = document.getElementById("mdview-link-preview");
+    if (linkPreview && !linkPreview.hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeLinkPreview();
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        var previewLink = nearestDocumentLink();
+        if (previewLink) openDocumentLink(previewLink, event.shiftKey || event.metaKey);
+        return;
+      }
+    }
+
     // So is a jump in progress: every key is either the character being
     // searched for or the label being picked, and nothing else runs until it
     // resolves or is cancelled.
@@ -5241,7 +5500,10 @@
   }
 
   function sendReadingPosition() {
-    postToHost("setReadingPosition:" + Math.max(0, Math.round(window.scrollY)));
+    var anchor = currentHeadingId() || "";
+    postToHost(
+      "setReadingPosition:" + Math.max(0, Math.round(window.scrollY)) + ":" + encodeURIComponent(anchor)
+    );
   }
 
   function checkpointReadingPosition() {

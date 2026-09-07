@@ -5,6 +5,7 @@ use std::rc::Rc;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
+use objc2_app_kit::NSEventModifierFlags;
 use objc2_foundation::MainThreadMarker;
 use objc2_web_kit::{
     WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate,
@@ -13,17 +14,32 @@ use objc2_web_kit::{
 
 const MARKDOWN_EXTENSIONS: [&str; 3] = ["md", "markdown", "mdown"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenDisposition {
+    CurrentTab,
+    NewTab,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavigationRequest {
     /// Hand this URL to the user's default browser.
     OpenExternal(String),
-    /// Open this local Markdown file in a new MDView tab.
-    OpenDocument(PathBuf),
+    /// Open this local Markdown file with its decoded fragment.
+    OpenDocument {
+        path: PathBuf,
+        fragment: Option<String>,
+        disposition: OpenDisposition,
+    },
 }
 
 /// Decide what a navigation attempt means. Pure logic, no AppKit, so it is
 /// unit-tested directly.
-pub fn classify(url: &str, scheme: &str, file_path: Option<&str>) -> Option<NavigationRequest> {
+pub fn classify(
+    url: &str,
+    scheme: &str,
+    file_path: Option<&str>,
+    disposition: OpenDisposition,
+) -> Option<NavigationRequest> {
     match scheme {
         "http" | "https" | "mailto" => Some(NavigationRequest::OpenExternal(url.to_string())),
         "file" => {
@@ -38,7 +54,13 @@ pub fn classify(url: &str, scheme: &str, file_path: Option<&str>) -> Option<Navi
                         .any(|known| ext.eq_ignore_ascii_case(known))
                 })
                 .unwrap_or(false);
-            is_markdown.then_some(NavigationRequest::OpenDocument(path_buf))
+            is_markdown.then_some(NavigationRequest::OpenDocument {
+                path: path_buf,
+                fragment: url
+                    .split_once('#')
+                    .and_then(|(_, fragment)| crate::state::percent_decode(fragment)),
+                disposition,
+            })
         }
         // Anything else — javascript:, data:, custom schemes — is dropped.
         _ => None,
@@ -68,6 +90,7 @@ pub fn decide(
     file_path: Option<&str>,
     is_other: bool,
     expecting_own_load: bool,
+    disposition: OpenDisposition,
 ) -> Decision {
     // Our own loadHTMLString. Its URL is whatever baseURL we passed — a
     // file:// directory for a document, about:blank for the error page — so
@@ -77,7 +100,7 @@ pub fn decide(
         return Decision::Allow;
     }
     match (absolute, scheme) {
-        (Some(absolute), Some(scheme)) => match classify(absolute, scheme, file_path) {
+        (Some(absolute), Some(scheme)) => match classify(absolute, scheme, file_path, disposition) {
             Some(request) => Decision::CancelAndHandle(request),
             None => Decision::Cancel,
         },
@@ -126,12 +149,21 @@ define_class!(
             // initiated is ever treated as our own.
             let expecting_own_load = self.ivars().expecting_own_load.replace(false);
 
+            let modifiers = unsafe { action.modifierFlags() };
+            let disposition = if modifiers.contains(NSEventModifierFlags::Command)
+                || modifiers.contains(NSEventModifierFlags::Shift)
+            {
+                OpenDisposition::NewTab
+            } else {
+                OpenDisposition::CurrentTab
+            };
             let decision = decide(
                 absolute.as_deref(),
                 scheme.as_deref(),
                 decoded_path.as_deref(),
                 is_other,
                 expecting_own_load,
+                disposition,
             );
 
             match decision {
@@ -151,7 +183,10 @@ define_class!(
             };
             let expected_navigation = self.ivars().expected_navigation.borrow();
             let is_expected = expected_navigation.as_ref().is_some_and(|expected| {
-                std::ptr::eq(Retained::as_ptr(expected), navigation as *const WKNavigation)
+                std::ptr::eq(
+                    Retained::as_ptr(expected),
+                    navigation as *const WKNavigation,
+                )
             });
             if is_expected {
                 self.ivars().page_ready.set(true);
@@ -218,7 +253,8 @@ mod tests {
                 Some("file"),
                 Some("/Users/x/notes"),
                 true,  // WKNavigationType::Other
-                true,  // token set by reload()
+                true, // token set by reload()
+                OpenDisposition::CurrentTab,
             ),
             Decision::Allow
         );
@@ -227,7 +263,14 @@ mod tests {
     #[test]
     fn our_own_error_page_load_is_allowed() {
         assert_eq!(
-            decide(Some("about:blank"), Some("about"), None, true, true),
+            decide(
+                Some("about:blank"),
+                Some("about"),
+                None,
+                true,
+                true,
+                OpenDisposition::CurrentTab,
+            ),
             Decision::Allow
         );
     }
@@ -255,6 +298,7 @@ mod tests {
                 Some("/Users/x/notes"),
                 false,
                 false,
+                OpenDisposition::CurrentTab,
             ),
             Decision::Cancel
         );
@@ -264,7 +308,14 @@ mod tests {
     fn a_meta_refresh_after_our_load_is_cancelled() {
         // Type `Other`, but the one-shot token was already consumed.
         assert_eq!(
-            decide(Some("https://evil.example/"), Some("https"), None, true, false),
+            decide(
+                Some("https://evil.example/"),
+                Some("https"),
+                None,
+                true,
+                false,
+                OpenDisposition::CurrentTab,
+            ),
             Decision::CancelAndHandle(NavigationRequest::OpenExternal(
                 "https://evil.example/".into()
             ))
@@ -274,7 +325,14 @@ mod tests {
     #[test]
     fn an_external_link_is_handed_off_not_followed() {
         assert_eq!(
-            decide(Some("https://example.com/x"), Some("https"), None, false, false),
+            decide(
+                Some("https://example.com/x"),
+                Some("https"),
+                None,
+                false,
+                false,
+                OpenDisposition::CurrentTab,
+            ),
             Decision::CancelAndHandle(NavigationRequest::OpenExternal(
                 "https://example.com/x".into()
             ))
@@ -290,48 +348,93 @@ mod tests {
                 Some("/Users/x/a.md"),
                 false,
                 false,
+                OpenDisposition::CurrentTab,
             ),
-            Decision::CancelAndHandle(NavigationRequest::OpenDocument("/Users/x/a.md".into()))
+            Decision::CancelAndHandle(NavigationRequest::OpenDocument {
+                path: "/Users/x/a.md".into(),
+                fragment: None,
+                disposition: OpenDisposition::CurrentTab,
+            })
         );
     }
 
     #[test]
     fn a_missing_url_is_cancelled() {
-        assert_eq!(decide(None, None, None, false, false), Decision::Cancel);
+        assert_eq!(
+            decide(None, None, None, false, false, OpenDisposition::CurrentTab,),
+            Decision::Cancel
+        );
     }
 
     #[test]
     fn http_links_open_externally() {
         assert_eq!(
-            classify("https://example.com/x", "https", None),
-            Some(NavigationRequest::OpenExternal("https://example.com/x".into()))
+            classify(
+                "https://example.com/x",
+                "https",
+                None,
+                OpenDisposition::CurrentTab,
+            ),
+            Some(NavigationRequest::OpenExternal(
+                "https://example.com/x".into()
+            ))
         );
     }
 
     #[test]
     fn markdown_files_open_as_documents() {
         assert_eq!(
-            classify("file:///Users/x/notes/a.md", "file", Some("/Users/x/notes/a.md")),
-            Some(NavigationRequest::OpenDocument(PathBuf::from("/Users/x/notes/a.md")))
+            classify(
+                "file:///Users/x/notes/a.md#intro",
+                "file",
+                Some("/Users/x/notes/a.md"),
+                OpenDisposition::NewTab,
+            ),
+            Some(NavigationRequest::OpenDocument {
+                path: PathBuf::from("/Users/x/notes/a.md"),
+                fragment: Some("intro".into()),
+                disposition: OpenDisposition::NewTab,
+            })
         );
     }
 
     #[test]
     fn markdown_extension_match_is_case_insensitive() {
         assert!(matches!(
-            classify("file:///Users/x/A.MARKDOWN", "file", Some("/Users/x/A.MARKDOWN")),
-            Some(NavigationRequest::OpenDocument(_))
+            classify(
+                "file:///Users/x/A.MARKDOWN",
+                "file",
+                Some("/Users/x/A.MARKDOWN"),
+                OpenDisposition::CurrentTab,
+            ),
+            Some(NavigationRequest::OpenDocument { .. })
         ));
     }
 
     #[test]
     fn non_markdown_files_are_ignored() {
-        assert_eq!(classify("file:///Users/x/photo.png", "file", Some("/Users/x/photo.png")), None);
+        assert_eq!(
+            classify(
+                "file:///Users/x/photo.png",
+                "file",
+                Some("/Users/x/photo.png"),
+                OpenDisposition::CurrentTab,
+            ),
+            None
+        );
     }
 
     #[test]
     fn unknown_schemes_are_ignored() {
-        assert_eq!(classify("javascript:alert(1)", "javascript", None), None);
+        assert_eq!(
+            classify(
+                "javascript:alert(1)",
+                "javascript",
+                None,
+                OpenDisposition::CurrentTab,
+            ),
+            None
+        );
     }
 
     #[test]
@@ -341,8 +444,13 @@ mod tests {
                 "file:///Users/x/My%20Notes.md",
                 "file",
                 Some("/Users/x/My Notes.md"),
+                OpenDisposition::CurrentTab,
             ),
-            Some(NavigationRequest::OpenDocument(PathBuf::from("/Users/x/My Notes.md")))
+            Some(NavigationRequest::OpenDocument {
+                path: PathBuf::from("/Users/x/My Notes.md"),
+                fragment: None,
+                disposition: OpenDisposition::CurrentTab,
+            })
         );
     }
 }

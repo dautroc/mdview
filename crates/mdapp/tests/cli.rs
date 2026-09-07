@@ -22,7 +22,7 @@ fn print_html_emits_a_complete_document() {
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     let html = String::from_utf8(output.stdout).unwrap();
     assert!(html.starts_with("<!DOCTYPE html>"));
-    assert!(html.contains("<h1>Title</h1>"));
+    assert!(html.contains("<h1 id=\"title\">Title</h1>"));
     assert!(html.contains("<title>doc.md</title>"));
 }
 
@@ -41,7 +41,7 @@ fn print_html_strips_a_frontmatter_block() {
 
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     let html = String::from_utf8(output.stdout).unwrap();
-    assert!(html.contains("<h1>Title</h1>"));
+    assert!(html.contains("<h1 id=\"title\">Title</h1>"));
     assert!(!html.contains("My Note"), "the metadata reached the page");
     assert!(!html.contains("<hr"), "the opening fence rendered as a rule");
 }

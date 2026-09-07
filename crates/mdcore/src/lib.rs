@@ -10,6 +10,7 @@ pub mod escape;
 pub mod frontmatter;
 pub mod highlight;
 pub mod images;
+pub mod links;
 pub mod math;
 pub mod page;
 pub mod rdiff;
@@ -26,6 +27,9 @@ pub use diff::{
 };
 pub use document::{Document, DocumentError};
 pub use highlight::Highlighter;
+pub use links::{
+    Backlink, DocumentLink, LinkGraph, LinkKind, LinkPreview, MissingReason, ResolvedLink,
+};
 pub use render::headings;
 pub use theme::Theme;
 pub use workspace::{

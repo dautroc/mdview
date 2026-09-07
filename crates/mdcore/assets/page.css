@@ -64,6 +64,17 @@ h1 { font-size: 2rem; border-bottom: 1px solid var(--border); padding-bottom: .3
 h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
 
 a { color: var(--link); }
+#mdview-content a.mdview-broken-link {
+  text-decoration-color: var(--diff-del-border);
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1.5px;
+}
+#mdview-content a.mdview-broken-link::after {
+  color: var(--diff-del-border);
+  content: " !";
+  font-size: .72em;
+  font-weight: 700;
+}
 hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
 
 blockquote {
@@ -929,6 +940,50 @@ body.mdview-resizing #mdview-sidebar-resizer {
   color: var(--link);
 }
 .mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }
+.mdview-sidebar-section {
+  color: var(--muted);
+  font-size: .72rem;
+  letter-spacing: .04em;
+  margin: .8rem 0 .35rem;
+  text-transform: uppercase;
+}
+#mdview-sidebar-body .mdview-broken-link-row a {
+  color: var(--diff-del-border);
+  overflow-wrap: anywhere;
+}
+
+#mdview-link-preview {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 30%);
+  box-sizing: border-box;
+  max-height: min(55vh, 440px);
+  overflow: auto;
+  position: fixed;
+  width: min(560px, calc(100vw - 24px));
+  z-index: 1200;
+}
+#mdview-link-preview[hidden] { display: none; }
+#mdview-link-preview > header {
+  background: var(--code-bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 600;
+  padding: .55rem .75rem;
+  position: sticky;
+  top: 0;
+}
+.mdview-link-preview-body { font-size: .9rem; padding: .25rem .85rem .7rem; }
+.mdview-link-preview-body > :first-child { margin-top: .7rem; }
+.mdview-link-preview-body > :last-child { margin-bottom: .2rem; }
+#mdview-link-preview > footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: .72rem;
+  padding: .35rem .75rem;
+}
 
 /* The ? cheat sheet. Above the lightbox's own z-index is deliberate: the two
    are never open together, but if a stale state ever let them be, the sheet

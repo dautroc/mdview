@@ -60,6 +60,14 @@ file that never closes it.
   reconcile automatically, and relaunch restores the workspace, tabs, selected
   tab, and reading positions. MDView skips symlinks, hidden and generated
   directories, files over 2 MiB, and stops at 10,000 files or 64 MiB of text.
+- **Intelligent local links.** Hover a Markdown link to preview its target section
+  without leaving the document, or use `g e` for the nearest link from the
+  keyboard. Enter opens it in the current navigation lineage; Shift-Enter or
+  Command-click keeps the source and opens a native tab. `g [` and `g ]` move
+  back and forward while restoring the heading and reading position. The Links
+  sidebar (`g i`) lists workspace backlinks and broken outgoing references, and
+  broken links are marked in the document. HTTP, HTTPS, and mail links still go
+  to the system handler and are never fetched for previews.
 - **Git history and diffs.** `g h` opens the commits that touched the document
   in a searchable palette; selecting one compares that version with the working
   tree. `g d` goes straight to the usual comparison against HEAD, and `g l`
@@ -180,11 +188,14 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
 | g n / g p | Next / previous tab |
+| g e | Preview the nearest local Markdown link |
+| g [ / g ] | Back / forward in link history |
 | g f | Open a Markdown file from the workspace |
 | g / | Search across the workspace |
 | g s | Toggle the sidebar |
 | g m | Toggle the minimap |
 | g o / g b | Outline / bookmarks in the sidebar |
+| g i | Links, backlinks, and broken references in the sidebar |
 | m | Bookmark this document |
 | c | Comment on the selection, or show the comments |
 | ) / ( | Next / previous comment |

@@ -43,7 +43,7 @@ fn relative_and_remote_image_paths_are_preserved() {
 fn frontmatter_is_stripped_and_later_rules_are_kept() {
     let html = mdcore::render::render_body(&fixture("frontmatter.md"));
     assert!(!html.contains("tags:"), "metadata leaked into the body: {html}");
-    assert!(html.starts_with("<h1>"), "got: {html}");
+    assert!(html.starts_with("<h1 id=\"my-note\">"), "got: {html}");
     insta::assert_snapshot!(html);
 }
 

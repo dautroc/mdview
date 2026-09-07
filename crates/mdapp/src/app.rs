@@ -26,6 +26,11 @@ pub(crate) struct HistoryResponse {
     result: Result<Vec<mdcore::HistoryEntry>, String>,
 }
 
+pub(crate) struct WorkspaceAnalysis {
+    index: mdcore::WorkspaceIndex,
+    links: mdcore::LinkGraph,
+}
+
 pub(crate) enum WorkspaceResponse {
     Scan {
         source_id: Option<u64>,
@@ -35,11 +40,11 @@ pub(crate) enum WorkspaceResponse {
     },
     Indexed {
         generation: u64,
-        result: Result<mdcore::WorkspaceIndex, String>,
+        result: Result<WorkspaceAnalysis, String>,
     },
     Incremental {
         generation: u64,
-        result: Result<mdcore::WorkspaceIndex, String>,
+        result: Result<WorkspaceAnalysis, String>,
     },
     Search {
         tab_id: u64,
@@ -53,12 +58,24 @@ pub(crate) enum WorkspaceResponse {
 pub(crate) struct WorkspaceData {
     snapshot: mdcore::WorkspaceSnapshot,
     index: Option<Arc<mdcore::WorkspaceIndex>>,
+    links: Option<Arc<mdcore::LinkGraph>>,
 }
 
 pub(crate) struct WorkspaceRestore {
     paths: Vec<PathBuf>,
     selected: Option<PathBuf>,
     positions: HashMap<PathBuf, u32>,
+}
+
+fn analyze_workspace(index: mdcore::WorkspaceIndex) -> Result<WorkspaceAnalysis, String> {
+    let links = mdcore::LinkGraph::build(
+        index.root().path(),
+        index
+            .documents()
+            .map(|(file, source)| (file.path.clone(), source.to_string())),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(WorkspaceAnalysis { index, links })
 }
 
 /// Everything the delegate owns. Held in the delegate's ivars.
@@ -129,8 +146,15 @@ define_class!(
             };
             if item.action() == Some(objc2::sel!(showWorkspaceFiles:))
                 || item.action() == Some(objc2::sel!(showWorkspaceSearch:))
+                || item.action() == Some(objc2::sel!(showLinks:))
             {
-                return self.ivars().workspace.borrow().is_some().into();
+                return self
+                    .ivars()
+                    .workspace
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|workspace| workspace.links.is_some())
+                    .into();
             }
             let valid = match item.action() {
                 Some(action)
@@ -141,6 +165,10 @@ define_class!(
                         .window
                         .tabGroup()
                         .is_some_and(|group| group.windows().len() > 1)
+                }
+                Some(action) if action == objc2::sel!(navigateBack:) => window.can_navigate_back(),
+                Some(action) if action == objc2::sel!(navigateForward:) => {
+                    window.can_navigate_forward()
                 }
                 Some(action) if action == objc2::sel!(toggleDiff:) => {
                     window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff
@@ -166,11 +194,11 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let paths = self.ivars().startup_paths.take();
-            // Explicit files win over a restored workspace. A launch with no
-            // explicit request restores the last versioned local session.
-            if paths.is_empty() {
-                self.restore_workspace_session();
-            } else {
+            // Arguments are available now, but Finder and `open -a` deliver
+            // their files later through application:openURLs:. Restoring here
+            // would briefly create the saved tabs before those explicit files
+            // arrive. A true no-document launch restores from open_untitled.
+            if !paths.is_empty() {
                 self.open_documents(&paths);
             }
 
@@ -231,7 +259,10 @@ define_class!(
 
         #[unsafe(method(applicationOpenUntitledFile:))]
         fn open_untitled(&self, _app: &NSApplication) -> bool {
-            self.present_open_panel();
+            self.restore_workspace_session();
+            if self.ivars().workspace_generation.get() == 0 {
+                self.present_open_panel();
+            }
             true
         }
     }
@@ -327,8 +358,11 @@ define_class!(
                 .cloned()
                 .collect();
 
-            for window in due {
+            for window in &due {
                 window.live_update(&state.highlighter);
+            }
+            if !due.is_empty() {
+                self.push_workspace_to_pages();
             }
 
             // A review file that changed under us. `C` asks Claude to delete
@@ -442,6 +476,31 @@ define_class!(
         #[unsafe(method(showWorkspaceSearch:))]
         fn show_workspace_search_action(&self, _sender: Option<&NSObject>) {
             self.run_page_script(crate::state::open_workspace_search_script());
+        }
+
+        #[unsafe(method(showLinks:))]
+        fn show_links_action(&self, _sender: Option<&NSObject>) {
+            self.show_sidebar_tab("links");
+        }
+
+        #[unsafe(method(navigateBack:))]
+        fn navigate_back_action(&self, _sender: Option<&NSObject>) {
+            self.handle_message(crate::state::Message::NavigateBack);
+        }
+
+        #[unsafe(method(navigateForward:))]
+        fn navigate_forward_action(&self, _sender: Option<&NSObject>) {
+            self.handle_message(crate::state::Message::NavigateForward);
+        }
+
+        #[unsafe(method(openCurrentLink:))]
+        fn open_current_link_action(&self, _sender: Option<&NSObject>) {
+            self.run_page_script(crate::state::open_current_link_script(false));
+        }
+
+        #[unsafe(method(openCurrentLinkInNewTab:))]
+        fn open_current_link_new_tab_action(&self, _sender: Option<&NSObject>) {
+            self.run_page_script(crate::state::open_current_link_script(true));
         }
 
         #[unsafe(method(copyReviewPrompt:))]
@@ -929,7 +988,8 @@ impl AppDelegate {
                     &snapshot,
                     mdcore::WorkspaceLimits::default(),
                 )
-                .map_err(|error| error.to_string());
+                .map_err(|error| error.to_string())
+                .and_then(analyze_workspace);
                 let _ = sender.send(WorkspaceResponse::Indexed {
                     generation,
                     result: indexed,
@@ -1097,8 +1157,8 @@ impl AppDelegate {
                         index.remove(path).map(|_| ())
                     }
                 })
-                .map(|_| index)
-                .map_err(|error| error.to_string());
+                .map_err(|error| error.to_string())
+                .and_then(|_| analyze_workspace(index.clone()));
             let _ = sender.send(WorkspaceResponse::Incremental {
                 generation,
                 result: incremental,
@@ -1124,7 +1184,8 @@ impl AppDelegate {
                     &snapshot,
                     mdcore::WorkspaceLimits::default(),
                 )
-                .map_err(|error| error.to_string());
+                .map_err(|error| error.to_string())
+                .and_then(analyze_workspace);
                 let _ = sender.send(WorkspaceResponse::Indexed {
                     generation,
                     result: indexed,
@@ -1156,12 +1217,10 @@ impl AppDelegate {
                             *self.ivars().workspace.borrow_mut() = Some(WorkspaceData {
                                 snapshot,
                                 index: None,
+                                links: None,
                             });
-                            let watcher_matches = self
-                                .ivars()
-                                .workspace_watcher_root
-                                .borrow()
-                                .as_ref()
+                            let watcher_matches =
+                                self.ivars().workspace_watcher_root.borrow().as_ref()
                                 == Some(&root);
                             if !watcher_matches {
                                 let watcher = crate::watcher::WorkspaceWatcher::start(&root).ok();
@@ -1255,16 +1314,14 @@ impl AppDelegate {
                         continue;
                     }
                     match result {
-                        Ok(index) => {
+                        Ok(analysis) => {
+                            let WorkspaceAnalysis { index, links } = analysis;
                             if let Some(workspace) = self.ivars().workspace.borrow_mut().as_mut() {
                                 workspace.snapshot.files = index.files().cloned().collect();
-                                workspace.snapshot.indexed_bytes = workspace
-                                    .snapshot
-                                    .files
-                                    .iter()
-                                    .map(|file| file.size)
-                                    .sum();
+                                workspace.snapshot.indexed_bytes =
+                                    workspace.snapshot.files.iter().map(|file| file.size).sum();
                                 workspace.index = Some(Arc::new(index));
+                                workspace.links = Some(Arc::new(links));
                             }
                             self.push_workspace_to_pages();
                             let pending = std::mem::take(
@@ -1279,12 +1336,10 @@ impl AppDelegate {
                                 &mut *self.ivars().pending_workspace_changes.borrow_mut(),
                             );
                             if !pending.is_empty() {
-                                if let Some(root) = self
-                                    .ivars()
-                                    .workspace
-                                    .borrow()
-                                    .as_ref()
-                                    .map(|workspace| workspace.snapshot.root.path().to_path_buf())
+                                if let Some(root) =
+                                    self.ivars().workspace.borrow().as_ref().map(|workspace| {
+                                        workspace.snapshot.root.path().to_path_buf()
+                                    })
                                 {
                                     self.start_workspace_scan(root, None, false);
                                 }
@@ -1299,12 +1354,14 @@ impl AppDelegate {
                         continue;
                     }
                     match result {
-                        Ok(index) => {
+                        Ok(analysis) => {
+                            let WorkspaceAnalysis { index, links } = analysis;
                             if let Some(workspace) = self.ivars().workspace.borrow_mut().as_mut() {
                                 workspace.snapshot.files = index.files().cloned().collect();
                                 workspace.snapshot.indexed_bytes =
                                     workspace.snapshot.files.iter().map(|file| file.size).sum();
                                 workspace.index = Some(Arc::new(index));
+                                workspace.links = Some(Arc::new(links));
                             }
                             self.push_workspace_to_pages();
                         }
@@ -1354,14 +1411,64 @@ impl AppDelegate {
         }
     }
 
+    fn direct_link_graph(&self, source: &std::path::Path) -> Option<mdcore::LinkGraph> {
+        let workspace_scope = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .filter(|workspace| source.starts_with(workspace.snapshot.root.path()))
+            .map(|workspace| {
+                (
+                    workspace.snapshot.root.path().to_path_buf(),
+                    workspace
+                        .snapshot
+                        .files
+                        .iter()
+                        .map(|file| file.path.clone())
+                        .collect::<Vec<_>>(),
+                )
+            });
+        match workspace_scope {
+            Some((root, documents)) => mdcore::LinkGraph::for_document_in_workspace(
+                source,
+                root,
+                documents,
+                mdcore::workspace::DEFAULT_MAX_FILE_BYTES,
+            )
+            .ok(),
+            None => mdcore::LinkGraph::for_document(
+                source,
+                mdcore::workspace::DEFAULT_MAX_FILE_BYTES,
+            )
+            .ok(),
+        }
+    }
+
     fn push_workspace_to_pages(&self) {
         let workspace = self.ivars().workspace.borrow();
-        let script = crate::state::workspace_files_script(
+        let workspace_script = crate::state::workspace_files_script(
             workspace.as_ref().map(|workspace| &workspace.snapshot),
             None,
         );
         for window in self.ivars().windows.borrow().iter() {
-            window.pending_scripts.borrow_mut().push(script.clone());
+            window
+                .pending_scripts
+                .borrow_mut()
+                .push(workspace_script.clone());
+            let workspace_graph = workspace
+                .as_ref()
+                .and_then(|workspace| workspace.links.as_deref());
+            let standalone_graph = if workspace_graph.is_none() {
+                self.direct_link_graph(&window.path)
+            } else {
+                None
+            };
+            let links_script = crate::state::links_script(
+                workspace_graph.or(standalone_graph.as_ref()),
+                &window.path,
+            );
+            window.pending_scripts.borrow_mut().push(links_script);
         }
     }
 
@@ -1499,9 +1606,11 @@ impl AppDelegate {
                                 workspace.openURL(&url);
                             }
                         }
-                        NavigationRequest::OpenDocument(path) => {
-                            delegate.open_document_from(id, &path)
-                        }
+                        NavigationRequest::OpenDocument {
+                            path,
+                            fragment,
+                            disposition,
+                        } => delegate.handle_native_document_link(id, path, fragment, disposition),
                     });
 
                 let msg_delegate: Retained<AppDelegate> =
@@ -1583,6 +1692,265 @@ impl AppDelegate {
         if self.window_by_id(source_id).is_some() {
             self.open_documents_from(&[path.to_path_buf()], Some(source_id));
         }
+    }
+
+    fn handle_native_document_link(
+        &self,
+        source_id: u64,
+        path: PathBuf,
+        fragment: Option<String>,
+        disposition: crate::navigation::OpenDisposition,
+    ) {
+        let Some(source) = self.window_by_id(source_id) else {
+            return;
+        };
+        let workspace_scope = self.ivars().workspace.borrow().as_ref().and_then(|workspace| {
+            source
+                .path
+                .starts_with(workspace.snapshot.root.path())
+                .then(|| {
+                    (
+                        workspace.snapshot.root.path().to_path_buf(),
+                        workspace.links.clone(),
+                        workspace
+                            .snapshot
+                            .files
+                            .iter()
+                            .map(|file| file.path.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+        });
+        let path = if let Some((root, graph, files)) = workspace_scope {
+            let Some(canonical) = std::fs::canonicalize(&path).ok().filter(|path| {
+                path.starts_with(&root)
+                    && graph.as_ref().map_or_else(
+                        || files.iter().any(|file| file == path),
+                        |graph| graph.document(path).is_some(),
+                    )
+            }) else {
+                source.show_note("That local link is outside this workspace or unavailable.");
+                return;
+            };
+            canonical
+        } else {
+            path
+        };
+        if disposition == crate::navigation::OpenDisposition::NewTab {
+            self.open_documents_from(&[path.clone()], Some(source_id));
+            if let Some(target) = self.window_for_path(&path) {
+                target
+                    .pending_scripts
+                    .borrow_mut()
+                    .push(crate::state::reveal_anchor_script(fragment.as_deref(), 0));
+            }
+            return;
+        }
+        let mut history = source.navigation_history();
+        history.back.push(source.navigation_point());
+        history.forward.clear();
+        self.replace_navigation_tab(source, path, fragment, 0, history);
+    }
+
+    fn resolved_link(
+        &self,
+        source: &DocumentWindow,
+        destination: &str,
+    ) -> Option<mdcore::ResolvedLink> {
+        if let Some(resolved) = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .and_then(|workspace| workspace.links.as_ref())
+            .and_then(|graph| {
+                graph
+                    .outgoing(&source.path)
+                    .iter()
+                    .find(|link| link.raw_destination == destination)
+                    .map(|link| link.resolved.clone())
+            })
+        {
+            return Some(resolved);
+        }
+        let graph = self.direct_link_graph(&source.path)?;
+        graph
+            .outgoing(&source.path)
+            .iter()
+            .find(|link| link.raw_destination == destination)
+            .map(|link| link.resolved.clone())
+    }
+
+    fn preview_link(&self, source_id: Option<u64>, destination: &str) {
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
+        let Some(resolved) = self.resolved_link(&window, destination) else {
+            return;
+        };
+        let workspace_graph = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .and_then(|workspace| workspace.links.clone());
+        let candidate = workspace_graph
+            .as_ref()
+            .and_then(|graph| {
+                graph
+                    .preview(&resolved, 12 * 1024)
+                    .map(|preview| (preview, resolved.clone()))
+            })
+            .or_else(|| {
+                // The page can request a preview before workspace analysis has
+                // published link summaries. Resolve a bounded direct-target
+                // graph rather than dropping that first hover or keyboard use.
+                let graph = self.direct_link_graph(&window.path)?;
+                let link = graph
+                    .outgoing(&window.path)
+                    .iter()
+                    .find(|link| link.raw_destination == destination)?;
+                graph
+                    .preview(&link.resolved, 12 * 1024)
+                    .map(|preview| (preview, link.resolved.clone()))
+            });
+        let Some((preview, resolved)) = candidate else {
+            return;
+        };
+        let base_dir = resolved
+            .document_path()
+            .and_then(std::path::Path::parent);
+        let html =
+            mdcore::render::render_body_in(&preview.markdown, &self.ivars().highlighter, base_dir);
+        window.eval_script(&crate::state::link_preview_script(
+            &preview.title,
+            &html,
+            preview.truncated,
+        ));
+    }
+
+    fn open_link(
+        &self,
+        source_id: Option<u64>,
+        destination: &str,
+        new_tab: bool,
+        position: u32,
+        reading_anchor: Option<String>,
+    ) {
+        let Some(source) = self.message_window(source_id) else {
+            return;
+        };
+        source.update_reading_position(position, reading_anchor);
+        let Some(resolved) = self.resolved_link(&source, destination) else {
+            source.show_note("That link is no longer available.");
+            return;
+        };
+        let (path, anchor) = match resolved {
+            mdcore::ResolvedLink::Document { path } => (path, None),
+            mdcore::ResolvedLink::Heading { path, heading } => (path, Some(heading.slug)),
+            mdcore::ResolvedLink::Missing { .. }
+            | mdcore::ResolvedLink::OutsideWorkspace { .. } => {
+                source.show_note("That local link is broken.");
+                return;
+            }
+            _ => return,
+        };
+        if new_tab {
+            self.open_documents_from(&[path.clone()], Some(source.id));
+            if let Some(target) = self.window_for_path(&path) {
+                target
+                    .pending_scripts
+                    .borrow_mut()
+                    .push(crate::state::reveal_anchor_script(anchor.as_deref(), 0));
+            }
+            return;
+        }
+
+        let mut history = source.navigation_history();
+        history.back.push(source.navigation_point());
+        history.forward.clear();
+        self.replace_navigation_tab(source, path, anchor, 0, history);
+    }
+
+    fn navigate_history(&self, source_id: Option<u64>, back: bool) {
+        let Some(source) = self.message_window(source_id) else {
+            return;
+        };
+        let mut history = source.navigation_history();
+        let point = loop {
+            let stack = if back {
+                &mut history.back
+            } else {
+                &mut history.forward
+            };
+            let Some(candidate) = stack.pop() else {
+                source.set_navigation_history(history);
+                source.show_note(if back {
+                    "Nothing behind this page."
+                } else {
+                    "Nothing ahead of this page."
+                });
+                return;
+            };
+            if candidate.path.is_file() {
+                break candidate;
+            }
+        };
+        if back {
+            history.forward.push(source.navigation_point());
+        } else {
+            history.back.push(source.navigation_point());
+        }
+        self.replace_navigation_tab(source, point.path, point.anchor, point.position, history);
+    }
+
+    fn replace_navigation_tab(
+        &self,
+        source: Rc<DocumentWindow>,
+        path: PathBuf,
+        anchor: Option<String>,
+        position: u32,
+        history: crate::window::NavigationHistory,
+    ) {
+        if path == source.path {
+            source.set_navigation_history(history);
+            source
+                .pending_scripts
+                .borrow_mut()
+                .push(crate::state::reveal_anchor_script(
+                    anchor.as_deref(),
+                    position,
+                ));
+            return;
+        }
+        if !path.is_file() {
+            source.show_note("That navigation target no longer exists.");
+            return;
+        }
+        self.open_documents_from(&[path.clone()], Some(source.id));
+        let Some(target) = self.window_for_path(&path) else {
+            return;
+        };
+        target.set_navigation_history(history);
+        target
+            .pending_scripts
+            .borrow_mut()
+            .push(crate::state::reveal_anchor_script(
+                anchor.as_deref(),
+                position,
+            ));
+        if target.id != source.id {
+            source.window.close();
+        }
+    }
+
+    fn window_for_path(&self, path: &std::path::Path) -> Option<Rc<DocumentWindow>> {
+        self.ivars()
+            .windows
+            .borrow()
+            .iter()
+            .find(|window| !window.is_closed() && window.path == path)
+            .cloned()
     }
 
     fn window_by_id(&self, id: u64) -> Option<Rc<DocumentWindow>> {
@@ -1730,8 +2098,18 @@ impl AppDelegate {
             Message::SelectHistory(revision) => self.select_history(source_id, &revision),
             Message::SearchWorkspace(query) => self.search_workspace(source_id, &query),
             Message::OpenWorkspacePath(path) => self.open_workspace_path(source_id, &path),
-            Message::SetReadingPosition(position) => {
+            Message::PreviewLink(destination) => self.preview_link(source_id, &destination),
+            Message::OpenLink {
+                destination,
+                new_tab,
+                position,
+                anchor,
+            } => self.open_link(source_id, &destination, new_tab, position, anchor),
+            Message::NavigateBack => self.navigate_history(source_id, true),
+            Message::NavigateForward => self.navigate_history(source_id, false),
+            Message::SetReadingPosition { position, anchor } => {
                 if let Some(window) = self.message_window(source_id) {
+                    window.update_reading_position(position, anchor);
                     if self
                         .ivars()
                         .workspace

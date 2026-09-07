@@ -168,6 +168,19 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     edit_menu.addItem(&item(mtm, "Copy Review Prompt", sel!(copyReviewPrompt:), ""));
     menubar.addItem(&edit_holder);
 
+    let (go_holder, go_menu) = submenu(mtm, "Go");
+    go_menu.addItem(&item(mtm, "Back", sel!(navigateBack:), ""));
+    go_menu.addItem(&item(mtm, "Forward", sel!(navigateForward:), ""));
+    go_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    go_menu.addItem(&item(mtm, "Open Link", sel!(openCurrentLink:), ""));
+    go_menu.addItem(&item(
+        mtm,
+        "Open Link in New Tab",
+        sel!(openCurrentLinkInNewTab:),
+        "",
+    ));
+    menubar.addItem(&go_holder);
+
     let (view_holder, view_menu) = submenu(mtm, "View");
     view_menu.addItem(&item(mtm, "Actual Size", sel!(zoomActual:), ""));
     view_menu.addItem(&item(mtm, "Zoom In", sel!(zoomIn:), ""));
@@ -187,6 +200,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     // The sidebar's tabs used to be buttons in its header. The keys o and b
     // still switch tabs; these are what is left for a mouse.
     view_menu.addItem(&item(mtm, "Files", sel!(showWorkspaceFiles:), ""));
+    view_menu.addItem(&item(mtm, "Links", sel!(showLinks:), ""));
     view_menu.addItem(&item(mtm, "Outline", sel!(showOutline:), ""));
     view_menu.addItem(&item(mtm, "Bookmarks", sel!(showBookmarks:), ""));
     view_menu.addItem(&item(mtm, "Comments", sel!(showComments:), ""));

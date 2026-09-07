@@ -517,12 +517,12 @@ Create one tracking issue per phase and one implementation issue per milestone b
 
 ### Phase 3 milestones
 
-- [ ] Extract links and unify heading slug behavior.
-- [ ] Resolve links and build the incremental workspace graph.
-- [ ] Add compact target previews.
-- [ ] Add back/forward state and settle same-tab semantics.
-- [ ] Add backlinks and broken-link UI.
-- [ ] Add security tests, snapshots, and a links reel.
+- [x] Extract links and unify heading slug behavior.
+- [x] Resolve links and build the incremental workspace graph.
+- [x] Add compact target previews.
+- [x] Add back/forward state and settle same-tab semantics.
+- [x] Add backlinks and broken-link UI.
+- [x] Add security tests, snapshots, and a links reel.
 
 ### Phase 4 milestones
 

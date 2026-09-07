@@ -170,6 +170,22 @@ mod bundle_version_tests {
         );
     }
 
+    #[test]
+    fn apple_event_files_arrive_before_workspace_restore() {
+        let app = include_str!("app.rs");
+        let launch_start = app.find("fn did_finish_launching").expect("launch callback");
+        let launch_end = launch_start
+            + app[launch_start..]
+                .find("fn terminate_after_last_window")
+                .expect("end of launch callback");
+        assert!(
+            !app[launch_start..launch_end].contains("restore_workspace_session"),
+            "Finder and open -a files arrive after didFinishLaunching"
+        );
+        let untitled_start = app.find("fn open_untitled").expect("untitled callback");
+        assert!(app[untitled_start..].contains("self.restore_workspace_session();"));
+    }
+
     /// The README documents the shortcut policy, so it has to move with it.
     /// The table is the SINGLE-KEY list now: the surviving modifier shortcuts
     /// were moved into the prose that introduces it rather than repeated in a
@@ -264,6 +280,35 @@ mod bundle_version_tests {
         assert!(app.contains("#[unsafe(method(showOutline:))]"));
         assert!(app.contains("#[unsafe(method(showBookmarks:))]"));
         assert!(app.contains("mdviewShowSidebarTab"));
+    }
+
+    #[test]
+    fn intelligent_links_are_wired_through_native_and_page_surfaces() {
+        let menu = include_str!("menu.rs");
+        for selector in [
+            "sel!(navigateBack:)",
+            "sel!(navigateForward:)",
+            "sel!(openCurrentLink:)",
+            "sel!(openCurrentLinkInNewTab:)",
+            "sel!(showLinks:)",
+        ] {
+            assert!(menu.contains(selector), "missing {selector}");
+        }
+        let app = include_str!("app.rs");
+        assert!(app.contains("Message::PreviewLink"));
+        assert!(app.contains("Message::OpenLink"));
+        assert!(app.contains("replace_navigation_tab"));
+        assert!(app.contains("LinkGraph::for_document"));
+        let page = mdcore::assets::INIT_JS;
+        assert!(page.contains("window.mdviewSetLinks"));
+        assert!(page.contains("window.mdviewShowLinkPreview"));
+        assert!(page.contains("mdview-broken-link"));
+        assert!(page.contains("function previewDestination(anchor)"));
+        assert!(page.contains("querySelectorAll(\"#mdview-content a[href]\")"));
+        assert!(page.contains("keys: [\"g e\"]"));
+        assert!(page.contains("keys: [\"g [\"]"));
+        assert!(page.contains("keys: [\"g ]\"]"));
+        assert!(page.contains("keys: [\"g i\"]"));
     }
 
     #[test]
@@ -511,7 +556,7 @@ mod bundle_version_tests {
             );
             found += 1;
         }
-        assert_eq!(found, 9, "the tour is nine sections, one demo each");
+        assert_eq!(found, 10, "the tour is ten sections, one demo each");
     }
 
     /// The same list main.rs already holds the README to. The tour is the only
@@ -556,7 +601,7 @@ mod bundle_version_tests {
             );
             seen += 1;
         }
-        assert_eq!(seen, 9, "nine reels, one per section of the tour");
+        assert_eq!(seen, 10, "ten reels, one per section of the tour");
     }
 
     #[test]

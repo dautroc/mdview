@@ -43,6 +43,19 @@ before opening the result. The Files sidebar carries the same list. MDView
 reconciles filesystem changes in the background and restores the workspace,
 tabs, selected tab, and reading positions on relaunch.
 
+## Following links without losing your place
+
+![Previewing a local link, opening it, inspecting backlinks and broken references, then moving back and forward](gifs/links.gif)
+
+Hover a local Markdown link to preview the target section, or press `g e` for
+whichever link is nearest the reading position. Enter follows it in the current
+navigation lineage; Shift-Enter opens a native tab instead. `g [` and `g ]` move
+back and forward, restoring the heading and scroll fallback.
+
+The Links sidebar (`g i`) lists documents that link to the page and broken local
+references leaving it. Broken links are also marked in the prose. External URLs
+keep using macOS and are never fetched for a preview.
+
 ## Reviewing a draft with Claude
 
 ![Selecting a passage, commenting on it, and copying the review prompt](gifs/reviewing.gif)
@@ -120,9 +133,10 @@ belong in the app rather than in a GIF:
   window or Dock icon, `mdview notes.md` from a shell, or Open With from Finder.
 - **The menu bar.** Every command has a menu item, which is how a mouse
   reaches it. The recordings are the page; the menu bar is the window.
-- **The window itself** — the title bar and its native tabs. Opening another
-  document adds a tab without replacing the one you were reading; ⌃Tab and
-  ⌃⇧Tab move between them.
+- **The window itself** — the title bar and its native tabs. Ordinary open
+  commands and alternate-opening a link add a tab; ⌃Tab and ⌃⇧Tab move between
+  them. The link reel can show page replacement but not the surrounding native
+  tab being retained or closed.
 
 ## Every key
 

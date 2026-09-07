@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn an_edited_paragraph_is_changed_and_carries_its_older_version_in_a_template() {
         let html = body("# Title\n\nOld words.\n", "# Title\n\nNew words.\n");
-        assert!(html.contains("<h1>Title</h1>"), "the unchanged heading is untouched: {html}");
+        assert!(html.contains("<h1 id=\"title\">Title</h1>"), "the unchanged heading is untouched: {html}");
         assert!(
             html.contains("<p data-mdview-change=\"changed\">New words.</p>"),
             "got: {html}"

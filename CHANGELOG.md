@@ -3,6 +3,36 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.22.0](https://github.com/dautroc/mdview/releases/tag/v0.22.0) — 2026-09-07
+
+### What's new
+
+- **Preview and follow local Markdown links without losing your place.** Hovering
+  a resolved link renders a bounded target-section preview through `mdcore`.
+  Enter follows it in the current navigation lineage, alternate-open keeps the
+  source in a native tab, and `g [` / `g ]` restore the heading and scroll
+  fallback when moving back or forward.
+- **Explain workspace link health.** The Links sidebar lists bounded backlinks
+  and broken outgoing references, while broken links are marked in the document.
+  The generation-stamped workspace graph updates with the existing watcher and
+  reconciliation pipeline. External URLs continue through `NSWorkspace` and are
+  never fetched for previews.
+
+### Notes
+
+- Heading IDs now come from the Rust link model, including deterministic suffixes
+  for duplicate headings, so rendered anchors and link resolution use one rule.
+- Standalone documents build a bounded graph only for directly linked Markdown
+  targets; opening a folder remains necessary for repository-wide backlinks.
+
+### Fixes
+
+- Link previews and Enter navigation work before asynchronous workspace summaries
+  arrive. Missing, excluded, and outside-workspace links remain blocked during
+  indexing as well as after the full graph is available.
+- Opening an explicit file through the `mdview` command or Finder no longer also
+  restores tabs from the previous workspace session.
+
 ## [v0.21.0](https://github.com/dautroc/mdview/releases/tag/v0.21.0) — 2026-09-07
 
 ### What's new

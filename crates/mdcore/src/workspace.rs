@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::OpenOptions;
+use std::io::{self, Read};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
@@ -237,7 +237,7 @@ fn discover_directory(
             Ok(_) => {
                 summary.skipped_unreadable += 1;
                 continue;
-            },
+            }
             Err(_) => {
                 summary.skipped_symlinks += 1;
                 continue;
@@ -374,6 +374,10 @@ impl WorkspaceIndex {
         self.generation
     }
 
+    pub fn root(&self) -> &WorkspaceRoot {
+        &self.root
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -461,6 +465,15 @@ impl WorkspaceIndex {
         self.entries.values().map(|entry| &entry.file)
     }
 
+    /// Source text already admitted by the workspace safety limits. Consumers
+    /// such as the link graph reuse this instead of performing a second,
+    /// potentially unbounded filesystem read.
+    pub fn documents(&self) -> impl Iterator<Item = (&WorkspaceFile, &str)> {
+        self.entries
+            .values()
+            .map(|entry| (&entry.file, entry.source.as_str()))
+    }
+
     fn total_bytes(&self) -> u64 {
         self.entries.values().map(|entry| entry.file.size).sum()
     }
@@ -484,7 +497,9 @@ impl WorkspaceIndex {
         options.read(true);
         #[cfg(unix)]
         options.custom_flags(libc::O_NOFOLLOW);
-        let opened = options.open(&file.path).map_err(|source| WorkspaceError::Read {
+        let opened = options
+            .open(&file.path)
+            .map_err(|source| WorkspaceError::Read {
             path: file.path.clone(),
             source,
         })?;
@@ -645,7 +660,6 @@ mod tests {
         assert_eq!(paths, ["guide/B.MDOWN", "guide/a.md", "z.markdown"]);
         assert_eq!(snapshot.generation, 7);
     }
-
 
     #[test]
     fn discovery_skips_hidden_generated_and_symlinked_directories() {

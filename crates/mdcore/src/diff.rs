@@ -1033,11 +1033,11 @@ A new paragraph.
             "the body is not the document"
         );
         assert!(
-            doc.html.contains("<h1 data-mdview-change=\"changed\">After</h1>"),
+            doc.html.contains("<h1 data-mdview-change=\"changed\" id=\"after\">After</h1>"),
             "the changed heading is not marked"
         );
         assert!(
-            doc.html.contains("<template><h1>Before</h1></template>"),
+            doc.html.contains("<template><h1 id=\"before\">Before</h1></template>"),
             "the version that was there is gone"
         );
         // The same file in two columns: the same pairing, laid out in rows.
@@ -1050,7 +1050,7 @@ A new paragraph.
         .unwrap();
         assert!(side_by_side.html.contains("data-diff-layout=\"rendered-split\""));
         assert!(
-            side_by_side.html.contains("<div class=\"mdview-rdiff-side mdview-rdiff-old\"><h1>Before</h1></div>"),
+            side_by_side.html.contains("<div class=\"mdview-rdiff-side mdview-rdiff-old\"><h1 id=\"before\">Before</h1></div>"),
             "the older document is not in the left column"
         );
 

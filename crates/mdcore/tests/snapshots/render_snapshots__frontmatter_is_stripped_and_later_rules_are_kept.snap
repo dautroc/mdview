@@ -2,7 +2,7 @@
 source: crates/mdcore/tests/render_snapshots.rs
 expression: html
 ---
-<h1>My Note</h1>
+<h1 id="my-note">My Note</h1>
 <p>The body starts here, and the block above it belongs to the tool that wrote
 the file rather than to the reader.</p>
 <hr />

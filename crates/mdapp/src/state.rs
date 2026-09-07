@@ -143,6 +143,14 @@ pub fn open_workspace_search_script() -> &'static str {
     "window.mdviewOpenWorkspaceSearch && window.mdviewOpenWorkspaceSearch();"
 }
 
+pub fn open_current_link_script(new_tab: bool) -> &'static str {
+    if new_tab {
+        "window.mdviewOpenCurrentLink && window.mdviewOpenCurrentLink(true);"
+    } else {
+        "window.mdviewOpenCurrentLink && window.mdviewOpenCurrentLink(false);"
+    }
+}
+
 /// The one-time nudge that tells a first-time user the keys exist. With no
 /// buttons on the page there is nothing else to notice, so this is the only
 /// thing standing between a new user and an apparently inert window.
@@ -251,7 +259,19 @@ pub enum Message {
     SelectHistory(String),
     SearchWorkspace(String),
     OpenWorkspacePath(String),
-    SetReadingPosition(u32),
+    PreviewLink(String),
+    OpenLink {
+        destination: String,
+        new_tab: bool,
+        position: u32,
+        anchor: Option<String>,
+    },
+    NavigateBack,
+    NavigateForward,
+    SetReadingPosition {
+        position: u32,
+        anchor: Option<String>,
+    },
     ToggleFullWidth,
     NextTab,
     PreviousTab,
@@ -323,6 +343,12 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     if raw == "copyReview" {
         return Some(Message::CopyReview);
     }
+    if raw == "navigateBack" {
+        return Some(Message::NavigateBack);
+    }
+    if raw == "navigateForward" {
+        return Some(Message::NavigateForward);
+    }
     let (kind, rest) = raw.split_once(':')?;
     match kind {
         "setDiffLayout" => DiffLayout::from_wire(rest).map(Message::SetDiffLayout),
@@ -342,6 +368,20 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             } else {
                 Some(Message::OpenWorkspacePath(path))
             }
+        }
+        "previewLink" => Some(Message::PreviewLink(percent_decode(rest)?)),
+        "openLink" => {
+            let mut parts = rest.splitn(4, ':');
+            let new_tab = parts.next()? == "1";
+            let position = parts.next()?.parse::<u32>().ok()?;
+            let anchor = percent_decode(parts.next()?)?;
+            let destination = percent_decode(parts.next()?)?;
+            (!destination.is_empty()).then_some(Message::OpenLink {
+                destination,
+                new_tab,
+                position,
+                anchor: (!anchor.is_empty()).then_some(anchor),
+            })
         }
         "setTheme" => {
             // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
@@ -373,7 +413,17 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             let px = rest.parse::<u32>().ok()?;
             Some(Message::SetSidebarWidth(px))
         }
-        "setReadingPosition" => Some(Message::SetReadingPosition(rest.parse::<u32>().ok()?)),
+        "setReadingPosition" => {
+            let (position, anchor) = rest.split_once(':').unwrap_or((rest, ""));
+            Some(Message::SetReadingPosition {
+                position: position.parse::<u32>().ok()?,
+                anchor: if anchor.is_empty() {
+                    None
+                } else {
+                    Some(percent_decode(anchor)?)
+                },
+            })
+        }
         // "1" or nothing. Unlike the sidebar there is no second field: the
         // strip has no tabs, so a bare flag is the whole of its state.
         "setMinimap" => match rest {
@@ -603,6 +653,83 @@ pub fn workspace_files_script(
     format!(
         "window.mdviewSetWorkspace && window.mdviewSetWorkspace({root},[{}],{partial},{error});",
         items.join(",")
+    )
+}
+
+pub fn links_script(graph: Option<&mdcore::LinkGraph>, path: &std::path::Path) -> String {
+    let Some(graph) = graph else {
+        return "window.mdviewSetLinks && window.mdviewSetLinks([],[]);".to_string();
+    };
+    let outgoing = graph
+        .outgoing(path)
+        .iter()
+        .filter(|link| link.kind == mdcore::LinkKind::Link)
+        .take(500)
+        .map(|link| {
+            let (state, target, fragment) = match &link.resolved {
+                mdcore::ResolvedLink::Document { path } => ("document", Some(path), None),
+                mdcore::ResolvedLink::Heading { path, heading } => {
+                    ("heading", Some(path), Some(heading.slug.as_str()))
+                }
+                mdcore::ResolvedLink::External { .. } => ("external", None, None),
+                mdcore::ResolvedLink::Asset { path } => ("asset", Some(path), None),
+                mdcore::ResolvedLink::Missing { fragment, .. } => {
+                    ("missing", None, fragment.as_deref())
+                }
+                mdcore::ResolvedLink::OutsideWorkspace { .. } => ("outside", None, None),
+            };
+            format!(
+                "{{raw:{},state:{},target:{},fragment:{}}}",
+                mdcore::escape::js_string_literal(&link.raw_destination),
+                mdcore::escape::js_string_literal(state),
+                target
+                    .map(|path| mdcore::escape::js_string_literal(&path.to_string_lossy()))
+                    .unwrap_or_else(|| "null".to_string()),
+                fragment
+                    .map(mdcore::escape::js_string_literal)
+                    .unwrap_or_else(|| "null".to_string()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let backlinks = graph
+        .backlinks(path)
+        .iter()
+        .take(200)
+        .map(|backlink| {
+            let label = backlink
+                .source_path
+                .strip_prefix(graph.workspace_root())
+                .unwrap_or(&backlink.source_path)
+                .to_string_lossy();
+            format!(
+                "{{path:{},label:{}}}",
+                mdcore::escape::js_string_literal(&backlink.source_path.to_string_lossy()),
+                mdcore::escape::js_string_literal(&label),
+            )
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "window.mdviewSetLinks && window.mdviewSetLinks([{}],[{}]);",
+        outgoing.join(","),
+        backlinks.join(",")
+    )
+}
+
+pub fn link_preview_script(title: &str, html: &str, truncated: bool) -> String {
+    format!(
+        "window.mdviewShowLinkPreview && window.mdviewShowLinkPreview({}, {}, {});",
+        mdcore::escape::js_string_literal(title),
+        mdcore::escape::js_string_literal(html),
+        truncated,
+    )
+}
+
+pub fn reveal_anchor_script(anchor: Option<&str>, position: u32) -> String {
+    let anchor = anchor
+        .map(mdcore::escape::js_string_literal)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "window.mdviewRestoreNavigation && window.mdviewRestoreNavigation({anchor}, {position});"
     )
 }
 
@@ -976,6 +1103,8 @@ mod tests {
                 "selectHistory:" => "selectHistory:abc123".to_string(),
                 "searchWorkspace:" => "searchWorkspace:retry".to_string(),
                 "openWorkspacePath:" => "openWorkspacePath:%2Ftmp%2Fx.md".to_string(),
+                "previewLink:" => "previewLink:guide.md%23intro".to_string(),
+                "openLink:" => "openLink:0:320:intro:guide.md%23intro".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),
                 "addComment:" => "addComment:1:0:a%20quote:a%20note".to_string(),
                 "editComment:" => "editComment:2f:a%20note".to_string(),
@@ -1196,6 +1325,24 @@ mod tests {
         );
         assert_eq!(parse_message("toggleDiff"), Some(Message::ToggleDiff));
         assert_eq!(parse_message("openHistory"), Some(Message::OpenHistory));
+        assert_eq!(parse_message("navigateBack"), Some(Message::NavigateBack));
+        assert_eq!(
+            parse_message("navigateForward"),
+            Some(Message::NavigateForward)
+        );
+        assert_eq!(
+            parse_message("openLink:1:321:current%20section:guide.md%23intro"),
+            Some(Message::OpenLink {
+                destination: "guide.md#intro".into(),
+                new_tab: true,
+                position: 321,
+                anchor: Some("current section".into()),
+            })
+        );
+        assert_eq!(
+            parse_message("previewLink:guide.md%23intro"),
+            Some(Message::PreviewLink("guide.md#intro".into()))
+        );
         assert_eq!(
             parse_message("selectHistory:feature%2Fdocs"),
             Some(Message::SelectHistory("feature/docs".into()))
@@ -1217,6 +1364,13 @@ mod tests {
         assert_eq!(parse_message("zoomIn"), Some(Message::ZoomIn));
         assert_eq!(parse_message("zoomOut"), Some(Message::ZoomOut));
         assert_eq!(parse_message("zoomReset"), Some(Message::ZoomReset));
+        assert_eq!(
+            parse_message("setReadingPosition:77:details"),
+            Some(Message::SetReadingPosition {
+                position: 77,
+                anchor: Some("details".into()),
+            })
+        );
         assert_eq!(
             parse_message("setSidebar:1:bookmarks"),
             Some(Message::SetSidebar {

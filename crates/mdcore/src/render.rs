@@ -40,7 +40,12 @@ pub fn render_body_in(
     // as it is on disk and would be wrong to hide a metadata edit from.
     let markdown = crate::frontmatter::strip(markdown);
     let parser = Parser::new_ext(markdown, markdown_options());
-    let events = transform_events(parser, highlighter);
+    let slugs = crate::links::headings(markdown)
+        .into_iter()
+        .map(|heading| heading.slug)
+        .collect::<Vec<_>>();
+    let events = assign_heading_ids(parser, &slugs);
+    let events = transform_events(events.into_iter(), highlighter);
     let events = inline_images(events, base_dir);
     let mut out = String::new();
     html::push_html(&mut out, events.into_iter());
@@ -114,7 +119,13 @@ pub fn render_blocks(
     let markdown = crate::frontmatter::strip(markdown);
     let mut ranges = Vec::new();
     let mut groups = Vec::new();
+    let slugs = crate::links::headings(markdown)
+        .into_iter()
+        .map(|heading| heading.slug)
+        .collect::<Vec<_>>();
+    let mut heading_index = 0;
     for (range, events) in group_events(markdown) {
+        let events = assign_heading_ids_from(events, &slugs, &mut heading_index);
         groups.push(inline_images(
             transform_events(events.into_iter(), highlighter),
             base_dir,
@@ -134,7 +145,10 @@ pub fn render_blocks(
     }
     let mut html = String::new();
     html::push_html(&mut html, combined.into_iter());
-    let parts = html.split(BLOCK_SENTINEL).map(str::trim).collect::<Vec<_>>();
+    let parts = html
+        .split(BLOCK_SENTINEL)
+        .map(str::trim)
+        .collect::<Vec<_>>();
 
     if parts.len() == groups.len() {
         return parts
@@ -194,6 +208,45 @@ fn group_events(markdown: &str) -> Vec<(std::ops::Range<usize>, Vec<Event<'_>>)>
         }
     }
     groups
+}
+
+fn assign_heading_ids<'a>(
+    events: impl IntoIterator<Item = Event<'a>>,
+    slugs: &[String],
+) -> Vec<Event<'a>> {
+    let mut index = 0;
+    assign_heading_ids_from(events, slugs, &mut index)
+}
+
+fn assign_heading_ids_from<'a>(
+    events: impl IntoIterator<Item = Event<'a>>,
+    slugs: &[String],
+    index: &mut usize,
+) -> Vec<Event<'a>> {
+    events
+        .into_iter()
+        .map(|event| match event {
+            Event::Start(Tag::Heading {
+                level,
+                id: _,
+                classes,
+                attrs,
+            }) => {
+                let id = slugs
+                    .get(*index)
+                    .cloned()
+                    .unwrap_or_else(|| "section".to_string());
+                *index += 1;
+                Event::Start(Tag::Heading {
+                    level,
+                    id: Some(CowStr::from(id)),
+                    classes,
+                    attrs,
+                })
+            }
+            other => other,
+        })
+        .collect()
 }
 
 /// Collapse each fenced/indented code block into a single pre-rendered
@@ -284,7 +337,10 @@ mod heading_tests {
     #[test]
     fn headings_are_collected_in_document_order_with_their_inline_text() {
         let markdown = "# One\n\ntext\n\n## The `retry` loop\n\n### **Bold** and _italic_\n";
-        assert_eq!(headings(markdown), vec!["One", "The retry loop", "Bold and italic"]);
+        assert_eq!(
+            headings(markdown),
+            vec!["One", "The retry loop", "Bold and italic"]
+        );
     }
 
     #[test]
@@ -300,6 +356,14 @@ mod heading_tests {
         let markdown = "---\ntitle: My Note\n---\n\n# One\n\n## Two\n";
         assert_eq!(headings(markdown), vec!["One", "Two"]);
     }
+
+    #[test]
+    fn rendered_heading_ids_use_the_link_resolvers_duplicate_slugs() {
+        let html = super::render_body("# Repeat\n\n# Repeat\n\n# Café & tea\n");
+        assert!(html.contains("<h1 id=\"repeat\">Repeat</h1>"));
+        assert!(html.contains("<h1 id=\"repeat-1\">Repeat</h1>"));
+        assert!(html.contains("<h1 id=\"café--tea\">Café &amp; tea</h1>"));
+    }
 }
 
 #[cfg(test)]
@@ -312,9 +376,18 @@ mod frontmatter_tests {
     #[test]
     fn frontmatter_renders_as_nothing_at_all() {
         let html = render_body("---\ntitle: My Note\ntags: [a, b]\n---\n\n# Hello\n\nBody.\n");
-        assert!(!html.contains("<hr"), "the opening fence is still a rule: {html}");
-        assert!(!html.contains("My Note"), "the metadata is still in the body: {html}");
-        assert!(html.starts_with("<h1>Hello</h1>"), "got: {html}");
+        assert!(
+            !html.contains("<hr"),
+            "the opening fence is still a rule: {html}"
+        );
+        assert!(
+            !html.contains("My Note"),
+            "the metadata is still in the body: {html}"
+        );
+        assert!(
+            html.starts_with("<h1 id=\"hello\">Hello</h1>"),
+            "got: {html}"
+        );
     }
 
     /// The other half of the contract: a document is allowed to open on a
@@ -345,7 +418,11 @@ mod block_tests {
         assert_eq!(blocks.len(), 4, "got: {blocks:#?}");
         assert_eq!(blocks[0].source.trim(), "# Title");
         assert_eq!(blocks[2].source.trim(), "```rust\nfn main() {}\n```");
-        assert!(blocks[2].html.starts_with("<pre"), "got: {}", blocks[2].html);
+        assert!(
+            blocks[2].html.starts_with("<pre"),
+            "got: {}",
+            blocks[2].html
+        );
     }
 
     /// Neither is a `Start`/`End` pair, so a grouper that only closed on `End`
@@ -354,7 +431,11 @@ mod block_tests {
     fn a_raw_html_block_and_a_thematic_break_are_each_their_own_block() {
         let blocks = blocks("<div class=\"x\">raw</div>\n\n---\n\npara\n");
         assert_eq!(blocks.len(), 3, "got: {blocks:#?}");
-        assert!(blocks[0].html.contains("<div class=\"x\">"), "got: {}", blocks[0].html);
+        assert!(
+            blocks[0].html.contains("<div class=\"x\">"),
+            "got: {}",
+            blocks[0].html
+        );
         assert!(blocks[1].html.contains("<hr"), "got: {}", blocks[1].html);
     }
 

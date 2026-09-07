@@ -1,10 +1,10 @@
 use std::cell::{Cell, RefCell};
-use std::ptr::NonNull;
 use std::path::{Path, PathBuf};
+use std::ptr::NonNull;
 use std::rc::Rc;
 
-use mdcore::Highlighter;
 use block2::RcBlock;
+use mdcore::Highlighter;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
@@ -22,6 +22,19 @@ use objc2_web_kit::{WKNavigation, WKWebView, WKWebViewConfiguration};
 pub enum ViewMode {
     Rendered,
     Diff,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavigationPoint {
+    pub path: PathBuf,
+    pub anchor: Option<String>,
+    pub position: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NavigationHistory {
+    pub back: Vec<NavigationPoint>,
+    pub forward: Vec<NavigationPoint>,
 }
 
 /// Ivars for `WindowCloseDelegate`: the tab identity plus the shared selection
@@ -141,6 +154,9 @@ pub struct DocumentWindow {
     /// Not a bool: `D` has to say WHY it will not open the diff, and "no" on
     /// its own cannot. See `state::diff_unavailable_note`.
     diff_state: Cell<mdcore::DiffAvailability>,
+    last_position: Cell<u32>,
+    reading_anchor: RefCell<Option<String>>,
+    navigation_history: RefCell<NavigationHistory>,
 }
 
 impl DocumentWindow {
@@ -206,8 +222,7 @@ impl DocumentWindow {
         window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
 
         let closed = Rc::new(Cell::new(false));
-        let window_delegate =
-            WindowCloseDelegate::new(mtm, id, closed.clone(), active_tab);
+        let window_delegate = WindowCloseDelegate::new(mtm, id, closed.clone(), active_tab);
         unsafe {
             window.setDelegate(Some(ProtocolObject::from_ref(&*window_delegate)));
 
@@ -249,6 +264,9 @@ impl DocumentWindow {
             view_mode: Cell::new(ViewMode::Rendered),
             history_entry: RefCell::new(None),
             diff_state: Cell::new(mdcore::diff::availability(path)),
+            last_position: Cell::new(0),
+            reading_anchor: RefCell::new(None),
+            navigation_history: RefCell::new(NavigationHistory::default()),
         });
 
         doc_window.reload(highlighter);
@@ -260,6 +278,35 @@ impl DocumentWindow {
     /// without also dropping windows that are merely hidden or miniaturized.
     pub fn is_closed(&self) -> bool {
         self.closed.get()
+    }
+
+    pub fn update_reading_position(&self, position: u32, anchor: Option<String>) {
+        self.last_position.set(position);
+        *self.reading_anchor.borrow_mut() = anchor;
+    }
+
+    pub fn navigation_point(&self) -> NavigationPoint {
+        NavigationPoint {
+            path: self.path.clone(),
+            anchor: self.reading_anchor.borrow().clone(),
+            position: self.last_position.get(),
+        }
+    }
+
+    pub fn navigation_history(&self) -> NavigationHistory {
+        self.navigation_history.borrow().clone()
+    }
+
+    pub fn set_navigation_history(&self, history: NavigationHistory) {
+        *self.navigation_history.borrow_mut() = history;
+    }
+
+    pub fn can_navigate_back(&self) -> bool {
+        !self.navigation_history.borrow().back.is_empty()
+    }
+
+    pub fn can_navigate_forward(&self) -> bool {
+        !self.navigation_history.borrow().forward.is_empty()
     }
 
     /// Re-render from disk and replace the whole page. There is also an
@@ -302,33 +349,30 @@ impl DocumentWindow {
                     self.diff_layout(),
                     entry,
                 ),
-                None => mdcore::render_diff_document_with(
-                    &path,
-                    highlighter,
-                    theme,
-                    self.diff_layout(),
-                ),
+                None => {
+                    mdcore::render_diff_document_with(&path, highlighter, theme, self.diff_layout())
+                }
             }
             .map_err(|err| err.to_string()),
         };
         match rendered {
             Ok(doc) => {
-                let base = NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
+                let base =
+                    NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
                 self.page_ready.set(false);
                 *self.expected_navigation.borrow_mut() = None;
                 self.expecting_own_load.set(true);
                 let navigation = unsafe {
-                    self.webview.loadHTMLString_baseURL(
-                        &NSString::from_str(&doc.html),
-                        Some(&base),
-                    )
+                    self.webview
+                        .loadHTMLString_baseURL(&NSString::from_str(&doc.html), Some(&base))
                 };
                 *self.expected_navigation.borrow_mut() = navigation;
                 self.content_ready.set(true);
                 // Queue sidebar state restoration: loadHTMLString is asynchronous,
                 // so window.mdviewSetSidebar doesn't exist yet. The watch tick's
                 // drain_pending_banners will inject this after navigation finishes.
-                let sidebar_open = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY).unwrap_or(true);
+                let sidebar_open = crate::defaults::get_bool_opt(crate::defaults::SIDEBAR_OPEN_KEY)
+                    .unwrap_or(true);
                 let sidebar_tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
                     .unwrap_or_else(|| "outline".to_string());
                 let sidebar_script = format!(
@@ -337,14 +381,14 @@ impl DocumentWindow {
                     mdcore::escape::js_string_literal(&sidebar_tab)
                 );
                 self.pending_scripts.borrow_mut().push(sidebar_script);
-                if let Some(raw) = crate::defaults::get_int_opt(crate::defaults::SIDEBAR_WIDTH_KEY) {
+                if let Some(raw) = crate::defaults::get_int_opt(crate::defaults::SIDEBAR_WIDTH_KEY)
+                {
                     let width = crate::state::resolve_sidebar_width(Some(raw));
                     self.pending_scripts
                         .borrow_mut()
                         .push(crate::state::sidebar_width_script(width));
                 }
-                let minimap_open =
-                    crate::defaults::get_bool_opt(crate::defaults::MINIMAP_OPEN_KEY)
+                let minimap_open = crate::defaults::get_bool_opt(crate::defaults::MINIMAP_OPEN_KEY)
                         .unwrap_or(false);
                 crate::state::queue_minimap_script(
                     &mut self.pending_scripts.borrow_mut(),
@@ -357,7 +401,11 @@ impl DocumentWindow {
                     &mut self.pending_scripts.borrow_mut(),
                     full_width,
                 );
-                let view = if self.view_mode.get() == ViewMode::Diff { "diff" } else { "rendered" };
+                let view = if self.view_mode.get() == ViewMode::Diff {
+                    "diff"
+                } else {
+                    "rendered"
+                };
                 let layout = crate::state::diff_layout_wire(self.diff_layout());
                 self.pending_scripts.borrow_mut().push(format!(
                     "window.mdviewSetViewState && window.mdviewSetViewState('{}', '{}', {}, {}, {});",
@@ -372,8 +420,7 @@ impl DocumentWindow {
                 if doc.lossy {
                     self.pending_banners.borrow_mut().push((
                         "lossy".to_string(),
-                        "This file is not valid UTF-8. Some characters were replaced."
-                            .to_string(),
+                        "This file is not valid UTF-8. Some characters were replaced.".to_string(),
                     ));
                 }
                 if self.watcher.borrow().is_none() {
@@ -410,8 +457,7 @@ impl DocumentWindow {
             // System follows the OS, which is what a nil appearance means.
             None => None,
         };
-        let appearance =
-            appearance_name.and_then(NSAppearance::appearanceNamed);
+        let appearance = appearance_name.and_then(NSAppearance::appearanceNamed);
         self.window.setAppearance(appearance.as_deref());
 
         let background = match mdcore::theme::background(theme) {
@@ -429,10 +475,9 @@ impl DocumentWindow {
                     // Safety: AppKit hands the provider a live appearance for
                     // the duration of the call.
                     let appearance = unsafe { appearance.as_ref() };
-                    let names = NSArray::from_slice(&[
-                        unsafe { NSAppearanceNameAqua },
-                        unsafe { NSAppearanceNameDarkAqua },
-                    ]);
+                    let names = NSArray::from_slice(&[unsafe { NSAppearanceNameAqua }, unsafe {
+                        NSAppearanceNameDarkAqua
+                    }]);
                     let is_dark = appearance
                         .bestMatchFromAppearancesWithNames(&names)
                         .is_some_and(|name| &*name == unsafe { NSAppearanceNameDarkAqua });
@@ -538,8 +583,9 @@ impl DocumentWindow {
         ));
 
         let rendered = match self.view_mode.get() {
-            ViewMode::Rendered => mdcore::render_body_of(&path, highlighter)
-                .map_err(|err| err.to_string()),
+            ViewMode::Rendered => {
+                mdcore::render_body_of(&path, highlighter).map_err(|err| err.to_string())
+            }
             ViewMode::Diff => match self.history_entry.borrow().as_ref() {
                 Some(entry) => mdcore::render_diff_body_from_history_of(
                     &path,
@@ -547,11 +593,7 @@ impl DocumentWindow {
                     self.diff_layout(),
                     entry,
                 ),
-                None => mdcore::render_diff_body_of(
-                    &path,
-                    highlighter,
-                    self.diff_layout(),
-                ),
+                None => mdcore::render_diff_body_of(&path, highlighter, self.diff_layout()),
             }
             .map_err(|err| err.to_string()),
         };

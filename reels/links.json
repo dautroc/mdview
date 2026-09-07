@@ -1,0 +1,28 @@
+{
+  "page": "links-source.html",
+  "width": 1120, "height": 640,
+  "openHold": 1000,
+  "pages": {
+    "source": "target/reels/pages/links-source.html",
+    "target": "target/reels/pages/links-target.html"
+  },
+  "seed": [
+    "if(document.title==='links-source.md'){window.mdviewSetWorkspace('/docs',[{relative:'links-source.md',path:'source'},{relative:'links-target.md',path:'target'}],false,null);window.mdviewSetLinks([{raw:'links-target.md#retry-policy',state:'heading',target:'/docs/links-target.md',fragment:'retry-policy'},{raw:'missing-queue.md',state:'missing',target:null,fragment:null}],[]);}else{window.mdviewSetWorkspace('/docs',[{relative:'links-source.md',path:'source'},{relative:'links-target.md',path:'target'}],false,null);window.mdviewSetLinks([],[{path:'source',label:'links-source.md'}]);}"
+  ],
+  "bridge": {
+    "previewLink:": { "js": "window.mdviewShowLinkPreview('Retry policy','<h2 id=\"retry-policy\">Retry policy</h2><p>Retry requests with bounded exponential backoff. Stop after five attempts and keep the final error with the job.</p>',false)" },
+    "openLink:": { "load": "target" },
+    "navigateBack": { "load": "source" },
+    "navigateForward": { "load": "target" },
+    "openWorkspacePath:": { "loadByArg": "%s" },
+    "*": { "ignore": true }
+  },
+  "steps": [
+    { "js": "document.querySelector('a[href^=\"links-target\"]').dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}))", "settle": 700, "hold": 1600 },
+    { "key": "Enter", "settle": 900, "hold": 1500 },
+    { "key": "g i", "hold": 1600 },
+    { "key": "g [", "settle": 900, "hold": 1300 },
+    { "key": "g i", "hold": 1700 },
+    { "key": "g ]", "settle": 900, "hold": 1700 }
+  ]
+}
