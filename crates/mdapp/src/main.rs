@@ -1,6 +1,7 @@
 mod app;
 mod bridge;
 mod defaults;
+mod export;
 mod menu;
 mod navigation;
 mod portable_review;
@@ -107,19 +108,15 @@ fn main() {
             let highlighter = mdcore::Highlighter::new();
             let rendered = match diff_base {
                 Some(base) => match mdcore::Revision::parse(base) {
-                    Ok(base) => mdcore::render_diff_document_against_with(
-                        path,
-                        &highlighter,
-                        theme,
-                        diff_layout,
-                        &base,
+                    Ok(base) => mdcore::render_diff_document_against_for_with(
+                        path, &highlighter, theme, diff_layout, &base, mdcore::RenderPurpose::Print,
                     ),
                     Err(err) => {
                         eprintln!("mdview: {err}");
                         std::process::exit(2);
                     }
                 },
-                None => mdcore::render_diff_document_with(path, &highlighter, theme, diff_layout),
+                None => mdcore::render_diff_document_for_with(path, &highlighter, theme, diff_layout, mdcore::RenderPurpose::Print),
             };
             match rendered {
                 Ok(doc) => doc.html,
@@ -129,7 +126,8 @@ fn main() {
                 }
             }
         } else {
-            match mdcore::render_document(path, theme) {
+            let highlighter = mdcore::Highlighter::new();
+            match mdcore::render_document_for_with(path, &highlighter, theme, mdcore::RenderPurpose::Print) {
                 Ok(doc) => doc.html,
                 Err(err) => {
                     eprintln!("mdview: {err}");
@@ -321,6 +319,19 @@ mod bundle_version_tests {
         assert!(app.contains("#[unsafe(method(toggleMinimap:))]"));
         // The page owns the strip; the menu item can only ask it to change.
         assert!(app.contains("crate::state::minimap_script(open)"));
+    }
+
+    #[test]
+    fn print_and_pdf_export_are_reachable_from_the_file_menu() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(printDocument:)"));
+        assert!(menu.contains("sel!(exportPdf:)"));
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(printDocument:))]"));
+        assert!(app.contains("#[unsafe(method(exportPdf:))]"));
+        // Both share the export-only renderer and the readiness-gated capture.
+        assert!(app.contains("crate::export::ReadyPage::load"));
+        assert!(app.contains("RenderPurpose::Print"));
     }
 
     #[test]

@@ -3,6 +3,44 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.24.0](https://github.com/dautroc/mdview/releases/tag/v0.24.0) — 2026-09-07
+
+### What's new
+
+- **Print and export the rendered document.** File → Print… (`⌘P`) drives a
+  native print panel; File → Export PDF… and File → Export HTML… write the same
+  deterministic page. Print and PDF wait until math and Mermaid diagrams finish
+  rendering, then capture from an isolated export page that never disturbs the
+  visible tab.
+- **Export pages drop the reader's chrome.** Print, PDF, and HTML exports omit
+  the sidebar, minimap, comments, palettes, keyboard handlers, and host bridge,
+  while keeping embedded KaTeX, Mermaid, syntax themes, the CSP nonce, and
+  supported local images.
+- **Know when an export is incomplete.** Missing, oversized, unreadable,
+  non-file, and unsupported local images produce a continue/cancel warning with
+  the exact path and reason before anything is written.
+
+### Notes
+
+- `mdcore` now builds pages with an explicit `Interactive`, `Print`, or
+  `SectionExport` purpose. Interactive output is byte-equivalent to v0.23.0;
+  export output is a strict subset.
+- `--print-html` emits the same self-contained export page as File → Export
+  HTML…, without interactive chrome.
+- Print and PDF use WebKit directly: `createPDFWithConfiguration:` for PDF and
+  `printOperationWithPrintInfo:` for the native print operation, both available
+  from macOS 11. No additional renderer or PDF dependency is introduced.
+- Export pages add print CSS for page margins, color fidelity, page breaks
+  around headings and code, and single-column diff fallbacks.
+
+### Safety
+
+- All exports use native save panels and the existing collision-safe atomic
+  writer; they never modify the source document or write without an explicit
+  destination.
+- PDF capture is bounded by a 15-second timeout and fails with a visible error
+  if Mermaid rendering errors instead of writing a partial page.
+
 ## [v0.23.0](https://github.com/dautroc/mdview/releases/tag/v0.23.0) — 2026-09-07
 
 ### What's new

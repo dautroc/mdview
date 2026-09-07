@@ -414,6 +414,10 @@ Do not strip the CSP from HTML exports. If an exported page requires scripts for
 - Use native save panels and atomic output writes.
 - Confirm the macOS 11 availability and `objc2-web-kit` binding surface for WebKit PDF generation in a short implementation spike. If direct PDF generation is unavailable on the deployment floor, use the WebKit print operation rather than a new HTML/PDF dependency.
 - Add a page bridge request for the active section and rich-text payload.
+
+#### PDF and print API decision
+
+Use WebKit directly for both paths. The macOS SDK declares `WKWebView.createPDFWithConfiguration:completionHandler:` and `WKWebView.printOperationWithPrintInfo:` available from macOS 11. `objc2-web-kit 0.3.2` exposes both methods; direct PDF creation additionally requires its default-enabled `WKPDFConfiguration` and `block2` features. Export PDF therefore uses `createPDFWithConfiguration`, while Print uses WebKit's native `NSPrintOperation`. Neither path needs another renderer or PDF dependency.
 - Extend CLI support with explicit output paths or formats only if semantics remain script-friendly; never mix binary PDF bytes with diagnostics on stdout.
 
 ### Tests
@@ -535,11 +539,11 @@ Create one tracking issue per phase and one implementation issue per milestone b
 
 ### Phase 5 milestones
 
-- [ ] Add render-purpose and current-section extraction APIs.
-- [ ] Add print CSS and export-ready comparison labels.
-- [ ] Complete the macOS 11 PDF/print API spike.
-- [ ] Add native Print, PDF, and HTML export flows.
-- [ ] Add Copy as Rich Text and export warnings.
+- [x] Add render-purpose API (current-section extraction still pending).
+- [x] Add print CSS and export-ready comparison labels.
+- [x] Complete the macOS 11 PDF/print API spike.
+- [x] Add native Print, PDF, and HTML export flows.
+- [ ] Add Export Current Section and Copy as Rich Text (export warnings done).
 - [ ] Validate PDFs, snapshots, CLI behavior, and an export reel.
 
 ## First implementation step

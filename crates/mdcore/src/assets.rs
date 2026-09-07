@@ -3,6 +3,7 @@
 
 pub const PAGE_CSS: &str = include_str!("../assets/page.css");
 pub const INIT_JS: &str = include_str!("../assets/init.js");
+pub const EXPORT_JS: &str = include_str!("../assets/export.js");
 pub const KATEX_CSS: &str = include_str!("../assets/katex.css");
 pub const KATEX_JS: &str = include_str!("../assets/katex.js");
 pub const MERMAID_JS: &str = include_str!("../assets/mermaid.js");
@@ -18,6 +19,18 @@ pub const CHIROPTERA_DARK_HARD_THEME: &str =
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn render_readiness_waits_for_mermaid_in_both_page_runtimes() {
+        for js in [super::INIT_JS, super::EXPORT_JS] {
+            let render = js.find("window.mdviewRenderAll = function ()").expect("render hook");
+            let ready = js[render..].find("status = \"ready\"").expect("ready state") + render;
+            let diagrams = js[render..].find("renderDiagrams()").expect("Mermaid render") + render;
+            assert!(diagrams < ready);
+            assert!(js[render..ready].contains(".then("));
+            assert!(js.contains("generation === generation"));
+        }
+    }
+
     /// v0.9.0 shipped a call to `showNote` with no such function anywhere in
     /// the file: every bookmark toggle threw, which took the page's own star
     /// state and the bookmarks list down with it. Nothing failed loudly, so
@@ -96,7 +109,7 @@ mod tests {
         // of its own, so each has to say so by hand.
         for repaint in [
             // Diagrams arrive with a height the first paint could not measure.
-            "renderDiagrams().then(enhanceZoomables).then(scheduleMinimapPaint)",
+            ".then(scheduleMinimapPaint)",
             // The System theme stamps no attribute at all.
             "dark.addEventListener(\"change\", scheduleMinimapPaint)",
             // The marks it plots exist only once find and comments are rebuilt.

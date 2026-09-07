@@ -309,6 +309,21 @@ impl DocumentWindow {
         !self.navigation_history.borrow().forward.is_empty()
     }
 
+    pub fn render_for(
+        &self,
+        highlighter: &Highlighter,
+        theme: mdcore::Theme,
+        purpose: mdcore::RenderPurpose,
+    ) -> Result<mdcore::RenderedDoc, String> {
+        match self.view_mode.get() {
+            ViewMode::Rendered => mdcore::render_document_for_with(&self.path, highlighter, theme, purpose).map_err(|err| err.to_string()),
+            ViewMode::Diff => match self.history_entry.borrow().as_ref() {
+                Some(entry) => mdcore::render_diff_document_from_history_for_with(&self.path, highlighter, theme, self.diff_layout(), entry, purpose),
+                None => mdcore::render_diff_document_for_with(&self.path, highlighter, theme, self.diff_layout(), purpose),
+            }.map_err(|err| err.to_string()),
+        }
+    }
+
     /// Re-render from disk and replace the whole page. There is also an
     /// incremental path (`live_update`) that preserves scroll position; this
     /// full load is what runs on first open, on explicit File > Reload, and
@@ -338,23 +353,7 @@ impl DocumentWindow {
         );
         self.apply_window_chrome(theme);
         self.diff_state.set(mdcore::diff::availability(&path));
-        let rendered = match self.view_mode.get() {
-            ViewMode::Rendered => mdcore::render_document_with(&path, highlighter, theme)
-                .map_err(|err| err.to_string()),
-            ViewMode::Diff => match self.history_entry.borrow().as_ref() {
-                Some(entry) => mdcore::render_diff_document_from_history_with(
-                    &path,
-                    highlighter,
-                    theme,
-                    self.diff_layout(),
-                    entry,
-                ),
-                None => {
-                    mdcore::render_diff_document_with(&path, highlighter, theme, self.diff_layout())
-                }
-            }
-            .map_err(|err| err.to_string()),
-        };
+        let rendered = self.render_for(highlighter, theme, mdcore::RenderPurpose::Interactive);
         match rendered {
             Ok(doc) => {
                 let base =

@@ -450,19 +450,43 @@
     document.removeEventListener("mouseup", onMouseUp);
   }
 
-  // Called on first load and again after every live-reload body swap.
+  // Native capture polls this generation-aware state rather than treating
+  // navigation completion as render completion.
+  var renderGeneration = 0;
+  window.mdviewRenderState = { generation: 0, status: "pending", error: null };
+
+  // Called on first load and again after every live-reload body swap. The
+  // returned promise settles only after asynchronous Mermaid rendering.
   window.mdviewRenderAll = function () {
-    renderMath();
-    // mermaid.run() is asynchronous; renderDiagrams() always returns a
-    // promise (resolved immediately when mermaid is absent or throws) so
-    // enhanceZoomables() runs exactly once, after diagrams exist, and still
-    // runs -- covering images -- even when mermaid itself failed.
-    // Painted again after the diagrams land: they arrive with a height, and
-    // the first paint measured a document that did not have it yet.
-    renderDiagrams().then(enhanceZoomables).then(scheduleMinimapPaint);
-    enhanceDocumentLinks();
-    renderSidebarBody();
-    refreshHighlights();
+    var generation = ++renderGeneration;
+    window.mdviewRenderState = { generation: generation, status: "rendering", error: null };
+    try {
+      renderMath();
+      enhanceDocumentLinks();
+      renderSidebarBody();
+      refreshHighlights();
+      window.mdviewRenderPromise = renderDiagrams()
+        .then(enhanceZoomables)
+        .then(scheduleMinimapPaint)
+        .then(function () {
+          if (window.mdviewRenderState.generation === generation) {
+            window.mdviewRenderState.status = "ready";
+            document.documentElement.setAttribute("data-render-ready", String(generation));
+          }
+          return window.mdviewRenderState;
+        }, function (error) {
+          if (window.mdviewRenderState.generation === generation) {
+            window.mdviewRenderState.status = "failed";
+            window.mdviewRenderState.error = String(error || "Rendering failed");
+          }
+          return window.mdviewRenderState;
+        });
+    } catch (error) {
+      window.mdviewRenderState.status = "failed";
+      window.mdviewRenderState.error = String(error || "Rendering failed");
+      window.mdviewRenderPromise = Promise.resolve(window.mdviewRenderState);
+    }
+    return window.mdviewRenderPromise;
   };
 
   // ---- Find in page --------------------------------------------------------

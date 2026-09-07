@@ -1293,3 +1293,24 @@ body.mdview-resizing #mdview-sidebar-resizer {
   right: calc(var(--sidebar-width, 260px) + .75rem);
 }
 #mdview-note.is-visible { opacity: 1; transform: translateY(0); }
+
+:root:not([data-purpose="interactive"]) #mdview-content {
+  margin: 0 auto;
+  max-width: 90ch;
+  padding: 3rem 2rem 5rem;
+}
+
+@media print {
+  @page { margin: .65in; }
+  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mdview-content { margin: 0; max-width: none; padding: 0; }
+  h1, h2, h3, h4, h5, h6, pre, blockquote, figure, .mermaid { break-inside: avoid; }
+  h1, h2, h3, h4, h5, h6 { break-after: avoid-page; }
+  pre { overflow: visible; white-space: pre-wrap; word-break: break-word; }
+  table { display: table; max-width: 100%; overflow: visible; width: 100%; }
+  th, td { overflow-wrap: anywhere; padding: .3rem .5rem; }
+  .mdview-diff-split-row,
+  .mdview-rdiff-split .mdview-rdiff-row { grid-template-columns: minmax(0, 1fr); }
+  .mdview-diff-side-old { border-right: 0; }
+  .mdview-rdiff-split .mdview-rdiff-gap { display: none; }
+}

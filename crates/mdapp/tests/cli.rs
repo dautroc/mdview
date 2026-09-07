@@ -221,7 +221,7 @@ fn print_html_without_a_path_exits_two() {
 /// that hits every one of those tokens, so a rename on either side that
 /// breaks the contract fails a test instead of failing silently at runtime.
 #[test]
-fn rendered_html_carries_every_token_mdapp_js_depends_on() {
+fn rendered_html_is_self_contained_export_output() {
     let path = fixture_file(
         "contract.md",
         "# Contract\n\
@@ -255,44 +255,12 @@ fn rendered_html_carries_every_token_mdapp_js_depends_on() {
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     let html = String::from_utf8(output.stdout).unwrap();
 
-    // The six tokens the mdcore/mdapp contract spans. The CSS-selector-style
-    // spelling (".math-inline", "pre.mermaid") is how the bundled `init.js`
-    // actually references them (`querySelectorAll`, `mermaid.run`'s
-    // `querySelector`); the id attributes are how `window.rs` on the mdapp
-    // side looks them up (`getElementById`).
-    assert!(html.contains(".math-inline"), "missing .math-inline token: {html}");
-    assert!(html.contains(".math-display"), "missing .math-display token: {html}");
-    assert!(html.contains("pre.mermaid"), "missing pre.mermaid token: {html}");
-    assert!(html.contains("id=\"mdview-content\""), "missing #mdview-content: {html}");
-    assert!(html.contains("id=\"mdview-banners\""), "missing #mdview-banners: {html}");
-    assert!(html.contains("window.mdviewRenderAll"), "missing window.mdviewRenderAll: {html}");
-
-    // `app.rs` names this in a script it queues at every open, reload and
-    // theme change; the palette behind it is the only reader of that list.
-    assert!(html.contains("mdviewSetRecents"), "missing mdviewSetRecents: {html}");
-
-    for token in ["mdview-sidebar", "mdview-sidebar-body"] {
-        assert!(html.contains(token), "missing sidebar token {token}");
+    for token in ["data-purpose=\"print\"", ".math-inline", ".math-display", "pre.mermaid", "id=\"mdview-content\"", "window.mdviewRenderAll", "window.mdviewRenderState", "status = \"ready\""] {
+        assert!(html.contains(token), "missing export token {token}");
     }
-
-    // The strip is chrome the page paints and the host restores by name.
-    for token in ["mdview-minimap", "mdview-minimap-canvas", "mdviewSetMinimap"] {
-        assert!(html.contains(token), "missing minimap token {token}");
+    for chrome in ["id=\"mdview-banners\"", "mdviewSetRecents", "id=\"mdview-sidebar\"", "id=\"mdview-minimap\"", "id=\"mdview-comment-input\"", "window.webkit.messageHandlers"] {
+        assert!(!html.contains(chrome), "export contains interactive chrome {chrome}");
     }
-
-    // The comment layer crosses the same crate boundary: `state.rs` names
-    // `mdviewSetComments` in a script it builds, and the two classes are what
-    // the anchors and the entry field are looked up and painted by.
-    for token in [
-        "mdviewSetComments",
-        "id=\"mdview-comment-input\"",
-        "mdview-comment-anchor",
-        "mdview-comment-card",
-    ] {
-        assert!(html.contains(token), "missing comment token {token}");
-    }
-
-    // Self-contained: no external stylesheet, no externally-sourced script.
-    assert_eq!(html.matches("<link").count(), 0, "no external stylesheets: {html}");
-    assert_eq!(html.matches("src=\"http").count(), 0, "no external scripts: {html}");
+    assert_eq!(html.matches("<link").count(), 0);
+    assert_eq!(html.matches("src=\"http").count(), 0);
 }

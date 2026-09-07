@@ -52,6 +52,19 @@ pub fn render_body_in(
     out
 }
 
+pub fn image_warnings(markdown: &str, base_dir: &std::path::Path) -> Vec<crate::images::ImageWarning> {
+    let markdown = crate::frontmatter::strip(markdown);
+    let mut seen = std::collections::HashSet::new();
+    Parser::new_ext(markdown, markdown_options()).filter_map(|event| match event {
+        Event::Start(Tag::Image { dest_url, .. }) => {
+            let destination = dest_url.to_string();
+            if !seen.insert(destination.clone()) { return None; }
+            crate::images::warning(&destination, base_dir)
+        }
+        _ => None,
+    }).collect()
+}
+
 /// Replace each image destination with a `data:` URI where one can be built.
 fn inline_images<'a>(events: Vec<Event<'a>>, base_dir: Option<&std::path::Path>) -> Vec<Event<'a>> {
     let Some(base_dir) = base_dir else {

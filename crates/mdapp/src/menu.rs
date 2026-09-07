@@ -7,7 +7,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSString};
 
-// Only three document commands keep a Command-key equivalent: ⌘O, ⌘F and
+// Only four document commands keep a Command-key equivalent: ⌘O, ⌘F, ⌘P and
 // ⌘R, whose muscle memory predates this app. Everything else the page can do
 // stays behind its single key or `g` sequence. Window management keeps the
 // macOS standards too, including ⌃Tab / ⌃⇧Tab for native tab navigation.
@@ -142,6 +142,10 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     file_menu.addItem(&item(mtm, "Reload", sel!(reloadDocument:), "r"));
     let (recent_holder, recent_menu) = submenu(mtm, "Open Recent");
     file_menu.addItem(&recent_holder);
+    file_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
+    file_menu.addItem(&item(mtm, "Print…", sel!(printDocument:), "p"));
+    file_menu.addItem(&item(mtm, "Export PDF…", sel!(exportPdf:), ""));
+    file_menu.addItem(&item(mtm, "Export HTML…", sel!(exportHtml:), ""));
     file_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     file_menu.addItem(&item(
         mtm,
@@ -306,7 +310,7 @@ mod tests {
     use super::*;
 
     /// The whole shortcut policy in one place. Document commands keep only the
-    /// established ⌘O, ⌘F and ⌘R equivalents; native window management adds
+    /// established ⌘O, ⌘F, ⌘P and ⌘R equivalents; native window management adds
     /// the standard Control-Tab pair without taking another Command binding.
     #[test]
     fn only_deliberate_commands_keep_a_key_equivalent() {
@@ -339,7 +343,7 @@ mod tests {
             sorted,
             // The two tab entries use the same Tab key and differ by their
             // Control / Control+Shift modifier masks.
-            vec!["\\t", "\\t", "a", "c", "f", "h", "m", "o", "q", "r", "w"],
+            vec!["\\t", "\\t", "a", "c", "f", "h", "m", "o", "p", "q", "r", "w"],
             "unexpected key equivalents: {bound:?}"
         );
     }

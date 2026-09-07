@@ -27,9 +27,11 @@ pub use diff::{
 };
 pub use document::{Document, DocumentError};
 pub use highlight::Highlighter;
+pub use images::{ImageWarning, ImageWarningKind};
 pub use links::{
     Backlink, DocumentLink, LinkGraph, LinkKind, LinkPreview, MissingReason, ResolvedLink,
 };
+pub use page::RenderPurpose;
 pub use render::headings;
 pub use theme::Theme;
 pub use workspace::{
@@ -46,6 +48,7 @@ pub struct RenderedDoc {
     pub base_dir: PathBuf,
     /// True when the file was not valid UTF-8 and was decoded lossily.
     pub lossy: bool,
+    pub image_warnings: Vec<ImageWarning>,
 }
 
 /// Load and render a Markdown file. This is the entire contract `mdapp` uses.
@@ -61,12 +64,23 @@ pub fn render_document_with(
     highlighter: &Highlighter,
     theme: Theme,
 ) -> Result<RenderedDoc, DocumentError> {
+    render_document_for_with(path, highlighter, theme, RenderPurpose::Interactive)
+}
+
+pub fn render_document_for_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    purpose: RenderPurpose,
+) -> Result<RenderedDoc, DocumentError> {
     let doc = Document::load(path)?;
     let body = render::render_body_in(&doc.source, highlighter, Some(&doc.base_dir));
+    let image_warnings = render::image_warnings(&doc.source, &doc.base_dir);
     Ok(RenderedDoc {
-        html: page::build_page(&doc, &body, theme),
+        html: page::build_page_for(&doc, &body, theme, purpose),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
+        image_warnings,
     })
 }
 
@@ -88,7 +102,17 @@ pub fn render_diff_document_with(
     theme: Theme,
     layout: DiffLayout,
 ) -> Result<RenderedDoc, DiffError> {
-    render_diff_document(path, highlighter, theme, layout, None)
+    render_diff_document(path, highlighter, theme, layout, None, RenderPurpose::Interactive)
+}
+
+pub fn render_diff_document_for_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+    purpose: RenderPurpose,
+) -> Result<RenderedDoc, DiffError> {
+    render_diff_document(path, highlighter, theme, layout, None, purpose)
 }
 
 /// Render a working-tree document against an explicit Git revision.
@@ -99,13 +123,25 @@ pub fn render_diff_document_against_with(
     layout: DiffLayout,
     base: &Revision,
 ) -> Result<RenderedDoc, DiffError> {
+    render_diff_document_against_for_with(path, highlighter, theme, layout, base, RenderPurpose::Interactive)
+}
+
+pub fn render_diff_document_against_for_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+    base: &Revision,
+    purpose: RenderPurpose,
+) -> Result<RenderedDoc, DiffError> {
     let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
     let diff = diff::load_diff_against(&doc.path, base)?;
     let body = diff_body(&doc, &diff, highlighter, layout);
     Ok(RenderedDoc {
-        html: page::build_diff_page(&doc, &body, theme, layout),
+        html: page::build_diff_page_for(&doc, &body, theme, layout, purpose),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
+        image_warnings: diff_image_warnings(&doc, &diff),
     })
 }
 
@@ -117,7 +153,18 @@ pub fn render_diff_document_from_history_with(
     layout: DiffLayout,
     entry: &HistoryEntry,
 ) -> Result<RenderedDoc, DiffError> {
-    render_diff_document(path, highlighter, theme, layout, Some(entry))
+    render_diff_document(path, highlighter, theme, layout, Some(entry), RenderPurpose::Interactive)
+}
+
+pub fn render_diff_document_from_history_for_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+    entry: &HistoryEntry,
+    purpose: RenderPurpose,
+) -> Result<RenderedDoc, DiffError> {
+    render_diff_document(path, highlighter, theme, layout, Some(entry), purpose)
 }
 
 fn render_diff_document(
@@ -126,6 +173,7 @@ fn render_diff_document(
     theme: Theme,
     layout: DiffLayout,
     entry: Option<&HistoryEntry>,
+    purpose: RenderPurpose,
 ) -> Result<RenderedDoc, DiffError> {
     let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
     let diff = match entry {
@@ -134,10 +182,19 @@ fn render_diff_document(
     };
     let body = diff_body(&doc, &diff, highlighter, layout);
     Ok(RenderedDoc {
-        html: page::build_diff_page(&doc, &body, theme, layout),
+        html: page::build_diff_page_for(&doc, &body, theme, layout, purpose),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
+        image_warnings: diff_image_warnings(&doc, &diff),
     })
+}
+
+fn diff_image_warnings(doc: &Document, diff: &GitDiff) -> Vec<ImageWarning> {
+    let mut warnings = render::image_warnings(&diff.old_source, &doc.base_dir);
+    warnings.extend(render::image_warnings(&doc.source, &doc.base_dir));
+    warnings.sort_by(|a, b| a.destination.cmp(&b.destination));
+    warnings.dedup();
+    warnings
 }
 
 /// The body of a diff, in whichever layout was asked for.

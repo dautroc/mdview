@@ -14,6 +14,27 @@ use crate::theme::Theme;
 /// advance between them.
 static PAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderPurpose {
+    Interactive,
+    Print,
+    SectionExport,
+}
+
+impl RenderPurpose {
+    fn as_wire(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Print => "print",
+            Self::SectionExport => "section-export",
+        }
+    }
+
+    fn is_interactive(self) -> bool {
+        self == Self::Interactive
+    }
+}
+
 /// Generate a per-page CSP nonce.
 ///
 /// This crate has no `rand` dependency and must not add one, so the nonce is
@@ -96,7 +117,11 @@ fn build_theme_catalogue() -> String {
 
 /// Assemble a complete, self-contained HTML document around rendered body HTML.
 pub fn build_page(doc: &Document, body_html: &str, theme: Theme) -> String {
-    build_page_view(doc, body_html, theme, None)
+    build_page_for(doc, body_html, theme, RenderPurpose::Interactive)
+}
+
+pub fn build_page_for(doc: &Document, body_html: &str, theme: Theme, purpose: RenderPurpose) -> String {
+    build_page_view(doc, body_html, theme, None, purpose)
 }
 
 /// The same page, stamped as a Git diff in the given layout.
@@ -113,7 +138,17 @@ pub fn build_diff_page(
     theme: Theme,
     layout: DiffLayout,
 ) -> String {
-    build_page_view(doc, body_html, theme, Some(layout))
+    build_diff_page_for(doc, body_html, theme, layout, RenderPurpose::Interactive)
+}
+
+pub fn build_diff_page_for(
+    doc: &Document,
+    body_html: &str,
+    theme: Theme,
+    layout: DiffLayout,
+    purpose: RenderPurpose,
+) -> String {
+    build_page_view(doc, body_html, theme, Some(layout), purpose)
 }
 
 fn build_page_view(
@@ -121,6 +156,7 @@ fn build_page_view(
     body_html: &str,
     theme: Theme,
     diff: Option<DiffLayout>,
+    purpose: RenderPurpose,
 ) -> String {
     let (light_css, dark_css) = highlight::theme_css();
     let title = doc
@@ -145,6 +181,7 @@ fn build_page_view(
         Some(false) => " data-dark=\"0\"".to_string(),
         None => String::new(),
     };
+    let purpose_attr = format!(" data-purpose=\"{}\"", purpose.as_wire());
     let view_attr = if diff.is_some() { " data-view=\"diff\"" } else { "" };
     let diff_layout_attr = match diff {
         Some(layout) => format!(" data-diff-layout=\"{}\"", layout.as_wire()),
@@ -191,11 +228,45 @@ fn build_page_view(
         _ => ("not all", "not all"),
     };
 
-    let theme_catalogue = build_theme_catalogue();
+    let (chrome, theme_script, init_js) = if purpose.is_interactive() {
+        (
+            format!(r#"<div id="mdview-banners"></div>
+<div id="mdview-layout">
+<main id="mdview-main">
+<div id="mdview-find" role="search" hidden>
+<input type="text" id="mdview-find-input" placeholder="Find" aria-label="Find in document" autocomplete="off" autocorrect="off" spellcheck="false">
+<span id="mdview-find-count" role="status" aria-live="polite"></span>
+</div>
+<div id="mdview-comment" hidden>
+<input type="text" id="mdview-comment-input" placeholder="Comment" aria-label="Comment on the selection" autocomplete="off" autocorrect="off" spellcheck="false">
+<span id="mdview-comment-quote"></span>
+</div>
+<div id="mdview-content">{body_html}</div>
+</main>
+<aside id="mdview-minimap" hidden>
+<div id="mdview-minimap-window"></div>
+<canvas id="mdview-minimap-canvas"></canvas>
+</aside>
+<div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
+<aside id="mdview-sidebar" hidden>
+<header class="mdview-sidebar-head"><h2 id="mdview-sidebar-title">Outline</h2></header>
+<div id="mdview-sidebar-body" role="tabpanel"></div>
+</aside>
+</div>"#),
+            format!("<script nonce=\"{nonce}\">window.mdviewThemes={};</script>", build_theme_catalogue()),
+            assets::INIT_JS,
+        )
+    } else {
+        (
+            format!("<main id=\"mdview-main\"><div id=\"mdview-content\">{body_html}</div></main>"),
+            String::new(),
+            assets::EXPORT_JS,
+        )
+    };
 
     format!(
         r#"<!DOCTYPE html>
-<html{theme_attr}{dark_attr}{view_attr}{diff_layout_attr}>
+<html{theme_attr}{dark_attr}{purpose_attr}{view_attr}{diff_layout_attr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -207,32 +278,8 @@ fn build_page_view(
 <style id="mdview-hl-dark" media="{dark_media}">{dark_css}</style>
 </head>
 <body>
-<div id="mdview-banners"></div>
-<div id="mdview-layout">
-<main id="mdview-main">
-<div id="mdview-find" role="search" hidden>
-<input type="text" id="mdview-find-input" placeholder="Find" aria-label="Find in document" autocomplete="off" autocorrect="off" spellcheck="false">
-<span id="mdview-find-count" role="status" aria-live="polite"></span>
-</div>
-<div id="mdview-comment" hidden>
-<input type="text" id="mdview-comment-input" placeholder="Comment" aria-label="Comment on the selection" autocomplete="off" autocorrect="off" spellcheck="false">
-<span id="mdview-comment-quote"></span>
-</div>
-<div id="mdview-content">{body}</div>
-</main>
-<aside id="mdview-minimap" hidden>
-<div id="mdview-minimap-window"></div>
-<canvas id="mdview-minimap-canvas"></canvas>
-</aside>
-<div id="mdview-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
-<aside id="mdview-sidebar" hidden>
-<header class="mdview-sidebar-head">
-<h2 id="mdview-sidebar-title">Outline</h2>
-</header>
-<div id="mdview-sidebar-body" role="tabpanel"></div>
-</aside>
-</div>
-<script nonce="{nonce}">window.mdviewThemes={theme_catalogue};</script>
+{chrome}
+{theme_script}
 <script nonce="{nonce}">{katex_js}</script>
 <script nonce="{nonce}">{mermaid_js}</script>
 <script nonce="{nonce}">{init_js}</script>
@@ -241,6 +288,7 @@ fn build_page_view(
 "#,
         theme_attr = theme_attr,
         dark_attr = dark_attr,
+        purpose_attr = purpose_attr,
         view_attr = view_attr,
         diff_layout_attr = diff_layout_attr,
         csp = csp,
@@ -254,11 +302,11 @@ fn build_page_view(
         dark_media = dark_media,
         light_css = light_css,
         dark_css = dark_css,
-        body = body_html,
-        theme_catalogue = theme_catalogue,
+        chrome = chrome,
+        theme_script = theme_script,
         katex_js = assets::KATEX_JS,
         mermaid_js = assets::MERMAID_JS,
-        init_js = assets::INIT_JS,
+        init_js = init_js,
     )
 }
 
@@ -282,6 +330,36 @@ mod tests {
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<p>hi</p>"));
         assert!(html.trim_end().ends_with("</html>"));
+    }
+
+    #[test]
+    fn export_pages_omit_interactive_chrome_and_keep_readiness() {
+        for purpose in [RenderPurpose::Print, RenderPurpose::SectionExport] {
+            let html = build_page_for(&doc(), "<p>portable</p>", Theme::System, purpose);
+            assert!(root_tag(&html).contains(&format!("data-purpose=\"{}\"", purpose.as_wire())));
+            for chrome in ["id=\"mdview-banners\"", "id=\"mdview-find\"", "id=\"mdview-comment\"", "id=\"mdview-minimap\"", "id=\"mdview-sidebar\"", "window.mdviewThemes=", "window.webkit.messageHandlers"] {
+                assert!(!html.contains(chrome), "export contains {chrome}");
+            }
+            assert!(html.contains("window.mdviewRenderState"));
+            assert!(html.contains("status = \"ready\""));
+        }
+    }
+
+    #[test]
+    fn interactive_pages_keep_their_explicit_purpose_and_chrome() {
+        let html = build_page(&doc(), "<p>hi</p>", Theme::System);
+        assert!(root_tag(&html).contains("data-purpose=\"interactive\""));
+        assert!(html.contains("id=\"mdview-sidebar\""));
+        assert!(html.contains("window.mdviewThemes="));
+    }
+
+    #[test]
+    fn print_css_has_readable_pagination_fallbacks() {
+        let css = assets::PAGE_CSS;
+        assert!(css.contains("@media print"));
+        assert!(css.contains("break-inside: avoid"));
+        assert!(css.contains("white-space: pre-wrap"));
+        assert!(css.contains(".mdview-diff-split-row"));
     }
 
     #[test]

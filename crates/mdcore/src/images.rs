@@ -14,6 +14,53 @@ use std::path::{Path, PathBuf};
 /// bigger keeps its original `src` and simply does not render.
 pub const MAX_INLINE_BYTES: u64 = 8 * 1024 * 1024;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageWarningKind {
+    Missing,
+    NotAFile,
+    TooLarge { bytes: u64 },
+    UnsupportedFormat,
+    Unreadable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageWarning {
+    pub destination: String,
+    pub kind: ImageWarningKind,
+}
+
+impl ImageWarning {
+    pub fn message(&self) -> String {
+        let reason = match self.kind {
+            ImageWarningKind::Missing => "is missing".to_string(),
+            ImageWarningKind::NotAFile => "is not a regular file".to_string(),
+            ImageWarningKind::TooLarge { bytes } => format!("is too large to embed ({:.1} MiB; limit is {:.1} MiB)", bytes as f64 / 1_048_576.0, MAX_INLINE_BYTES as f64 / 1_048_576.0),
+            ImageWarningKind::UnsupportedFormat => "uses an unsupported format".to_string(),
+            ImageWarningKind::Unreadable => "could not be read".to_string(),
+        };
+        format!("{} {reason}", self.destination)
+    }
+}
+
+pub fn warning(dest: &str, base_dir: &Path) -> Option<ImageWarning> {
+    if is_remote(dest) { return None; }
+    let path = resolve(dest, base_dir)?;
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(ImageWarning { destination: dest.to_string(), kind: if error.kind() == std::io::ErrorKind::NotFound { ImageWarningKind::Missing } else { ImageWarningKind::Unreadable } }),
+    };
+    let kind = if !metadata.is_file() {
+        Some(ImageWarningKind::NotAFile)
+    } else if metadata.len() > MAX_INLINE_BYTES {
+        Some(ImageWarningKind::TooLarge { bytes: metadata.len() })
+    } else if mime_for(&path).is_none() {
+        Some(ImageWarningKind::UnsupportedFormat)
+    } else if std::fs::File::open(path).is_err() {
+        Some(ImageWarningKind::Unreadable)
+    } else { None };
+    kind.map(|kind| ImageWarning { destination: dest.to_string(), kind })
+}
+
 /// Turn an image destination into a `data:` URI, or `None` to leave it alone.
 ///
 /// Remote and already-inlined sources are left untouched; so is anything that
@@ -210,6 +257,18 @@ mod tests {
         assert_eq!(inline("nope.png", &dir), None);
         std::fs::write(dir.join("thing.xyz"), b"x").unwrap();
         assert_eq!(inline("thing.xyz", &dir), None, "unknown type has no mime");
+    }
+
+    #[test]
+    fn export_warnings_distinguish_missing_unsupported_and_oversized_images() {
+        let dir = tmp();
+        assert_eq!(warning("missing.png", &dir).map(|w| w.kind), Some(ImageWarningKind::Missing));
+        std::fs::write(dir.join("unknown.xyz"), b"x").unwrap();
+        assert_eq!(warning("unknown.xyz", &dir).map(|w| w.kind), Some(ImageWarningKind::UnsupportedFormat));
+        let bytes = MAX_INLINE_BYTES + 1;
+        std::fs::write(dir.join("large.png"), vec![0; bytes as usize]).unwrap();
+        assert_eq!(warning("large.png", &dir).map(|w| w.kind), Some(ImageWarningKind::TooLarge { bytes }));
+        std::fs::remove_file(dir.join("large.png")).ok();
     }
 
     #[test]

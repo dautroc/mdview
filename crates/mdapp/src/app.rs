@@ -468,6 +468,21 @@ define_class!(
             self.present_import_review_session();
         }
 
+        #[unsafe(method(printDocument:))]
+        fn print_document_action(&self, _sender: Option<&NSObject>) {
+            self.present_print();
+        }
+
+        #[unsafe(method(exportPdf:))]
+        fn export_pdf_action(&self, _sender: Option<&NSObject>) {
+            self.present_export_pdf();
+        }
+
+        #[unsafe(method(exportHtml:))]
+        fn export_html_action(&self, _sender: Option<&NSObject>) {
+            self.present_export_html();
+        }
+
         #[unsafe(method(exportReviewSession:))]
         fn export_review_session_action(&self, _sender: Option<&NSObject>) {
             self.present_export_review_session();
@@ -2743,6 +2758,90 @@ impl AppDelegate {
             });
         }
         crate::portable_review::ReviewSession::new(documents).map_err(|error| error.to_string())
+    }
+
+    fn render_print_page(&self, window: &DocumentWindow) -> Result<mdcore::RenderedDoc, String> {
+        let theme = crate::state::resolve_theme(crate::defaults::get_string(crate::defaults::THEME_KEY).as_deref());
+        window.render_for(&self.ivars().highlighter, theme, mdcore::RenderPurpose::Print)
+    }
+
+    fn confirm_export_images(&self, warnings: &[mdcore::ImageWarning], format: &str) -> bool {
+        use objc2_app_kit::NSAlert;
+        if warnings.is_empty() { return true; }
+        let alert = NSAlert::new(MainThreadMarker::from(self));
+        alert.setMessageText(&NSString::from_str("Some images will not be embedded"));
+        let mut details = warnings.iter().take(8).map(|warning| format!("• {}", warning.message())).collect::<Vec<_>>();
+        if warnings.len() > details.len() { details.push(format!("• …and {} more", warnings.len() - details.len())); }
+        details.push(format!("The {format} will still be created, but these images may be missing."));
+        alert.setInformativeText(&NSString::from_str(&details.join("\n")));
+        alert.addButtonWithTitle(&NSString::from_str("Continue"));
+        alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+        alert.runModal() == 1000
+    }
+
+    pub(crate) fn present_print(&self) {
+        let Some(window) = self.frontmost_window() else { return };
+        let rendered = match self.render_print_page(&window) {
+            Ok(rendered) => rendered,
+            Err(error) => { window.show_note(&format!("Could not render the document for printing: {error}")); return; }
+        };
+        if !self.confirm_export_images(&rendered.image_warnings, "printout") { return; }
+        let page = match crate::export::ReadyPage::load(&rendered.html, &rendered.base_dir, MainThreadMarker::from(self)) {
+            Ok(page) => page,
+            Err(error) => { window.show_note(&error); return; }
+        };
+        let title = window.path.file_name().and_then(|name| name.to_str()).unwrap_or("MDView");
+        page.print(title);
+    }
+
+    pub(crate) fn present_export_pdf(&self) {
+        use objc2_app_kit::{NSModalResponse, NSSavePanel};
+        let Some(window) = self.frontmost_window() else { return };
+        let default_name = window.path.file_stem().and_then(|name| name.to_str()).map(|name| format!("{name}.pdf")).unwrap_or_else(|| "document.pdf".to_string());
+        let panel = NSSavePanel::savePanel(MainThreadMarker::from(self));
+        panel.setNameFieldStringValue(&NSString::from_str(&default_name));
+        let response: NSModalResponse = panel.runModal();
+        if response != 1 { return; }
+        let Some(url) = panel.URL() else { return };
+        let Some(path) = url.path() else { return };
+        let rendered = match self.render_print_page(&window) {
+            Ok(rendered) => rendered,
+            Err(error) => { window.show_note(&format!("Could not render the PDF: {error}")); return; }
+        };
+        if !self.confirm_export_images(&rendered.image_warnings, "PDF") { return; }
+        let page = match crate::export::ReadyPage::load(&rendered.html, &rendered.base_dir, MainThreadMarker::from(self)) {
+            Ok(page) => page,
+            Err(error) => { window.show_note(&error); return; }
+        };
+        let bytes = match page.pdf_data(MainThreadMarker::from(self)) {
+            Ok(bytes) => bytes,
+            Err(error) => { window.show_note(&format!("Could not create the PDF: {error}")); return; }
+        };
+        match crate::store::write_atomic(&PathBuf::from(path.to_string()), &bytes) {
+            Ok(()) => window.show_note("PDF exported."),
+            Err(error) => window.show_note(&format!("Could not export PDF: {error}")),
+        }
+    }
+
+    pub(crate) fn present_export_html(&self) {
+        use objc2_app_kit::{NSModalResponse, NSSavePanel};
+        let Some(window) = self.frontmost_window() else { return };
+        let default_name = window.path.file_stem().and_then(|name| name.to_str()).map(|name| format!("{name}.html")).unwrap_or_else(|| "document.html".to_string());
+        let panel = NSSavePanel::savePanel(MainThreadMarker::from(self));
+        panel.setNameFieldStringValue(&NSString::from_str(&default_name));
+        let response: NSModalResponse = panel.runModal();
+        if response != 1 { return; }
+        let Some(url) = panel.URL() else { return };
+        let Some(path) = url.path() else { return };
+        let rendered = match self.render_print_page(&window) {
+            Ok(rendered) => rendered,
+            Err(error) => { window.show_note(&format!("Could not render the HTML export: {error}")); return; }
+        };
+        if !self.confirm_export_images(&rendered.image_warnings, "HTML file") { return; }
+        match crate::store::write_atomic(&PathBuf::from(path.to_string()), rendered.html.as_bytes()) {
+            Ok(()) => window.show_note("HTML exported."),
+            Err(error) => window.show_note(&format!("Could not export HTML: {error}")),
+        }
     }
 
     pub(crate) fn present_export_review_session(&self) {
