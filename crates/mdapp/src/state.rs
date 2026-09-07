@@ -51,9 +51,8 @@ pub fn full_width_script(enabled: bool) -> &'static str {
 }
 
 pub fn queue_full_width_script(scripts: &mut Vec<String>, enabled: bool) {
-    scripts.retain(|script| {
-        script != full_width_script(true) && script != full_width_script(false)
-    });
+    scripts
+        .retain(|script| script != full_width_script(true) && script != full_width_script(false));
     scripts.push(full_width_script(enabled).to_string());
 }
 
@@ -134,6 +133,16 @@ pub fn open_history_script() -> &'static str {
     "window.mdviewOpenHistory && window.mdviewOpenHistory();"
 }
 
+#[allow(dead_code)]
+pub fn open_workspace_files_script() -> &'static str {
+    "window.mdviewOpenWorkspaceFiles && window.mdviewOpenWorkspaceFiles();"
+}
+
+#[allow(dead_code)]
+pub fn open_workspace_search_script() -> &'static str {
+    "window.mdviewOpenWorkspaceSearch && window.mdviewOpenWorkspaceSearch();"
+}
+
 /// The one-time nudge that tells a first-time user the keys exist. With no
 /// buttons on the page there is nothing else to notice, so this is the only
 /// thing standing between a new user and an apparently inert window.
@@ -191,7 +200,10 @@ pub fn recent_dir(path: &str, home: Option<&str>) -> String {
         return String::new();
     };
     let parent = parent.to_string_lossy().into_owned();
-    let Some(home) = home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) else {
+    let Some(home) = home
+        .map(|h| h.trim_end_matches('/'))
+        .filter(|h| !h.is_empty())
+    else {
         return parent;
     };
     if parent == home {
@@ -209,7 +221,10 @@ pub fn recent_dir(path: &str, home: Option<&str>) -> String {
 #[allow(dead_code)]
 pub fn toggle_bookmark(list: &[String], path: &str) -> Vec<String> {
     if is_bookmarked(list, path) {
-        list.iter().filter(|p| p.as_str() != path).cloned().collect()
+        list.iter()
+            .filter(|p| p.as_str() != path)
+            .cloned()
+            .collect()
     } else {
         let mut out = Vec::with_capacity(list.len() + 1);
         out.push(path.to_string());
@@ -234,11 +249,17 @@ pub enum Message {
     SetDiffLayout(DiffLayout),
     OpenHistory,
     SelectHistory(String),
+    SearchWorkspace(String),
+    OpenWorkspacePath(String),
+    SetReadingPosition(u32),
     ToggleFullWidth,
     NextTab,
     PreviousTab,
     OpenPath(String),
-    SetSidebar { open: bool, tab: String },
+    SetSidebar {
+        open: bool,
+        tab: String,
+    },
     SetSidebarWidth(u32),
     SetMinimap(bool),
     /// The page's single-key shortcuts for actions only the host can perform:
@@ -249,9 +270,19 @@ pub enum Message {
     ZoomReset,
     /// A new comment on the current document. `heading` and `nth` are its
     /// anchor; see `crate::review::Comment`.
-    AddComment { heading: usize, nth: usize, quote: String, note: String },
-    EditComment { id: String, note: String },
-    DeleteComment { id: String },
+    AddComment {
+        heading: usize,
+        nth: usize,
+        quote: String,
+        note: String,
+    },
+    EditComment {
+        id: String,
+        note: String,
+    },
+    DeleteComment {
+        id: String,
+    },
     CopyReview,
 }
 
@@ -303,6 +334,15 @@ pub fn parse_message(raw: &str) -> Option<Message> {
                 Some(Message::SelectHistory(revision))
             }
         }
+        "searchWorkspace" => Some(Message::SearchWorkspace(percent_decode(rest)?)),
+        "openWorkspacePath" => {
+            let path = percent_decode(rest)?;
+            if path.is_empty() {
+                None
+            } else {
+                Some(Message::OpenWorkspacePath(path))
+            }
+        }
         "setTheme" => {
             // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
             let (wire, scroll_str) = match rest.split_once(':') {
@@ -333,6 +373,7 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             let px = rest.parse::<u32>().ok()?;
             Some(Message::SetSidebarWidth(px))
         }
+        "setReadingPosition" => Some(Message::SetReadingPosition(rest.parse::<u32>().ok()?)),
         // "1" or nothing. Unlike the sidebar there is no second field: the
         // strip has no tabs, so a bare flag is the whole of its state.
         "setMinimap" => match rest {
@@ -360,13 +401,18 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             if id.is_empty() {
                 return None;
             }
-            Some(Message::EditComment { id: id.to_string(), note: percent_decode(note)? })
+            Some(Message::EditComment {
+                id: id.to_string(),
+                note: percent_decode(note)?,
+            })
         }
         "deleteComment" => {
             if rest.is_empty() {
                 None
             } else {
-                Some(Message::DeleteComment { id: rest.to_string() })
+                Some(Message::DeleteComment {
+                    id: rest.to_string(),
+                })
             }
         }
         _ => None,
@@ -526,6 +572,76 @@ pub fn history_script(entries: &[mdcore::HistoryEntry], error: Option<&str>) -> 
     )
 }
 
+pub fn workspace_files_script(
+    snapshot: Option<&mdcore::WorkspaceSnapshot>,
+    error: Option<&str>,
+) -> String {
+    let (root, partial, items) = match snapshot {
+        Some(snapshot) => {
+            let items = snapshot
+                .files
+                .iter()
+                .map(|file| {
+                    format!(
+                        "{{path:{},relative:{}}}",
+                        mdcore::escape::js_string_literal(&file.path.to_string_lossy()),
+                        mdcore::escape::js_string_literal(&file.relative_path.to_string_lossy()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (
+                mdcore::escape::js_string_literal(&snapshot.root.path().to_string_lossy()),
+                snapshot.summary.is_partial(),
+                items,
+            )
+        }
+        None => ("null".to_string(), false, Vec::new()),
+    };
+    let error = error
+        .map(mdcore::escape::js_string_literal)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "window.mdviewSetWorkspace && window.mdviewSetWorkspace({root},[{}],{partial},{error});",
+        items.join(",")
+    )
+}
+
+pub fn workspace_reveal_script(heading: Option<&str>, query: &str) -> String {
+    let heading = heading
+        .map(mdcore::escape::js_string_literal)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "window.mdviewRevealWorkspaceHit && window.mdviewRevealWorkspaceHit({heading}, {});",
+        mdcore::escape::js_string_literal(query)
+    )
+}
+
+pub fn workspace_search_script(hits: &[mdcore::SearchHit], error: Option<&str>) -> String {
+    let items = hits
+        .iter()
+        .map(|hit| {
+            let heading = hit
+                .heading
+                .as_deref()
+                .map(mdcore::escape::js_string_literal)
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "{{path:{},relative:{},heading:{heading},snippet:{}}}",
+                mdcore::escape::js_string_literal(&hit.path.to_string_lossy()),
+                mdcore::escape::js_string_literal(&hit.relative_path.to_string_lossy()),
+                mdcore::escape::js_string_literal(&hit.snippet),
+            )
+        })
+        .collect::<Vec<_>>();
+    let error = error
+        .map(mdcore::escape::js_string_literal)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "window.mdviewSetWorkspaceSearch && window.mdviewSetWorkspaceSearch([{}],{error});",
+        items.join(",")
+    )
+}
+
 pub fn comments_script(comments: &[crate::review::Comment]) -> String {
     let items: Vec<String> = comments
         .iter()
@@ -541,7 +657,10 @@ pub fn comments_script(comments: &[crate::review::Comment]) -> String {
         })
         .collect();
     // Guarded like every other injected call: the error page has no init.js.
-    format!("window.mdviewSetComments && window.mdviewSetComments([{}]);", items.join(","))
+    format!(
+        "window.mdviewSetComments && window.mdviewSetComments([{}]);",
+        items.join(",")
+    )
 }
 
 /// The recent-files list for one window: the history, with that window's own
@@ -566,7 +685,10 @@ pub fn recents_script(history: &[String], current: &str, home: Option<&str>) -> 
         })
         .collect();
     // Guarded like every other injected call: the error page has no init.js.
-    format!("window.mdviewSetRecents && window.mdviewSetRecents([{}]);", items.join(","))
+    format!(
+        "window.mdviewSetRecents && window.mdviewSetRecents([{}]);",
+        items.join(",")
+    )
 }
 
 #[cfg(test)]
@@ -596,7 +718,10 @@ mod tests {
     fn an_emoji_survives_the_wire() {
         assert_eq!(percent_decode("%F0%9F%8E%AF").as_deref(), Some("🎯"));
         assert_eq!(percent_decode("caf%C3%A9").as_deref(), Some("café"));
-        assert_eq!(percent_decode("100%25%20done").as_deref(), Some("100% done"));
+        assert_eq!(
+            percent_decode("100%25%20done").as_deref(),
+            Some("100% done")
+        );
     }
 
     #[test]
@@ -623,8 +748,14 @@ mod tests {
     #[test]
     fn review_file_name_is_stable_across_processes() {
         assert_eq!(review_file_name(""), "cbf29ce484222325.md");
-        assert_eq!(review_file_name("/tmp/notes.md").len(), "cbf29ce484222325.md".len());
-        assert_eq!(review_file_name("/tmp/notes.md"), review_file_name("/tmp/notes.md"));
+        assert_eq!(
+            review_file_name("/tmp/notes.md").len(),
+            "cbf29ce484222325.md".len()
+        );
+        assert_eq!(
+            review_file_name("/tmp/notes.md"),
+            review_file_name("/tmp/notes.md")
+        );
     }
 
     #[test]
@@ -642,7 +773,10 @@ mod tests {
         assert!(!prompt.contains('\n'), "a pasted prompt has to be one line");
         // The line-continuations that keep this readable in the source must
         // not leave doubled spaces in what is actually pasted.
-        assert!(!prompt.contains("  "), "the source wrapping leaked into the prompt");
+        assert!(
+            !prompt.contains("  "),
+            "the source wrapping leaked into the prompt"
+        );
     }
 
     /// Addressing a comment means rewriting the passage it quotes, which
@@ -653,10 +787,19 @@ mod tests {
     #[test]
     fn the_review_prompt_asks_for_addressed_records_to_be_deleted() {
         let prompt = review_prompt("/Users/x/Library/r/9.md", "/Users/x/notes.md");
-        assert!(prompt.contains("delete"), "nothing asks for the record to go");
-        assert!(prompt.contains("mdview-quote"), "the record shape is left to guesswork");
+        assert!(
+            prompt.contains("delete"),
+            "nothing asks for the record to go"
+        );
+        assert!(
+            prompt.contains("mdview-quote"),
+            "the record shape is left to guesswork"
+        );
         assert!(prompt.contains("mdview-note"));
-        assert!(prompt.contains("fences included"), "a half-deleted record parses as nothing");
+        assert!(
+            prompt.contains("fences included"),
+            "a half-deleted record parses as nothing"
+        );
         assert!(prompt.contains("leave the rest of the file alone"));
     }
 
@@ -665,15 +808,25 @@ mod tests {
     #[test]
     fn every_reason_the_diff_is_unavailable_has_something_to_say() {
         use mdcore::DiffAvailability::*;
-        assert_eq!(diff_unavailable_note(Available), None, "an available diff must not nag");
+        assert_eq!(
+            diff_unavailable_note(Available),
+            None,
+            "an available diff must not nag"
+        );
         for unavailable in [GitUnavailable, Untracked, NoHead] {
             let note = diff_unavailable_note(unavailable).expect("{unavailable:?} says nothing");
             assert!(note.ends_with('.'), "{unavailable:?}: {note}");
             assert!(note.len() < 60, "too long for the note strip: {note}");
         }
         // Three different things to go and fix, so three different sentences.
-        assert_ne!(diff_unavailable_note(GitUnavailable), diff_unavailable_note(Untracked));
-        assert_ne!(diff_unavailable_note(Untracked), diff_unavailable_note(NoHead));
+        assert_ne!(
+            diff_unavailable_note(GitUnavailable),
+            diff_unavailable_note(Untracked)
+        );
+        assert_ne!(
+            diff_unavailable_note(Untracked),
+            diff_unavailable_note(NoHead)
+        );
     }
 
     /// A clean file must not raise anything: the banner is a condition someone
@@ -690,19 +843,31 @@ mod tests {
     /// being written.
     #[test]
     fn the_damaged_review_banner_names_the_line_the_reason_and_the_consequence() {
-        let one = [crate::review::Damage { line: 12, reason: crate::review::ORPHAN_NOTE }];
+        let one = [crate::review::Damage {
+            line: 12,
+            reason: crate::review::ORPHAN_NOTE,
+        }];
         let text = damaged_review_banner(&one, "/Users/x/r/9.md").expect("a banner");
         assert!(text.contains("Line 12"), "no line number: {text}");
         assert!(text.contains(crate::review::ORPHAN_NOTE));
-        assert!(text.contains("will not write"), "does not say what stopped: {text}");
+        assert!(
+            text.contains("will not write"),
+            "does not say what stopped: {text}"
+        );
         assert!(text.contains("/Users/x/r/9.md"), "nothing to open: {text}");
     }
 
     #[test]
     fn a_review_with_several_bad_records_counts_them_and_lists_the_lines() {
         let many = [
-            crate::review::Damage { line: 12, reason: crate::review::ORPHAN_NOTE },
-            crate::review::Damage { line: 31, reason: crate::review::BAD_INFO },
+            crate::review::Damage {
+                line: 12,
+                reason: crate::review::ORPHAN_NOTE,
+            },
+            crate::review::Damage {
+                line: 31,
+                reason: crate::review::BAD_INFO,
+            },
         ];
         let text = damaged_review_banner(&many, "/Users/x/r/9.md").expect("a banner");
         assert!(text.contains("2 records"), "no count: {text}");
@@ -733,12 +898,43 @@ mod tests {
     }
 
     #[test]
+    fn workspace_scripts_escape_host_data_and_call_guarded_hooks() {
+        let hit = mdcore::SearchHit {
+            path: std::path::PathBuf::from("/tmp/a'file.md"),
+            relative_path: std::path::PathBuf::from("a'file.md"),
+            heading: Some("A </script> heading".to_string()),
+            snippet: "line\nnext".to_string(),
+            match_range: 0..4,
+        };
+        let search = workspace_search_script(&[hit], None);
+        assert!(search.contains("window.mdviewSetWorkspaceSearch &&"));
+        assert!(!search.contains("</script>"));
+        assert!(search.contains("\\n"));
+
+        let reveal = workspace_reveal_script(Some("A ' heading"), "retry\nnow");
+        assert!(reveal.contains("window.mdviewRevealWorkspaceHit &&"));
+        assert!(reveal.contains("\\n"));
+    }
+
+    #[test]
     fn the_comments_script_escapes_every_field_and_is_guarded() {
-        let comments = [crate::review::Comment::new("1", 2, 0, "</script>\n\"q\"", "note")];
+        let comments = [crate::review::Comment::new(
+            "1",
+            2,
+            0,
+            "</script>\n\"q\"",
+            "note",
+        )];
         let script = comments_script(&comments);
         assert!(script.contains("window.mdviewSetComments &&"));
-        assert!(!script.contains("</script>"), "the literal has to be escaped");
-        assert!(!script.contains('\n'), "a raw newline would break the literal");
+        assert!(
+            !script.contains("</script>"),
+            "the literal has to be escaped"
+        );
+        assert!(
+            !script.contains('\n'),
+            "a raw newline would break the literal"
+        );
         assert!(script.contains("heading:2"));
     }
 
@@ -774,9 +970,12 @@ mod tests {
                 "setTheme:" => "setTheme:mocha:0".to_string(),
                 "setSidebar:" => "setSidebar:1:outline".to_string(),
                 "setSidebarWidth:" => "setSidebarWidth:260".to_string(),
+                "setReadingPosition:" => "setReadingPosition:320".to_string(),
                 "setMinimap:" => "setMinimap:1".to_string(),
                 "setDiffLayout:" => "setDiffLayout:split".to_string(),
                 "selectHistory:" => "selectHistory:abc123".to_string(),
+                "searchWorkspace:" => "searchWorkspace:retry".to_string(),
+                "openWorkspacePath:" => "openWorkspacePath:%2Ftmp%2Fx.md".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),
                 "addComment:" => "addComment:1:0:a%20quote:a%20note".to_string(),
                 "editComment:" => "editComment:2f:a%20note".to_string(),
@@ -788,7 +987,10 @@ mod tests {
                 "the page sends {literal:?}, which the bridge drops"
             );
         }
-        assert!(seen >= 8, "expected to find the page's messages, saw {seen}");
+        assert!(
+            seen >= 8,
+            "expected to find the page's messages, saw {seen}"
+        );
     }
 
     #[test]
@@ -832,10 +1034,17 @@ mod tests {
         assert!(open_find_script().contains("mdviewOpenFind"));
         assert!(find_step_script(true).contains("mdviewFindNext"));
         assert!(find_step_script(false).contains("mdviewFindPrevious"));
-        for script in [open_find_script(), find_step_script(true), find_step_script(false)] {
+        for script in [
+            open_find_script(),
+            find_step_script(true),
+            find_step_script(false),
+        ] {
             // The error page has no init.js behind it: an unguarded call would
             // throw there on every press of the shortcut.
-            assert!(script.contains("&&"), "{script} must guard on the hook existing");
+            assert!(
+                script.contains("&&"),
+                "{script} must guard on the hook existing"
+            );
         }
     }
 
@@ -899,17 +1108,29 @@ mod tests {
         assert_eq!(recent_dir("/Users/bo/README.md", home), "~");
         assert_eq!(recent_dir("/etc/motd.md", home), "/etc");
         // No HOME to shorten against is not an error; the path stands as it is.
-        assert_eq!(recent_dir("/Users/bo/notes/README.md", None), "/Users/bo/notes");
-        assert_eq!(recent_dir("/Users/bo/notes/README.md", Some("")), "/Users/bo/notes");
+        assert_eq!(
+            recent_dir("/Users/bo/notes/README.md", None),
+            "/Users/bo/notes"
+        );
+        assert_eq!(
+            recent_dir("/Users/bo/notes/README.md", Some("")),
+            "/Users/bo/notes"
+        );
     }
 
     /// The prefix test has to be segment-wise. A home of `/Users/bo` shortening
     /// `/Users/bobby/notes` would name a directory that does not exist.
     #[test]
     fn a_home_prefix_only_shortens_a_whole_segment() {
-        assert_eq!(recent_dir("/Users/bobby/notes/a.md", Some("/Users/bo")), "/Users/bobby/notes");
+        assert_eq!(
+            recent_dir("/Users/bobby/notes/a.md", Some("/Users/bo")),
+            "/Users/bobby/notes"
+        );
         // A trailing slash on HOME is the same home.
-        assert_eq!(recent_dir("/Users/bo/notes/a.md", Some("/Users/bo/")), "~/notes");
+        assert_eq!(
+            recent_dir("/Users/bo/notes/a.md", Some("/Users/bo/")),
+            "~/notes"
+        );
     }
 
     #[test]
@@ -917,7 +1138,10 @@ mod tests {
         let history = v(&["/Users/bo/a.md", "/Users/bo/b.md"]);
         let script = recents_script(&history, "/Users/bo/a.md", Some("/Users/bo"));
         assert!(script.contains("window.mdviewSetRecents &&"));
-        assert!(!script.contains("a.md"), "the open document is the one row that could do nothing");
+        assert!(
+            !script.contains("a.md"),
+            "the open document is the one row that could do nothing"
+        );
         assert!(script.contains(r#"name:"b.md""#));
         assert!(script.contains(r#"dir:"~""#));
         assert!(script.contains(r#"path:"/Users/bo/b.md""#));
@@ -927,8 +1151,14 @@ mod tests {
     fn the_recents_script_escapes_every_field_and_survives_an_empty_list() {
         let history = v(&["/tmp/</script>\n\"x\".md"]);
         let script = recents_script(&history, "", None);
-        assert!(!script.contains("</script>"), "the literal has to be escaped");
-        assert!(!script.contains('\n'), "a raw newline would break the literal");
+        assert!(
+            !script.contains("</script>"),
+            "the literal has to be escaped"
+        );
+        assert!(
+            !script.contains('\n'),
+            "a raw newline would break the literal"
+        );
         // An emptied history still has to reach the page, or the palette would
         // go on offering documents Clear Menu has just thrown away.
         assert_eq!(
@@ -952,7 +1182,10 @@ mod tests {
 
     #[test]
     fn parses_each_message_kind() {
-        assert_eq!(parse_message("toggleBookmark"), Some(Message::ToggleBookmark));
+        assert_eq!(
+            parse_message("toggleBookmark"),
+            Some(Message::ToggleBookmark)
+        );
         assert_eq!(
             parse_message("setTheme:mocha"),
             Some(Message::SetTheme(Theme::Mocha, None))
@@ -971,16 +1204,25 @@ mod tests {
             parse_message("setDiffLayout:split"),
             Some(Message::SetDiffLayout(DiffLayout::Split))
         );
-        assert_eq!(parse_message("toggleFullWidth"), Some(Message::ToggleFullWidth));
+        assert_eq!(
+            parse_message("toggleFullWidth"),
+            Some(Message::ToggleFullWidth)
+        );
         assert_eq!(parse_message("nextTab"), Some(Message::NextTab));
         assert_eq!(parse_message("previousTab"), Some(Message::PreviousTab));
-        assert_eq!(parse_message("reloadDocument"), Some(Message::ReloadDocument));
+        assert_eq!(
+            parse_message("reloadDocument"),
+            Some(Message::ReloadDocument)
+        );
         assert_eq!(parse_message("zoomIn"), Some(Message::ZoomIn));
         assert_eq!(parse_message("zoomOut"), Some(Message::ZoomOut));
         assert_eq!(parse_message("zoomReset"), Some(Message::ZoomReset));
         assert_eq!(
             parse_message("setSidebar:1:bookmarks"),
-            Some(Message::SetSidebar { open: true, tab: "bookmarks".into() })
+            Some(Message::SetSidebar {
+                open: true,
+                tab: "bookmarks".into()
+            })
         );
     }
 
@@ -999,22 +1241,31 @@ mod tests {
         assert_eq!(parse_message("nonsense"), None);
         assert_eq!(parse_message("openPath:"), None);
         assert_eq!(parse_message("setSidebar:1"), None);
-        assert_eq!(parse_message("setTheme:tokyo-night"), Some(Message::SetTheme(Theme::System, None)));
+        assert_eq!(
+            parse_message("setTheme:tokyo-night"),
+            Some(Message::SetTheme(Theme::System, None))
+        );
     }
 
     #[test]
     fn set_theme_carries_an_optional_scroll_offset() {
-        assert_eq!(parse_message("setTheme:mocha:1234"),
-            Some(Message::SetTheme(Theme::Mocha, Some(1234))));
-        assert_eq!(parse_message("setTheme:mocha"),
-            Some(Message::SetTheme(Theme::Mocha, None)));
+        assert_eq!(
+            parse_message("setTheme:mocha:1234"),
+            Some(Message::SetTheme(Theme::Mocha, Some(1234)))
+        );
+        assert_eq!(
+            parse_message("setTheme:mocha"),
+            Some(Message::SetTheme(Theme::Mocha, None))
+        );
     }
 
     #[test]
     fn a_malformed_scroll_offset_is_ignored_not_fatal() {
         // The theme still applies; only the scroll hint is dropped.
-        assert_eq!(parse_message("setTheme:mocha:abc"),
-            Some(Message::SetTheme(Theme::Mocha, None)));
+        assert_eq!(
+            parse_message("setTheme:mocha:abc"),
+            Some(Message::SetTheme(Theme::Mocha, None))
+        );
     }
 
     #[test]
@@ -1023,7 +1274,10 @@ mod tests {
         // hardcodes true: every other setSidebar test passes "1".
         assert_eq!(
             parse_message("setSidebar:0:outline"),
-            Some(Message::SetSidebar { open: false, tab: "outline".into() })
+            Some(Message::SetSidebar {
+                open: false,
+                tab: "outline".into()
+            })
         );
     }
 
@@ -1093,7 +1347,10 @@ mod tests {
         assert_eq!(diff_layout_wire(DiffLayout::Unified), "unified");
         assert_eq!(diff_layout_wire(DiffLayout::Split), "split");
         assert_eq!(diff_layout_wire(DiffLayout::Rendered), "rendered");
-        assert_eq!(diff_layout_wire(DiffLayout::RenderedSplit), "rendered-split");
+        assert_eq!(
+            diff_layout_wire(DiffLayout::RenderedSplit),
+            "rendered-split"
+        );
     }
 
     /// A layout stored by a build that has one this build does not. Falling

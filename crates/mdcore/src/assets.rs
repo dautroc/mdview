@@ -234,6 +234,29 @@ mod tests {
         assert!(super::PAGE_CSS.contains(".mdview-diff-context"));
     }
 
+    #[test]
+    fn workspace_navigation_is_reachable_safe_and_styled() {
+        let js = super::INIT_JS;
+        for hook in [
+            "window.mdviewSetWorkspace",
+            "window.mdviewOpenWorkspaceFiles",
+            "window.mdviewOpenWorkspaceSearch",
+            "window.mdviewSetWorkspaceSearch",
+            "window.mdviewRevealWorkspaceHit",
+            "postToHost(\"searchWorkspace:\"",
+            "postToHost(\"openWorkspacePath:\"",
+            "keys: [\"g f\"]",
+            "keys: [\"g /\"]",
+        ] {
+            assert!(js.contains(hook), "workspace navigation is missing {hook}");
+        }
+        assert!(js.contains("a.textContent = entry.relative"));
+        assert!(js.contains("name.textContent = entry.relative"));
+        assert!(super::PAGE_CSS.contains("#mdview-workspace-palette {"));
+        assert!(super::PAGE_CSS.contains("#mdview-workspace-palette[hidden]"));
+        assert!(super::PAGE_CSS.contains(".mdview-workspace-row"));
+    }
+
     /// `g l` is the only way to the rendered layout, and the layout is only a
     /// layout because the stylesheet knows the class the body comes wrapped in.
     #[test]

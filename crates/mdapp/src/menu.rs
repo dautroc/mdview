@@ -138,6 +138,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
 
     let (file_holder, file_menu) = submenu(mtm, "File");
     file_menu.addItem(&item(mtm, "Open…", sel!(openDocument:), "o"));
+    file_menu.addItem(&item(mtm, "Open Folder…", sel!(openFolder:), ""));
     file_menu.addItem(&item(mtm, "Reload", sel!(reloadDocument:), "r"));
     let (recent_holder, recent_menu) = submenu(mtm, "Open Recent");
     file_menu.addItem(&recent_holder);
@@ -158,6 +159,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     // lives in the page.
     let (find_holder, find_menu) = submenu(mtm, "Find");
     find_menu.addItem(&item(mtm, FIND_TITLE, sel!(findInPage:), FIND_KEY_EQUIVALENT));
+    find_menu.addItem(&item(mtm, "Find in Workspace…", sel!(showWorkspaceSearch:), ""));
     find_menu.addItem(&item(mtm, "Find Next", sel!(findNextMatch:), ""));
     find_menu.addItem(&item(mtm, "Find Previous", sel!(findPreviousMatch:), ""));
     edit_menu.addItem(&find_holder);
@@ -184,6 +186,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     // The sidebar's tabs used to be buttons in its header. The keys o and b
     // still switch tabs; these are what is left for a mouse.
+    view_menu.addItem(&item(mtm, "Files", sel!(showWorkspaceFiles:), ""));
     view_menu.addItem(&item(mtm, "Outline", sel!(showOutline:), ""));
     view_menu.addItem(&item(mtm, "Bookmarks", sel!(showBookmarks:), ""));
     view_menu.addItem(&item(mtm, "Comments", sel!(showComments:), ""));

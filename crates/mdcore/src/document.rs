@@ -1,3 +1,7 @@
+use std::fs::OpenOptions;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 /// A Markdown file loaded from disk, with everything needed to render it.
@@ -29,10 +33,25 @@ pub enum DocumentError {
 impl Document {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, DocumentError> {
         let path = path.as_ref();
-        let bytes = std::fs::read(path).map_err(|source| DocumentError::Read {
+        // Resolve an intentional symlink once, then refuse a replacement
+        // symlink at the final path component while opening. This preserves
+        // ordinary symlink use without following a workspace file swapped
+        // after it was authorized.
+        let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NOFOLLOW);
+        let mut file = options.open(&absolute).map_err(|source| DocumentError::Read {
             path: path.to_path_buf(),
             source,
         })?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| DocumentError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?;
 
         // Invalid UTF-8 is never fatal: show what we can and flag it.
         let (source, lossy) = match String::from_utf8(bytes) {
@@ -43,9 +62,8 @@ impl Document {
             ),
         };
 
-        // Canonicalize first: `Path::new("note.md").parent()` is `Some("")`,
-        // which would make relative images resolve against nothing.
-        let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        // `Path::new("note.md").parent()` is `Some("")`, which would make
+        // relative images resolve against nothing.
         let base_dir = absolute
             .parent()
             .ok_or_else(|| DocumentError::NoParent {
@@ -96,6 +114,21 @@ mod tests {
         assert!(doc.lossy, "invalid UTF-8 must set the lossy flag, not fail");
         assert!(doc.source.starts_with("# "));
         assert!(doc.source.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn an_intentional_symlink_still_loads_its_canonical_target() {
+        let dir = temp_dir();
+        let target = dir.join("target.md");
+        let link = dir.join("link.md");
+        std::fs::write(&target, "# Through a link").unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let doc = Document::load(&link).unwrap();
+
+        assert_eq!(doc.source, "# Through a link");
+        assert_eq!(doc.base_dir, std::fs::canonicalize(&dir).unwrap());
     }
 
     #[test]

@@ -740,11 +740,16 @@
 
   var sidebarTab = "outline";
   var bookmarks = [];
+  var workspaceRoot = null;
+  var workspaceFiles = [];
+  var workspacePartial = false;
+  var workspaceError = null;
   var SIDEBAR_WIDTH_MIN = 160;
   var SIDEBAR_WIDTH_MAX = 600;
   var SIDEBAR_WIDTH_DEFAULT = 260;
   var sidebarWidth = SIDEBAR_WIDTH_DEFAULT;
   var sidebarResizeState = null;
+  var readingPositionTimer = 0;
 
   function clampSidebarWidth(px) {
     return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, px));
@@ -779,7 +784,9 @@
     var title = document.getElementById("mdview-sidebar-title");
     if (title) {
       title.textContent =
-        sidebarTab === "bookmarks" ? "Bookmarks" : sidebarTab === "comments" ? "Comments" : "Outline";
+        sidebarTab === "files" ? "Files" :
+          sidebarTab === "bookmarks" ? "Bookmarks" :
+            sidebarTab === "comments" ? "Comments" : "Outline";
     }
     renderSidebarBody();
     layoutCommentRail();
@@ -952,11 +959,60 @@
     return host.innerHTML;
   }
 
-  // Task 7 replaces the outline branch; Task 8 the bookmarks branch.
+  window.mdviewSetWorkspace = function (root, files, partial, error) {
+    workspaceRoot = root || null;
+    workspaceFiles = Array.isArray(files) ? files : [];
+    workspacePartial = !!partial;
+    workspaceError = error || null;
+    if (sidebarTab === "files") renderSidebarBody();
+    if (workspacePaletteIsOpen() && workspacePaletteMode === "files") renderWorkspaceRows(workspaceFiles);
+  };
+
+  function renderWorkspaceFiles(body) {
+    if (workspaceError) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\"></p>";
+      body.firstChild.textContent = workspaceError;
+      return;
+    }
+    if (!workspaceRoot) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">Open a folder to browse its Markdown files.</p>";
+      return;
+    }
+    if (!workspaceFiles.length) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">No Markdown files.</p>";
+      return;
+    }
+    body.innerHTML = "<ul></ul>";
+    var list = body.firstChild;
+    for (var i = 0; i < workspaceFiles.length; i++) {
+      (function (entry) {
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.href = "#";
+        a.textContent = entry.relative;
+        a.title = entry.path;
+        a.addEventListener("click", function (event) {
+          event.preventDefault();
+          postToHost("openWorkspacePath:" + encodeURIComponent(entry.path));
+        });
+        li.appendChild(a);
+        list.appendChild(li);
+      })(workspaceFiles[i]);
+    }
+    if (workspacePartial) {
+      var note = document.createElement("p");
+      note.className = "mdview-sidebar-empty";
+      note.textContent = "Partial workspace — safety limits excluded some files.";
+      body.appendChild(note);
+    }
+  }
+
   function renderSidebarBody() {
     var body = document.getElementById("mdview-sidebar-body");
     if (!body) return;
-    if (sidebarTab === "outline") {
+    if (sidebarTab === "files") {
+      renderWorkspaceFiles(body);
+    } else if (sidebarTab === "outline") {
       body.innerHTML = buildOutline();
       var links = body.querySelectorAll("a[data-outline-id]");
       for (var i = 0; i < links.length; i++) {
@@ -2102,6 +2158,244 @@
         break;
       default:
         break;
+    }
+  }
+
+  // ---- Workspace files and search ------------------------------------------
+
+  var workspacePaletteMode = "files";
+  var workspaceRows = [];
+  var workspaceMatches = [];
+  var workspaceIndex = -1;
+  var workspaceSearchTimer = 0;
+  var workspaceSearchLoading = false;
+  var workspaceSearchError = null;
+
+  function workspacePaletteEl() {
+    return document.getElementById("mdview-workspace-palette");
+  }
+
+  function workspacePaletteInput() {
+    return document.getElementById("mdview-workspace-search");
+  }
+
+  function workspacePaletteIsOpen() {
+    var palette = workspacePaletteEl();
+    return !!palette && !palette.hidden;
+  }
+
+  function buildWorkspacePalette() {
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-workspace-palette";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    var panel = document.createElement("div");
+    panel.className = "mdview-palette-panel";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.id = "mdview-workspace-search";
+    input.className = "mdview-palette-search";
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    panel.appendChild(input);
+
+    var list = document.createElement("div");
+    list.id = "mdview-workspace-list";
+    list.className = "mdview-palette-list";
+    list.setAttribute("role", "listbox");
+    panel.appendChild(list);
+
+    var empty = document.createElement("p");
+    empty.id = "mdview-workspace-empty";
+    empty.className = "mdview-palette-empty";
+    panel.appendChild(empty);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", function (event) {
+      if (event.target === overlay) closeWorkspacePalette();
+    });
+    input.addEventListener("input", function () {
+      if (workspacePaletteMode === "files") {
+        filterWorkspaceRows(input.value);
+        return;
+      }
+      clearTimeout(workspaceSearchTimer);
+      // Invalidate the last host request immediately. Without this, clearing or
+      // changing the field during the debounce can let an older result repaint it.
+      postToHost("searchWorkspace:");
+      var query = input.value.trim();
+      if (!query) {
+        workspaceSearchLoading = false;
+        workspaceSearchError = null;
+        renderWorkspaceRows([]);
+        return;
+      }
+      workspaceSearchLoading = true;
+      workspaceSearchError = null;
+      updateWorkspaceEmpty();
+      workspaceSearchTimer = setTimeout(function () {
+        postToHost("searchWorkspace:" + encodeURIComponent(query));
+      }, 120);
+    });
+    return overlay;
+  }
+
+  function renderWorkspaceRows(entries) {
+    var list = document.getElementById("mdview-workspace-list");
+    if (!list) return;
+    list.textContent = "";
+    workspaceRows = [];
+    workspaceMatches = [];
+    workspaceIndex = -1;
+    for (var i = 0; i < entries.length; i++) {
+      (function (entry) {
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "mdview-palette-row mdview-workspace-row";
+        row.setAttribute("role", "option");
+        row.setAttribute("data-path", entry.path);
+        var name = document.createElement("span");
+        name.className = "mdview-palette-name";
+        name.textContent = entry.relative;
+        row.appendChild(name);
+        if (workspacePaletteMode === "search") {
+          var meta = document.createElement("span");
+          meta.className = "mdview-palette-dir";
+          meta.textContent = [entry.heading, entry.snippet].filter(Boolean).join("  ·  ");
+          row.appendChild(meta);
+        }
+        row.setAttribute("data-search", row.textContent.toLowerCase());
+        row.addEventListener("mouseenter", function () {
+          highlightWorkspace(workspaceMatches.indexOf(row));
+        });
+        row.addEventListener("click", function () { selectWorkspaceRow(row); });
+        list.appendChild(row);
+        workspaceRows.push(row);
+      })(entries[i]);
+    }
+    filterWorkspaceRows(workspacePaletteMode === "files" && workspacePaletteInput()
+      ? workspacePaletteInput().value : "");
+  }
+
+  function filterWorkspaceRows(query) {
+    var needle = (query || "").toLowerCase().trim();
+    workspaceMatches = [];
+    for (var i = 0; i < workspaceRows.length; i++) {
+      var hit = !needle || (workspaceRows[i].getAttribute("data-search") || "").indexOf(needle) >= 0;
+      workspaceRows[i].hidden = !hit;
+      if (hit) workspaceMatches.push(workspaceRows[i]);
+    }
+    if (workspaceMatches.length) highlightWorkspace(0);
+    else workspaceIndex = -1;
+    updateWorkspaceEmpty();
+  }
+
+  function updateWorkspaceEmpty() {
+    var empty = document.getElementById("mdview-workspace-empty");
+    if (!empty) return;
+    if (!workspaceRoot) empty.textContent = workspaceError || "Open a folder to use workspace navigation.";
+    else if (workspaceSearchLoading) empty.textContent = "Searching workspace…";
+    else if (workspaceSearchError) empty.textContent = workspaceSearchError;
+    else if (workspacePaletteMode === "search" && !(workspacePaletteInput() || {}).value) empty.textContent = "Type to search every Markdown file.";
+    else if (workspaceRows.length) empty.textContent = "No files match.";
+    else empty.textContent = workspacePaletteMode === "files" ? "No Markdown files." : "No workspace matches.";
+    empty.hidden = workspaceMatches.length > 0;
+  }
+
+  function highlightWorkspace(index) {
+    if (!workspaceMatches.length) return;
+    workspaceIndex = ((index % workspaceMatches.length) + workspaceMatches.length) % workspaceMatches.length;
+    for (var i = 0; i < workspaceRows.length; i++) {
+      workspaceRows[i].classList.remove("is-current");
+      workspaceRows[i].setAttribute("aria-selected", "false");
+    }
+    var row = workspaceMatches[workspaceIndex];
+    row.classList.add("is-current");
+    row.setAttribute("aria-selected", "true");
+    row.scrollIntoView({ block: "nearest" });
+  }
+
+  function selectWorkspaceRow(row) {
+    if (!row) return;
+    var path = row.getAttribute("data-path");
+    if (!path) return;
+    closeWorkspacePalette();
+    postToHost("openWorkspacePath:" + encodeURIComponent(path));
+  }
+
+  function closeWorkspacePalette() {
+    clearTimeout(workspaceSearchTimer);
+    var palette = workspacePaletteEl();
+    if (!palette) return;
+    palette.hidden = true;
+    var input = workspacePaletteInput();
+    if (input) input.blur();
+  }
+
+  function openWorkspacePalette(mode) {
+    exitVisual();
+    closeThemePalette(false);
+    closeRecentPalette();
+    closeHistoryPalette();
+    closeCommandPalette();
+    workspacePaletteMode = mode;
+    var palette = workspacePaletteEl() || buildWorkspacePalette();
+    palette.hidden = false;
+    palette.setAttribute("aria-label", mode === "files" ? "Workspace files" : "Search workspace");
+    var input = workspacePaletteInput();
+    input.value = "";
+    input.placeholder = mode === "files" ? "Open workspace file" : "Search workspace";
+    input.setAttribute("aria-label", input.placeholder);
+    workspaceSearchLoading = false;
+    workspaceSearchError = null;
+    renderWorkspaceRows(mode === "files" ? workspaceFiles : []);
+    input.focus();
+  }
+
+  window.mdviewOpenWorkspaceFiles = function () {
+    postToHost("searchWorkspace:");
+    openWorkspacePalette("files");
+  };
+  window.mdviewOpenWorkspaceSearch = function () { openWorkspacePalette("search"); };
+  window.mdviewSetWorkspaceSearch = function (entries, error) {
+    workspaceSearchLoading = false;
+    workspaceSearchError = error || null;
+    if (workspacePaletteIsOpen() && workspacePaletteMode === "search") {
+      renderWorkspaceRows(Array.isArray(entries) ? entries : []);
+    }
+  };
+
+  window.mdviewRevealWorkspaceHit = function (heading, query) {
+    var content = document.getElementById("mdview-content");
+    if (!content) return;
+    if (heading) {
+      var headings = documentHeadings(content);
+      for (var i = 0; i < headings.length; i++) {
+        if (headings[i].textContent.trim() === heading) {
+          headings[i].scrollIntoView({ block: "start" });
+          break;
+        }
+      }
+    }
+    if (query && typeof window.find === "function") {
+      requestAnimationFrame(function () {
+        window.find(query, false, false, true, false, false, false);
+      });
+    }
+  };
+
+  function onWorkspacePaletteKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case "Escape": event.preventDefault(); closeWorkspacePalette(); break;
+      case "Enter": event.preventDefault(); selectWorkspaceRow(workspaceMatches[workspaceIndex]); break;
+      case "ArrowDown": event.preventDefault(); highlightWorkspace(workspaceIndex + 1); break;
+      case "ArrowUp": event.preventDefault(); highlightWorkspace(workspaceIndex - 1); break;
+      default: break;
     }
   }
 
@@ -4401,7 +4695,7 @@
   // than toggling it, unlike the o and b keys: picking "Outline" from a menu and
   // having the panel shut is not what anyone means by it.
   window.mdviewShowSidebarTab = function (tab) {
-    var known = tab === "bookmarks" || tab === "comments" ? tab : "outline";
+    var known = tab === "bookmarks" || tab === "comments" || tab === "files" ? tab : "outline";
     setSidebar(true, known);
   };
 
@@ -4536,6 +4830,7 @@
       title: "Finding",
       items: [
         { vim: true, keys: ["/"], hint: "/", label: "Find in the document", run: function () { window.mdviewOpenFind(); } },
+        { keys: ["g /"], hint: "g  /", label: "Search the workspace", run: function () { openWorkspacePalette("search"); } },
         { keys: [], hint: "enter", label: "Search, and back to the document", run: null },
         { vim: true, keys: ["n", "Enter"], hint: "n  enter", label: "Next match", run: function () { stepFindKey(1); } },
         { vim: true, keys: ["N"], hint: "N  ⇧enter", label: "Previous match", run: function () { stepFindKey(-1); } },
@@ -4558,6 +4853,7 @@
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
         { keys: ["g r"], hint: "g  r", label: "Recent files", run: toggleRecentPalette },
+        { keys: ["g f"], hint: "g  f", label: "Workspace files", run: function () { window.mdviewOpenWorkspaceFiles(); } },
       ],
     },
     {
@@ -4817,6 +5113,11 @@
       return;
     }
 
+    if (workspacePaletteIsOpen()) {
+      onWorkspacePaletteKey(event);
+      return;
+    }
+
     if (commandPaletteIsOpen()) {
       onCommandPaletteKey(event);
       return;
@@ -4939,10 +5240,21 @@
     else if (dark.addListener) dark.addListener(scheduleMinimapPaint);
   }
 
+  function sendReadingPosition() {
+    postToHost("setReadingPosition:" + Math.max(0, Math.round(window.scrollY)));
+  }
+
+  function checkpointReadingPosition() {
+    clearTimeout(readingPositionTimer);
+    readingPositionTimer = setTimeout(sendReadingPosition, 250);
+  }
+
   function attachSidebarListeners() {
     // Before the resizer check: the outline follows the reader whether or not
     // the panel can be dragged.
     window.addEventListener("scroll", schedulePositionSync, { passive: true });
+    window.addEventListener("scroll", checkpointReadingPosition, { passive: true });
+    window.addEventListener("pagehide", sendReadingPosition);
     var resizerEl = document.getElementById("mdview-sidebar-resizer");
     if (!resizerEl) return;
     resizerEl.addEventListener("mousedown", onSidebarResizerPointerDown);

@@ -3,18 +3,19 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 
 use mdcore::Highlighter;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu,
-    NSMenuItem, NSMenuItemValidation, NSWindowOrderingMode,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuItem,
+    NSMenuItemValidation, NSWindowOrderingMode,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString,
-    NSTimer, NSURL,
+    MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer,
+    NSURL,
 };
 
 use crate::window::DocumentWindow;
@@ -23,6 +24,41 @@ pub(crate) struct HistoryResponse {
     tab_id: u64,
     generation: u64,
     result: Result<Vec<mdcore::HistoryEntry>, String>,
+}
+
+pub(crate) enum WorkspaceResponse {
+    Scan {
+        source_id: Option<u64>,
+        generation: u64,
+        open_first: bool,
+        result: Result<mdcore::WorkspaceSnapshot, String>,
+    },
+    Indexed {
+        generation: u64,
+        result: Result<mdcore::WorkspaceIndex, String>,
+    },
+    Incremental {
+        generation: u64,
+        result: Result<mdcore::WorkspaceIndex, String>,
+    },
+    Search {
+        tab_id: u64,
+        workspace_generation: u64,
+        request_generation: u64,
+        query: String,
+        result: Vec<mdcore::SearchHit>,
+    },
+}
+
+pub(crate) struct WorkspaceData {
+    snapshot: mdcore::WorkspaceSnapshot,
+    index: Option<Arc<mdcore::WorkspaceIndex>>,
+}
+
+pub(crate) struct WorkspaceRestore {
+    paths: Vec<PathBuf>,
+    selected: Option<PathBuf>,
+    positions: HashMap<PathBuf, u32>,
 }
 
 /// Everything the delegate owns. Held in the delegate's ivars.
@@ -42,6 +78,21 @@ pub struct AppState {
     pub next_history_generation: Cell<u64>,
     pub history_requests: RefCell<HashMap<u64, u64>>,
     pub history_cache: RefCell<HashMap<u64, Vec<mdcore::HistoryEntry>>>,
+    pub workspace_sender: Sender<WorkspaceResponse>,
+    pub workspace_receiver: RefCell<Receiver<WorkspaceResponse>>,
+    pub next_workspace_generation: Cell<u64>,
+    pub workspace_generation: Cell<u64>,
+    pub workspace: RefCell<Option<WorkspaceData>>,
+    pub next_workspace_search_generation: Cell<u64>,
+    pub workspace_search_requests: RefCell<HashMap<u64, u64>>,
+    pub workspace_search_cache: RefCell<HashMap<u64, (String, Vec<mdcore::SearchHit>)>>,
+    pub workspace_watcher: RefCell<Option<crate::watcher::WorkspaceWatcher>>,
+    pub workspace_watcher_root: RefCell<Option<PathBuf>>,
+    pub workspace_watch_retry_at: Cell<Option<std::time::Instant>>,
+    pub pending_workspace_changes: RefCell<Vec<PathBuf>>,
+    pub pending_workspace_restore: RefCell<Option<WorkspaceRestore>>,
+    pub workspace_positions: RefCell<HashMap<PathBuf, u32>>,
+    pub last_workspace_session: RefCell<Vec<String>>,
 }
 
 define_class!(
@@ -61,6 +112,9 @@ define_class!(
             // still be able to change its theme. Stamping here rather than at
             // click time is also what keeps the checkmark honest when the
             // change came from the page's own palette instead of this menu.
+            if item.action() == Some(objc2::sel!(openFolder:)) {
+                return true.into();
+            }
             if item.action() == Some(objc2::sel!(selectTheme:)) {
                 let active = crate::state::resolve_theme(
                     crate::defaults::get_string(crate::defaults::THEME_KEY).as_deref(),
@@ -73,6 +127,11 @@ define_class!(
             let Some(window) = self.frontmost_window() else {
                 return false.into();
             };
+            if item.action() == Some(objc2::sel!(showWorkspaceFiles:))
+                || item.action() == Some(objc2::sel!(showWorkspaceSearch:))
+            {
+                return self.ivars().workspace.borrow().is_some().into();
+            }
             let valid = match item.action() {
                 Some(action)
                     if action == objc2::sel!(selectNextDocumentTab:)
@@ -107,10 +166,13 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let paths = self.ivars().startup_paths.take();
-            // A multi-file launch is one ordered request: every document gets
-            // a tab, while the first path remains selected just as it was when
-            // only one document could be displayed.
-            self.open_documents(&paths);
+            // Explicit files win over a restored workspace. A launch with no
+            // explicit request restores the last versioned local session.
+            if paths.is_empty() {
+                self.restore_workspace_session();
+            } else {
+                self.open_documents(&paths);
+            }
 
             // Refill Open Recent after the menu system is ready.
             self.rebuild_recent_menu();
@@ -162,7 +224,9 @@ define_class!(
             // screen and nothing pending. Otherwise a CLI launch would get an
             // Open panel on top of the document it asked for.
             let state = self.ivars();
-            state.windows.borrow().is_empty() && state.startup_paths.borrow().is_empty()
+            state.windows.borrow().is_empty()
+                && state.startup_paths.borrow().is_empty()
+                && state.workspace_generation.get() == 0
         }
 
         #[unsafe(method(applicationOpenUntitledFile:))]
@@ -197,6 +261,54 @@ define_class!(
                 window.drain_pending_banners();
             }
             self.drain_history_results();
+            self.drain_workspace_results();
+            let workspace_changes = state
+                .workspace_watcher
+                .borrow_mut()
+                .as_mut()
+                .map(|watcher| watcher.poll(now))
+                .unwrap_or_default();
+            if state.workspace_watcher.borrow().is_none()
+                && state
+                    .workspace_watch_retry_at
+                    .get()
+                    .map_or(true, |retry_at| now >= retry_at)
+            {
+                let root = state
+                    .workspace
+                    .borrow()
+                    .as_ref()
+                    .map(|workspace| workspace.snapshot.root.path().to_path_buf());
+                if let Some(root) = root {
+                    let watcher = crate::watcher::WorkspaceWatcher::start(&root).ok();
+                    if watcher.is_some() {
+                        *state.workspace_watcher_root.borrow_mut() = Some(root);
+                        state.workspace_watch_retry_at.set(None);
+                    } else {
+                        *state.workspace_watcher_root.borrow_mut() = None;
+                        state.workspace_watch_retry_at.set(Some(
+                            now + std::time::Duration::from_secs(2),
+                        ));
+                    }
+                    *state.workspace_watcher.borrow_mut() = watcher;
+                }
+            }
+            if !workspace_changes.is_empty() {
+                let index_ready = state
+                    .workspace
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|workspace| workspace.index.is_some());
+                if index_ready {
+                    self.reconcile_workspace(workspace_changes);
+                } else {
+                    state
+                        .pending_workspace_changes
+                        .borrow_mut()
+                        .extend(workspace_changes);
+                }
+            }
+            self.persist_workspace_session();
 
             // Collect first, then update: live_update can trigger reentrancy
             // into `windows`, and holding the borrow across it would panic.
@@ -244,6 +356,11 @@ define_class!(
         #[unsafe(method(openDocument:))]
         fn open_document_action(&self, _sender: Option<&NSObject>) {
             self.present_open_panel();
+        }
+
+        #[unsafe(method(openFolder:))]
+        fn open_folder_action(&self, _sender: Option<&NSObject>) {
+            self.present_open_folder_panel();
         }
 
         #[unsafe(method(selectNextDocumentTab:))]
@@ -315,6 +432,16 @@ define_class!(
         #[unsafe(method(showComments:))]
         fn show_comments_action(&self, _sender: Option<&NSObject>) {
             self.show_sidebar_tab("comments");
+        }
+
+        #[unsafe(method(showWorkspaceFiles:))]
+        fn show_workspace_files_action(&self, _sender: Option<&NSObject>) {
+            self.show_sidebar_tab("files");
+        }
+
+        #[unsafe(method(showWorkspaceSearch:))]
+        fn show_workspace_search_action(&self, _sender: Option<&NSObject>) {
+            self.run_page_script(crate::state::open_workspace_search_script());
         }
 
         #[unsafe(method(copyReviewPrompt:))]
@@ -450,7 +577,9 @@ const ZOOM_STEP: f64 = 1.1;
 
 impl AppDelegate {
     fn toggle_full_width_native(&self) -> bool {
-        let enabled = crate::state::next_full_width(crate::defaults::get_bool_opt(crate::defaults::FULL_WIDTH_KEY));
+        let enabled = crate::state::next_full_width(crate::defaults::get_bool_opt(
+            crate::defaults::FULL_WIDTH_KEY,
+        ));
         crate::defaults::set_bool(crate::defaults::FULL_WIDTH_KEY, enabled);
         for window in self.ivars().windows.borrow().iter() {
             window.set_full_width(enabled);
@@ -502,15 +631,17 @@ impl AppDelegate {
     /// sits anywhere else would show them and then send the user's typing (or
     /// their esc) somewhere they cannot see.
     fn run_page_script(&self, script: &str) {
-        let Some(window) = self.frontmost_window() else { return };
-        window
-            .window
-            .makeFirstResponder(Some(&window.webview));
+        let Some(window) = self.frontmost_window() else {
+            return;
+        };
+        window.window.makeFirstResponder(Some(&window.webview));
         window.eval_script(script);
     }
 
     fn set_diff_layout(&self, layout: mdcore::DiffLayout, sender: Option<&NSMenuItem>) {
-        let Some(window) = self.frontmost_window() else { return };
+        let Some(window) = self.frontmost_window() else {
+            return;
+        };
         window.set_diff_layout(layout, &self.ivars().highlighter);
         if let Some(sender) = sender {
             crate::menu::set_diff_layout_states(sender, layout);
@@ -522,6 +653,7 @@ impl AppDelegate {
         recent_menu: Retained<NSMenu>,
     ) -> Retained<Self> {
         let (history_sender, history_receiver) = mpsc::channel();
+        let (workspace_sender, workspace_receiver) = mpsc::channel();
         let this = Self::alloc(mtm).set_ivars(AppState {
             windows: RefCell::new(Vec::new()),
             active_tab: Rc::new(Cell::new(None)),
@@ -534,12 +666,29 @@ impl AppDelegate {
             next_history_generation: Cell::new(1),
             history_requests: RefCell::new(HashMap::new()),
             history_cache: RefCell::new(HashMap::new()),
+            workspace_sender,
+            workspace_receiver: RefCell::new(workspace_receiver),
+            next_workspace_generation: Cell::new(1),
+            workspace_generation: Cell::new(0),
+            workspace: RefCell::new(None),
+            next_workspace_search_generation: Cell::new(1),
+            workspace_search_requests: RefCell::new(HashMap::new()),
+            workspace_search_cache: RefCell::new(HashMap::new()),
+            workspace_watcher: RefCell::new(None),
+            workspace_watcher_root: RefCell::new(None),
+            workspace_watch_retry_at: Cell::new(None),
+            pending_workspace_changes: RefCell::new(Vec::new()),
+            pending_workspace_restore: RefCell::new(None),
+            workspace_positions: RefCell::new(HashMap::new()),
+            last_workspace_session: RefCell::new(Vec::new()),
         });
         unsafe { objc2::msg_send![super(this), init] }
     }
 
     fn request_history(&self, source_id: Option<u64>) {
-        let Some(window) = self.message_window(source_id) else { return };
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
         if !window.can_show_diff() {
             window.show_note("Document history needs a tracked file with a commit.");
             return;
@@ -551,14 +700,21 @@ impl AppDelegate {
                 .checked_add(1)
                 .expect("history request generation overflow"),
         );
-        state.history_requests.borrow_mut().insert(window.id, generation);
+        state
+            .history_requests
+            .borrow_mut()
+            .insert(window.id, generation);
         state.history_cache.borrow_mut().remove(&window.id);
         let sender = state.history_sender.clone();
         let tab_id = window.id;
         let path = window.path.clone();
         std::thread::spawn(move || {
             let result = mdcore::diff::history_for_path(&path, 100).map_err(|err| err.to_string());
-            let _ = sender.send(HistoryResponse { tab_id, generation, result });
+            let _ = sender.send(HistoryResponse {
+                tab_id,
+                generation,
+                result,
+            });
         });
     }
 
@@ -577,11 +733,16 @@ impl AppDelegate {
             if expected != Some(response.generation) {
                 continue;
             }
-            let Some(window) = self.window_by_id(response.tab_id) else { continue };
+            let Some(window) = self.window_by_id(response.tab_id) else {
+                continue;
+            };
             let script = match response.result {
                 Ok(entries) => {
                     let script = crate::state::history_script(&entries, None);
-                    self.ivars().history_cache.borrow_mut().insert(response.tab_id, entries);
+                    self.ivars()
+                        .history_cache
+                        .borrow_mut()
+                        .insert(response.tab_id, entries);
                     script
                 }
                 Err(error) => crate::state::history_script(&[], Some(&error)),
@@ -591,7 +752,9 @@ impl AppDelegate {
     }
 
     fn select_history(&self, source_id: Option<u64>, revision: &str) {
-        let Some(window) = self.message_window(source_id) else { return };
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
         let entry = self
             .ivars()
             .history_cache
@@ -606,6 +769,599 @@ impl AppDelegate {
         match entry {
             Some(entry) => window.show_history(entry, &self.ivars().highlighter),
             None => window.show_note("That history entry is no longer available."),
+        }
+    }
+
+    fn restore_workspace_session(&self) {
+        if crate::defaults::get_int_opt(crate::defaults::WORKSPACE_SESSION_VERSION_KEY) != Some(1) {
+            return;
+        }
+        let Some(root) = crate::defaults::get_string(crate::defaults::WORKSPACE_ROOT_KEY) else {
+            return;
+        };
+        let paths: Vec<PathBuf> = crate::defaults::get_strings(crate::defaults::WORKSPACE_TABS_KEY)
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        let selected = crate::defaults::get_string(crate::defaults::WORKSPACE_SELECTED_KEY)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from);
+        let scrolls = crate::defaults::get_strings(crate::defaults::WORKSPACE_SCROLLS_KEY);
+        let positions = paths
+            .iter()
+            .cloned()
+            .zip(
+                scrolls
+                    .iter()
+                    .map(|scroll| scroll.parse::<u32>().unwrap_or(0)),
+            )
+            .collect::<HashMap<_, _>>();
+        *self.ivars().workspace_positions.borrow_mut() = positions.clone();
+        *self.ivars().pending_workspace_restore.borrow_mut() = Some(WorkspaceRestore {
+            paths,
+            selected,
+            positions,
+        });
+        *self.ivars().workspace_watcher.borrow_mut() = None;
+        *self.ivars().workspace_watcher_root.borrow_mut() = None;
+        self.start_workspace_scan(PathBuf::from(root), None, false);
+    }
+
+    fn workspace_paths(&self, requested: &[PathBuf]) -> Vec<PathBuf> {
+        let workspace = self.ivars().workspace.borrow();
+        let Some(workspace) = workspace.as_ref() else {
+            return Vec::new();
+        };
+        requested
+            .iter()
+            .filter_map(|requested| {
+                workspace
+                    .snapshot
+                    .files
+                    .iter()
+                    .find(|file| &file.path == requested)
+                    .map(|file| file.path.clone())
+            })
+            .collect()
+    }
+
+    fn persist_workspace_session(&self) {
+        let workspace = self.ivars().workspace.borrow();
+        let Some(workspace) = workspace.as_ref() else {
+            return;
+        };
+        let root = workspace.snapshot.root.path();
+        let windows = self.ivars().windows.borrow();
+        let workspace_windows = windows
+            .iter()
+            .filter(|window| {
+                !window.is_closed()
+                    && workspace
+                        .snapshot
+                        .files
+                        .iter()
+                        .any(|file| file.path == window.path)
+            })
+            .collect::<Vec<_>>();
+        let tabs = workspace_windows
+            .iter()
+            .map(|window| window.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let positions = self.ivars().workspace_positions.borrow();
+        let scrolls = workspace_windows
+            .iter()
+            .map(|window| {
+                positions
+                    .get(&window.path)
+                    .copied()
+                    .unwrap_or(0)
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let selected = self
+            .ivars()
+            .active_tab
+            .get()
+            .and_then(|id| windows.iter().find(|window| window.id == id))
+            .filter(|window| {
+                workspace
+                    .snapshot
+                    .files
+                    .iter()
+                    .any(|file| file.path == window.path)
+            })
+            .map(|window| window.path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut signature = vec![root.to_string_lossy().into_owned(), selected.clone()];
+        signature.extend(tabs.iter().cloned());
+        signature.extend(scrolls.iter().cloned());
+        if *self.ivars().last_workspace_session.borrow() == signature {
+            return;
+        }
+        *self.ivars().last_workspace_session.borrow_mut() = signature;
+        crate::defaults::set_string(crate::defaults::WORKSPACE_ROOT_KEY, &root.to_string_lossy());
+        crate::defaults::set_strings(crate::defaults::WORKSPACE_TABS_KEY, &tabs);
+        crate::defaults::set_strings(crate::defaults::WORKSPACE_SCROLLS_KEY, &scrolls);
+        crate::defaults::set_string(crate::defaults::WORKSPACE_SELECTED_KEY, &selected);
+        // Written last: version 1 means all fields above form one complete
+        // checkpoint, not a half-written mixture from an interrupted update.
+        crate::defaults::set_int(crate::defaults::WORKSPACE_SESSION_VERSION_KEY, 1);
+    }
+
+    fn open_workspace(&self, root: PathBuf, source_id: Option<u64>) {
+        *self.ivars().pending_workspace_restore.borrow_mut() = None;
+        *self.ivars().workspace_watcher.borrow_mut() = None;
+        *self.ivars().workspace_watcher_root.borrow_mut() = None;
+        self.ivars().workspace_watch_retry_at.set(None);
+        self.ivars().pending_workspace_changes.borrow_mut().clear();
+        self.start_workspace_scan(root, source_id, true);
+    }
+
+    fn start_workspace_scan(&self, root: PathBuf, source_id: Option<u64>, open_first: bool) {
+        let state = self.ivars();
+        let generation = state.next_workspace_generation.get();
+        state.next_workspace_generation.set(
+            generation
+                .checked_add(1)
+                .expect("workspace generation overflow"),
+        );
+        state.workspace_generation.set(generation);
+        state.workspace_search_requests.borrow_mut().clear();
+        state.workspace_search_cache.borrow_mut().clear();
+        self.push_workspace_to_pages();
+
+        let sender = state.workspace_sender.clone();
+        std::thread::spawn(move || {
+            let result = mdcore::WorkspaceSnapshot::discover(
+                &root,
+                generation,
+                mdcore::WorkspaceLimits::default(),
+            )
+            .map_err(|error| error.to_string());
+            let _ = sender.send(WorkspaceResponse::Scan {
+                source_id,
+                generation,
+                open_first,
+                result: result.clone(),
+            });
+            if let Ok(snapshot) = result {
+                let indexed = mdcore::WorkspaceIndex::from_snapshot(
+                    &snapshot,
+                    mdcore::WorkspaceLimits::default(),
+                )
+                .map_err(|error| error.to_string());
+                let _ = sender.send(WorkspaceResponse::Indexed {
+                    generation,
+                    result: indexed,
+                });
+            }
+        });
+    }
+
+    fn search_workspace(&self, source_id: Option<u64>, raw_query: &str) {
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
+        let Some(query) = mdcore::SearchQuery::new(raw_query) else {
+            self.ivars()
+                .workspace_search_requests
+                .borrow_mut()
+                .remove(&window.id);
+            self.ivars()
+                .workspace_search_cache
+                .borrow_mut()
+                .remove(&window.id);
+            window
+                .pending_scripts
+                .borrow_mut()
+                .push(crate::state::workspace_search_script(&[], None));
+            return;
+        };
+        let state = self.ivars();
+        let index = match state.workspace.borrow().as_ref() {
+            Some(workspace) => match workspace.index.clone() {
+                Some(index) => index,
+                None => {
+                    window.pending_scripts.borrow_mut().push(
+                        crate::state::workspace_search_script(
+                            &[],
+                            Some("The workspace is still being indexed."),
+                        ),
+                    );
+                    return;
+                }
+            },
+            None => {
+                window
+                    .pending_scripts
+                    .borrow_mut()
+                    .push(crate::state::workspace_search_script(
+                        &[],
+                        Some("Open a folder to search it."),
+                    ));
+                return;
+            }
+        };
+        let request_generation = state.next_workspace_search_generation.get();
+        state.next_workspace_search_generation.set(
+            request_generation
+                .checked_add(1)
+                .expect("workspace search generation overflow"),
+        );
+        state
+            .workspace_search_requests
+            .borrow_mut()
+            .insert(window.id, request_generation);
+        let workspace_generation = state.workspace_generation.get();
+        let sender = state.workspace_sender.clone();
+        let tab_id = window.id;
+        let query_text = query.as_str().to_string();
+        std::thread::spawn(move || {
+            let result = index.search(&query);
+            let _ = sender.send(WorkspaceResponse::Search {
+                tab_id,
+                workspace_generation,
+                request_generation,
+                query: query_text,
+                result,
+            });
+        });
+    }
+
+    fn open_workspace_path(&self, source_id: Option<u64>, raw_path: &str) {
+        let requested = PathBuf::from(raw_path);
+        let current = std::fs::canonicalize(&requested).ok();
+        let path = self
+            .ivars()
+            .workspace
+            .borrow()
+            .as_ref()
+            .and_then(|workspace| {
+                workspace
+                    .snapshot
+                    .files
+                    .iter()
+                    .find(|file| {
+                        file.path == requested
+                            && current.as_ref() == Some(&file.path)
+                            && std::fs::symlink_metadata(&file.path)
+                                .map(|metadata| !metadata.file_type().is_symlink())
+                                .unwrap_or(false)
+                    })
+                    .map(|file| file.path.clone())
+            });
+        match path {
+            Some(path) => {
+                let reveal = source_id.and_then(|tab_id| {
+                    self.ivars()
+                        .workspace_search_cache
+                        .borrow()
+                        .get(&tab_id)
+                        .and_then(|(query, hits)| {
+                            hits.iter()
+                                .find(|hit| hit.path == path)
+                                .map(|hit| (query.clone(), hit.heading.clone()))
+                        })
+                });
+                self.open_documents_from(&[path.clone()], source_id);
+                if let Some((query, heading)) = reveal {
+                    if let Some(window) = self
+                        .ivars()
+                        .windows
+                        .borrow()
+                        .iter()
+                        .find(|window| window.path == path)
+                        .cloned()
+                    {
+                        window.pending_scripts.borrow_mut().push(
+                            crate::state::workspace_reveal_script(heading.as_deref(), &query),
+                        );
+                    }
+                }
+            }
+            None => {
+                if let Some(window) = self.message_window(source_id) {
+                    window.show_note("That file is no longer in the workspace.");
+                }
+            }
+        }
+    }
+
+    fn reconcile_workspace(&self, paths: Vec<PathBuf>) {
+        let state = self.ivars();
+        let (root, mut index) = match state.workspace.borrow().as_ref() {
+            Some(workspace) => match workspace.index.as_ref() {
+                Some(index) => (
+                    workspace.snapshot.root.path().to_path_buf(),
+                    (**index).clone(),
+                ),
+                None => return,
+            },
+            None => return,
+        };
+        let generation = state.next_workspace_generation.get();
+        state.next_workspace_generation.set(
+            generation
+                .checked_add(1)
+                .expect("workspace generation overflow"),
+        );
+        state.workspace_generation.set(generation);
+        let sender = state.workspace_sender.clone();
+        std::thread::spawn(move || {
+            let incremental = paths
+                .iter()
+                .try_for_each(|path| {
+                    if path.is_file() {
+                        index.upsert(path)
+                    } else {
+                        index.remove(path).map(|_| ())
+                    }
+                })
+                .map(|_| index)
+                .map_err(|error| error.to_string());
+            let _ = sender.send(WorkspaceResponse::Incremental {
+                generation,
+                result: incremental,
+            });
+
+            // Watchers can coalesce or omit individual events. The incremental
+            // result arrives first; this bounded full scan is the correctness
+            // backstop that makes the final tree converge.
+            let scanned = mdcore::WorkspaceSnapshot::discover(
+                &root,
+                generation,
+                mdcore::WorkspaceLimits::default(),
+            )
+            .map_err(|error| error.to_string());
+            let _ = sender.send(WorkspaceResponse::Scan {
+                source_id: None,
+                generation,
+                open_first: false,
+                result: scanned.clone(),
+            });
+            if let Ok(snapshot) = scanned {
+                let indexed = mdcore::WorkspaceIndex::from_snapshot(
+                    &snapshot,
+                    mdcore::WorkspaceLimits::default(),
+                )
+                .map_err(|error| error.to_string());
+                let _ = sender.send(WorkspaceResponse::Indexed {
+                    generation,
+                    result: indexed,
+                });
+            }
+        });
+    }
+
+    fn drain_workspace_results(&self) {
+        loop {
+            let response = match self.ivars().workspace_receiver.borrow().try_recv() {
+                Ok(response) => response,
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
+            };
+            match response {
+                WorkspaceResponse::Scan {
+                    source_id,
+                    generation,
+                    open_first,
+                    result,
+                } => {
+                    if self.ivars().workspace_generation.get() != generation {
+                        continue;
+                    }
+                    match result {
+                        Ok(snapshot) => {
+                            let first = snapshot.files.first().map(|file| file.path.clone());
+                            let root = snapshot.root.path().to_path_buf();
+                            *self.ivars().workspace.borrow_mut() = Some(WorkspaceData {
+                                snapshot,
+                                index: None,
+                            });
+                            let watcher_matches = self
+                                .ivars()
+                                .workspace_watcher_root
+                                .borrow()
+                                .as_ref()
+                                == Some(&root);
+                            if !watcher_matches {
+                                let watcher = crate::watcher::WorkspaceWatcher::start(&root).ok();
+                                if watcher.is_some() {
+                                    *self.ivars().workspace_watcher_root.borrow_mut() =
+                                        Some(root.clone());
+                                } else {
+                                    *self.ivars().workspace_watcher_root.borrow_mut() = None;
+                                }
+                                *self.ivars().workspace_watcher.borrow_mut() = watcher;
+                            }
+                            self.push_workspace_to_pages();
+
+                            if let Some(restore) =
+                                self.ivars().pending_workspace_restore.borrow_mut().take()
+                            {
+                                let mut valid = self.workspace_paths(&restore.paths);
+                                if valid.is_empty() {
+                                    if let Some(path) = first.clone() {
+                                        valid.push(path);
+                                    }
+                                }
+                                self.open_documents_from(&valid, None);
+                                for path in &valid {
+                                    if let Some(position) = restore.positions.get(path) {
+                                        if let Some(window) = self
+                                            .ivars()
+                                            .windows
+                                            .borrow()
+                                            .iter()
+                                            .find(|window| &window.path == path)
+                                            .cloned()
+                                        {
+                                            window
+                                                .pending_scripts
+                                                .borrow_mut()
+                                                .push(format!("window.scrollTo(0, {position});"));
+                                        }
+                                    }
+                                }
+                                if let Some(selected) = restore.selected {
+                                    if let Some(window) = self
+                                        .ivars()
+                                        .windows
+                                        .borrow()
+                                        .iter()
+                                        .find(|window| window.path == selected)
+                                        .cloned()
+                                    {
+                                        self.ivars().active_tab.set(Some(window.id));
+                                        window.window.makeKeyAndOrderFront(None);
+                                    }
+                                }
+                            } else if open_first {
+                                if let Some(path) = first {
+                                    self.open_documents_from(&[path], source_id);
+                                } else if let Some(window) = self.message_window(source_id) {
+                                    window.show_note("This folder has no Markdown files.");
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            self.ivars().pending_workspace_restore.borrow_mut().take();
+                            if let Some(window) = self.message_window(source_id) {
+                                window.show_note(&error);
+                            }
+                            if source_id.is_none() && self.ivars().workspace.borrow().is_none() {
+                                self.ivars().workspace_generation.set(0);
+                                crate::defaults::set_int(
+                                    crate::defaults::WORKSPACE_SESSION_VERSION_KEY,
+                                    0,
+                                );
+                                self.present_open_panel();
+                            } else if let Some(root) = self
+                                .ivars()
+                                .workspace
+                                .borrow()
+                                .as_ref()
+                                .map(|workspace| workspace.snapshot.root.path().to_path_buf())
+                            {
+                                let watcher = crate::watcher::WorkspaceWatcher::start(&root).ok();
+                                *self.ivars().workspace_watcher_root.borrow_mut() =
+                                    watcher.as_ref().map(|_| root);
+                                *self.ivars().workspace_watcher.borrow_mut() = watcher;
+                            }
+                        }
+                    }
+                }
+                WorkspaceResponse::Indexed { generation, result } => {
+                    if self.ivars().workspace_generation.get() != generation {
+                        continue;
+                    }
+                    match result {
+                        Ok(index) => {
+                            if let Some(workspace) = self.ivars().workspace.borrow_mut().as_mut() {
+                                workspace.snapshot.files = index.files().cloned().collect();
+                                workspace.snapshot.indexed_bytes = workspace
+                                    .snapshot
+                                    .files
+                                    .iter()
+                                    .map(|file| file.size)
+                                    .sum();
+                                workspace.index = Some(Arc::new(index));
+                            }
+                            self.push_workspace_to_pages();
+                            let pending = std::mem::take(
+                                &mut *self.ivars().pending_workspace_changes.borrow_mut(),
+                            );
+                            if !pending.is_empty() {
+                                self.reconcile_workspace(pending);
+                            }
+                        }
+                        Err(error) => {
+                            let pending = std::mem::take(
+                                &mut *self.ivars().pending_workspace_changes.borrow_mut(),
+                            );
+                            if !pending.is_empty() {
+                                if let Some(root) = self
+                                    .ivars()
+                                    .workspace
+                                    .borrow()
+                                    .as_ref()
+                                    .map(|workspace| workspace.snapshot.root.path().to_path_buf())
+                                {
+                                    self.start_workspace_scan(root, None, false);
+                                }
+                            } else if let Some(window) = self.frontmost_window() {
+                                window.show_note(&error);
+                            }
+                        }
+                    }
+                }
+                WorkspaceResponse::Incremental { generation, result } => {
+                    if self.ivars().workspace_generation.get() != generation {
+                        continue;
+                    }
+                    match result {
+                        Ok(index) => {
+                            if let Some(workspace) = self.ivars().workspace.borrow_mut().as_mut() {
+                                workspace.snapshot.files = index.files().cloned().collect();
+                                workspace.snapshot.indexed_bytes =
+                                    workspace.snapshot.files.iter().map(|file| file.size).sum();
+                                workspace.index = Some(Arc::new(index));
+                            }
+                            self.push_workspace_to_pages();
+                        }
+                        Err(_) => {
+                            let root = self
+                                .ivars()
+                                .workspace
+                                .borrow()
+                                .as_ref()
+                                .map(|workspace| workspace.snapshot.root.path().to_path_buf());
+                            if let Some(root) = root {
+                                self.start_workspace_scan(root, None, false);
+                            }
+                        }
+                    }
+                }
+                WorkspaceResponse::Search {
+                    tab_id,
+                    workspace_generation,
+                    request_generation,
+                    query,
+                    result,
+                } => {
+                    if self.ivars().workspace_generation.get() != workspace_generation
+                        || self
+                            .ivars()
+                            .workspace_search_requests
+                            .borrow()
+                            .get(&tab_id)
+                            .copied()
+                            != Some(request_generation)
+                    {
+                        continue;
+                    }
+                    if let Some(window) = self.window_by_id(tab_id) {
+                        self.ivars()
+                            .workspace_search_cache
+                            .borrow_mut()
+                            .insert(tab_id, (query, result.clone()));
+                        window
+                            .pending_scripts
+                            .borrow_mut()
+                            .push(crate::state::workspace_search_script(&result, None));
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_workspace_to_pages(&self) {
+        let workspace = self.ivars().workspace.borrow();
+        let script = crate::state::workspace_files_script(
+            workspace.as_ref().map(|workspace| &workspace.snapshot),
+            None,
+        );
+        for window in self.ivars().windows.borrow().iter() {
+            window.pending_scripts.borrow_mut().push(script.clone());
         }
     }
 
@@ -739,9 +1495,7 @@ impl AppDelegate {
                     Rc::new(move |request| match request {
                         NavigationRequest::OpenExternal(url) => {
                             let workspace = NSWorkspace::sharedWorkspace();
-                            if let Some(url) =
-                                NSURL::URLWithString(&NSString::from_str(&url))
-                            {
+                            if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url)) {
                                 workspace.openURL(&url);
                             }
                         }
@@ -753,9 +1507,8 @@ impl AppDelegate {
                 let msg_delegate: Retained<AppDelegate> =
                     unsafe { Retained::retain(self as *const _ as *mut _) }
                         .expect("delegate is alive while its windows are");
-                let on_message: Rc<dyn Fn(crate::state::Message)> = Rc::new(move |message| {
-                    msg_delegate.handle_message_from(Some(id), message)
-                });
+                let on_message: Rc<dyn Fn(crate::state::Message)> =
+                    Rc::new(move |message| msg_delegate.handle_message_from(Some(id), message));
 
                 // DocumentWindow constructs and renders without presenting.
                 // Attach it first so opening a tab never flashes a detached
@@ -784,10 +1537,9 @@ impl AppDelegate {
                             .unwrap_or_else(|| tabs.len());
                         group.insertWindow_atIndex(&document.window, index as isize);
                     } else {
-                        anchor.window.addTabbedWindow_ordered(
-                            &document.window,
-                            NSWindowOrderingMode::Above,
-                        );
+                        anchor
+                            .window
+                            .addTabbedWindow_ordered(&document.window, NSWindowOrderingMode::Above);
                     }
                 } else {
                     document.window.center();
@@ -815,6 +1567,7 @@ impl AppDelegate {
         self.push_bookmarks_to_pages();
         self.push_comments_to_pages();
         self.push_recents_to_pages();
+        self.push_workspace_to_pages();
         self.rebuild_recent_menu();
     }
 
@@ -860,15 +1613,15 @@ impl AppDelegate {
                 windows.iter().find(|document| {
                     !document.is_closed()
                         && document
-                        .window
-                        .tabGroup()
-                        .and_then(|group| group.selectedWindow())
-                        .is_some_and(|selected| {
-                            std::ptr::eq(
-                                Retained::as_ptr(&selected),
-                                Retained::as_ptr(&document.window),
-                            )
-                        })
+                            .window
+                            .tabGroup()
+                            .and_then(|group| group.selectedWindow())
+                            .is_some_and(|selected| {
+                                std::ptr::eq(
+                                    Retained::as_ptr(&selected),
+                                    Retained::as_ptr(&document.window),
+                                )
+                            })
                 })
             })
             .or_else(|| windows.iter().rev().find(|document| !document.is_closed()))
@@ -948,7 +1701,9 @@ impl AppDelegate {
                 }
             }
             Message::ToggleBookmark => {
-                let Some(window) = self.message_window(source_id) else { return };
+                let Some(window) = self.message_window(source_id) else {
+                    return;
+                };
                 let path = window.path.to_string_lossy().into_owned();
                 let updated = crate::state::toggle_bookmark(
                     &crate::defaults::get_strings(crate::defaults::BOOKMARKS_KEY),
@@ -960,7 +1715,8 @@ impl AppDelegate {
             }
             Message::ToggleDiff => {
                 if let Some(window) = self.message_window(source_id) {
-                    if window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff {
+                    if window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff
+                    {
                         window.toggle_diff(&self.ivars().highlighter);
                     }
                 }
@@ -972,6 +1728,29 @@ impl AppDelegate {
             }
             Message::OpenHistory => self.request_history(source_id),
             Message::SelectHistory(revision) => self.select_history(source_id, &revision),
+            Message::SearchWorkspace(query) => self.search_workspace(source_id, &query),
+            Message::OpenWorkspacePath(path) => self.open_workspace_path(source_id, &path),
+            Message::SetReadingPosition(position) => {
+                if let Some(window) = self.message_window(source_id) {
+                    if self
+                        .ivars()
+                        .workspace
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|workspace| {
+                            window
+                                .path
+                                .strip_prefix(workspace.snapshot.root.path())
+                                .is_ok()
+                        })
+                    {
+                        self.ivars()
+                            .workspace_positions
+                            .borrow_mut()
+                            .insert(window.path.clone(), position);
+                    }
+                }
+            }
             Message::ToggleFullWidth => {
                 self.toggle_full_width_native();
             }
@@ -980,7 +1759,7 @@ impl AppDelegate {
             Message::OpenPath(path) => match source_id {
                 Some(id) => self.open_document_from(id, std::path::Path::new(&path)),
                 None => self.open_document(std::path::Path::new(&path)),
-            }
+            },
             Message::SetSidebar { open, tab } => {
                 crate::defaults::set_bool(crate::defaults::SIDEBAR_OPEN_KEY, open);
                 crate::defaults::set_string(crate::defaults::SIDEBAR_TAB_KEY, &tab);
@@ -1000,10 +1779,18 @@ impl AppDelegate {
                     self.push_bookmarks_to_pages();
                     self.push_comments_to_pages();
                     self.push_recents_to_pages();
+                    self.push_workspace_to_pages();
                 }
             }
-            Message::AddComment { heading, nth, quote, note } => {
-                let Some(window) = self.message_window(source_id) else { return };
+            Message::AddComment {
+                heading,
+                nth,
+                quote,
+                note,
+            } => {
+                let Some(window) = self.message_window(source_id) else {
+                    return;
+                };
                 let doc = window.path.clone();
                 let key = doc.to_string_lossy().into_owned();
                 let mut comments = crate::store::load(&key).comments;
@@ -1015,11 +1802,15 @@ impl AppDelegate {
                     return;
                 }
                 let id = crate::review::fresh_id(&comments);
-                comments.push(crate::review::Comment::new(&id, heading, nth, &quote, &note));
+                comments.push(crate::review::Comment::new(
+                    &id, heading, nth, &quote, &note,
+                ));
                 self.write_review(&window, &doc, &comments);
             }
             Message::EditComment { id, note } => {
-                let Some(window) = self.message_window(source_id) else { return };
+                let Some(window) = self.message_window(source_id) else {
+                    return;
+                };
                 let doc = window.path.clone();
                 let key = doc.to_string_lossy().into_owned();
                 let mut comments = crate::store::load(&key).comments;
@@ -1039,7 +1830,9 @@ impl AppDelegate {
                 self.write_review(&window, &doc, &comments);
             }
             Message::DeleteComment { id } => {
-                let Some(window) = self.message_window(source_id) else { return };
+                let Some(window) = self.message_window(source_id) else {
+                    return;
+                };
                 let doc = window.path.clone();
                 let key = doc.to_string_lossy().into_owned();
                 // `x` has no undo, so the previous file is the recovery.
@@ -1082,9 +1875,10 @@ impl AppDelegate {
         let headings = crate::store::headings_of(doc);
         match crate::store::save(&key, &headings, comments) {
             Ok(()) => self.push_comments_to_pages(),
-            Err(err) => {
-                window.show_banner("mdview-comments", &format!("Could not save the review: {err}"))
-            }
+            Err(err) => window.show_banner(
+                "mdview-comments",
+                &format!("Could not save the review: {err}"),
+            ),
         }
     }
 
@@ -1137,7 +1931,9 @@ impl AppDelegate {
     fn copy_review_prompt(&self, source_id: Option<u64>) {
         use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 
-        let Some(window) = self.message_window(source_id) else { return };
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
         let doc = window.path.clone();
         let key = doc.to_string_lossy().into_owned();
         let comments = crate::store::load(&key).comments;
@@ -1154,7 +1950,9 @@ impl AppDelegate {
             let headings = crate::store::headings_of(&doc);
             let _ = crate::store::save(&key, &headings, &comments);
         }
-        let Some(review) = crate::store::review_path(&key) else { return };
+        let Some(review) = crate::store::review_path(&key) else {
+            return;
+        };
         let prompt = crate::state::review_prompt(&review.to_string_lossy(), &key);
 
         let pasteboard = NSPasteboard::generalPasteboard();
@@ -1225,6 +2023,25 @@ impl AppDelegate {
             // Queued, never evaluated. See push_bookmarks_to_pages.
             window.pending_scripts.borrow_mut().push(script);
         }
+    }
+
+    pub(crate) fn present_open_folder_panel(&self) {
+        use objc2_app_kit::{NSModalResponse, NSOpenPanel};
+
+        let source_id = self.frontmost_window().map(|window| window.id);
+        let mtm = MainThreadMarker::from(self);
+        let panel = NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseFiles(false);
+        panel.setCanChooseDirectories(true);
+        panel.setAllowsMultipleSelection(false);
+
+        let response: NSModalResponse = panel.runModal();
+        if response != 1 {
+            return;
+        }
+        let Some(url) = panel.URL() else { return };
+        let Some(path) = url.path() else { return };
+        self.open_workspace(PathBuf::from(path.to_string()), source_id);
     }
 
     pub(crate) fn present_open_panel(&self) {

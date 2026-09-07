@@ -1,0 +1,27 @@
+{
+  "page": "tour.html",
+  "width": 1120, "height": 640,
+  "openHold": 1000,
+  "pages": {
+    "spec": "target/reels/pages/spec.html",
+    "notes": "target/reels/pages/notes.html"
+  },
+  "seed": [
+    "window.mdviewSetWorkspace && window.mdviewSetWorkspace('/notes/scheduler',[{relative:'README.md',path:'tour'},{relative:'design/spec.md',path:'spec'},{relative:'meetings/notes.md',path:'notes'}],false,null)"
+  ],
+  "bridge": {
+    "searchWorkspace:": {
+      "js": "window.mdviewSetWorkspaceSearch([{relative:'design/spec.md',path:'spec',heading:'Retry policy',snippet:'Retry requests with bounded exponential backoff.'}],null)"
+    },
+    "openWorkspacePath:": { "loadByArg": "%s" },
+    "*": { "ignore": true }
+  },
+  "steps": [
+    { "key": "g f", "hold": 1200 },
+    { "type": "#mdview-workspace-search", "text": "notes", "hold": 1200 },
+    { "key": "Enter", "settle": 800, "hold": 1500 },
+    { "key": "g /", "hold": 1000 },
+    { "type": "#mdview-workspace-search", "text": "retry", "settle": 500, "hold": 1500 },
+    { "key": "Enter", "settle": 800, "hold": 2200 }
+  ]
+}

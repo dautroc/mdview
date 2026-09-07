@@ -7,6 +7,7 @@ version.workspace = true
 pulldown-cmark = { workspace = true }
 syntect = { workspace = true }
 thiserror = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

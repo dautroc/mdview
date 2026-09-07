@@ -33,6 +33,16 @@ document so `n` and `N` step through them, and esc clears the highlights.
 beside it — type a few letters, run what you find, and leave knowing the key.
 The vim alphabet is deliberately not in that list; `?` prints the lot.
 
+## Working across a project
+
+![Opening a workspace file, then searching every Markdown document](gifs/workspace.gif)
+
+Choose **File → Open Folder…** once. `g f` then opens any Markdown file in that
+folder, while `g /` searches their contents and identifies the nearest heading
+before opening the result. The Files sidebar carries the same list. MDView
+reconciles filesystem changes in the background and restores the workspace,
+tabs, selected tab, and reading positions on relaunch.
+
 ## Reviewing a draft with Claude
 
 ![Selecting a passage, commenting on it, and copying the review prompt](gifs/reviewing.gif)
@@ -106,8 +116,8 @@ belong in the app rather than in a GIF:
 - **Live reload.** Save in your editor and the document re-renders in place,
   holding your scroll position. There is no editor in a recording, so there is
   nothing to film.
-- **Opening files.** ⌘O, a file dropped on the window or the Dock icon,
-  `mdview notes.md` from a shell, or Open With from Finder.
+- **Opening files and folders.** ⌘O, File → Open Folder…, a file dropped on the
+  window or Dock icon, `mdview notes.md` from a shell, or Open With from Finder.
 - **The menu bar.** Every command has a menu item, which is how a mouse
   reaches it. The recordings are the page; the menu bar is the window.
 - **The window itself** — the title bar and its native tabs. Opening another

@@ -911,6 +911,12 @@ body.mdview-resizing #mdview-sidebar-resizer {
 #mdview-sidebar-body ul { list-style: none; margin: 0; padding-left: .75rem; }
 #mdview-sidebar-body a { color: var(--fg); display: block; padding: .15rem 0; text-decoration: none; }
 #mdview-sidebar-body a:hover { color: var(--link); }
+#mdview-sidebar-body a[title] { overflow-wrap: anywhere; }
+.mdview-workspace-row .mdview-palette-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Room for the marker the current heading wears, taken by every row so that
    lighting one does not shift its words sideways. */
 #mdview-sidebar-body a[data-outline-id] { border-radius: 2px; padding-left: .4rem; }
@@ -1031,13 +1037,12 @@ body.mdview-resizing #mdview-sidebar-resizer {
    for a mouse without putting a control on the page. */
 .mdview-zoomable { cursor: zoom-in; }
 
-/* The palettes: themes, recent files, and commands. Same shell as the cheat
-   sheet -- all four are things the keyboard summons over the document -- with
-   a search field and a list. */
+/* Searchable palettes share one top-centred shell over the document. */
 #mdview-theme-palette,
 #mdview-recent-palette,
 #mdview-history-palette,
-#mdview-command-palette {
+#mdview-command-palette,
+#mdview-workspace-palette {
   align-items: flex-start;
   background: rgba(0, 0, 0, .55);
   bottom: 0;
@@ -1052,7 +1057,8 @@ body.mdview-resizing #mdview-sidebar-resizer {
 #mdview-theme-palette[hidden],
 #mdview-recent-palette[hidden],
 #mdview-history-palette[hidden],
-#mdview-command-palette[hidden] { display: none; }
+#mdview-command-palette[hidden],
+#mdview-workspace-palette[hidden] { display: none; }
 .mdview-palette-panel {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1115,7 +1121,8 @@ body.mdview-resizing #mdview-sidebar-resizer {
 /* Wider than the other two: a theme or a file is a name, a command is a
    sentence with a keycap after it. */
 #mdview-command-palette .mdview-palette-panel,
-#mdview-history-palette .mdview-palette-panel { width: min(30rem, 90vw); }
+#mdview-history-palette .mdview-palette-panel,
+#mdview-workspace-palette .mdview-palette-panel { width: min(30rem, 90vw); }
 /* Label left, keys right, and the label is the part that gives way -- a
    command you can only half read is still findable, a key you cannot see at
    all defeats the point of showing it. */

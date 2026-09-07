@@ -4,7 +4,7 @@ members = ["crates/mdcore", "crates/mdapp"]
 
 [workspace.package]
 edition = "2021"
-version = "0.20.0"
+version = "0.21.0"
 rust-version = "1.75"
 
 [workspace.dependencies]
@@ -12,6 +12,7 @@ pulldown-cmark = "0.13"
 syntect = "5"
 notify = "8"
 thiserror = "2"
+libc = "0.2"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"

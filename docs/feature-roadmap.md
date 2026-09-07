@@ -508,12 +508,12 @@ Create one tracking issue per phase and one implementation issue per milestone b
 
 ### Phase 2 milestones
 
-- [ ] Define workspace discovery rules, caps, and pure models.
-- [ ] Build progressive background scanning and the in-memory index.
-- [ ] Add Files and workspace Search UI.
-- [ ] Add incremental watcher reconciliation.
-- [ ] Add versioned session restore for workspace tabs and reading positions.
-- [ ] Measure scale, add fixtures, and generate a workspace reel.
+- [x] Define workspace discovery rules, caps, and pure models.
+- [x] Build progressive background scanning and the in-memory index.
+- [x] Add Files and workspace Search UI.
+- [x] Add incremental watcher reconciliation.
+- [x] Add versioned session restore for workspace tabs and reading positions.
+- [x] Measure scale, add fixtures, and generate a workspace reel.
 
 ### Phase 3 milestones
 

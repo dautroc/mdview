@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -68,8 +69,54 @@ pub fn watch_target(path: &Path) -> PathBuf {
                 Ok(directory) => directory.join(name),
                 Err(_) => path.to_path_buf(),
             }
-        },
+        }
         _ => path.to_path_buf(),
+    }
+}
+
+/// Watches a workspace recursively and collapses event bursts into a bounded
+/// reconciliation scan performed by the workspace worker.
+pub struct WorkspaceWatcher {
+    _watcher: RecommendedWatcher,
+    events: Receiver<PathBuf>,
+    pending: BTreeSet<PathBuf>,
+    debouncer: Debouncer,
+}
+
+impl WorkspaceWatcher {
+    pub fn start(root: &Path) -> Result<Self, notify::Error> {
+        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let (sender, events) = channel();
+        let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
+            let Ok(event) = result else { return };
+            for path in event.paths {
+                let _ = sender.send(path);
+            }
+        })?;
+        watcher.watch(&root, RecursiveMode::Recursive)?;
+        Ok(Self {
+            _watcher: watcher,
+            events,
+            pending: BTreeSet::new(),
+            debouncer: Debouncer::new(QUIET_PERIOD),
+        })
+    }
+
+    pub fn poll(&mut self, now: Instant) -> Vec<PathBuf> {
+        loop {
+            match self.events.try_recv() {
+                Ok(path) => {
+                    self.pending.insert(path);
+                    self.debouncer.record(now);
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        if self.debouncer.take_if_ready(now) {
+            std::mem::take(&mut self.pending).into_iter().collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -190,7 +237,10 @@ mod tests {
         );
         // And a file that does exist is unaffected by the new branch.
         std::fs::write(real.join("here.md"), "x").expect("write");
-        assert_eq!(watch_target(&link.join("here.md")), resolved.join("here.md"));
+        assert_eq!(
+            watch_target(&link.join("here.md")),
+            resolved.join("here.md")
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -229,7 +279,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         let _ = std::fs::remove_dir_all(&base);
-        assert!(fired, "the watch never fired: the target path does not match the event");
+        assert!(
+            fired,
+            "the watch never fired: the target path does not match the event"
+        );
     }
 
     #[test]

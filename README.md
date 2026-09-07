@@ -52,6 +52,14 @@ file that never closes it.
   If the review file ends up in a state MDView cannot wholly read, it says so
   and stops writing to it rather than saving over the part it did not
   understand.
+- **Project workspaces.** File → Open Folder… treats a documentation folder or
+  repository as one collection. `g f` opens a fuzzy file palette and `g /`
+  searches every indexed Markdown file, showing its nearest heading and a
+  snippet before opening the match. The Files sidebar exposes the same bounded
+  file list. Scanning and search stay off the main thread, filesystem changes
+  reconcile automatically, and relaunch restores the workspace, tabs, selected
+  tab, and reading positions. MDView skips symlinks, hidden and generated
+  directories, files over 2 MiB, and stops at 10,000 files or 64 MiB of text.
 - **Git history and diffs.** `g h` opens the commits that touched the document
   in a searchable palette; selecting one compares that version with the working
   tree. `g d` goes straight to the usual comparison against HEAD, and `g l`
@@ -142,7 +150,7 @@ mdview --print-html --diff --diff-base HEAD~2 notes.md  # compare a revision
 ```
 
 Or double-click a `.md` file in Finder, drop one on the window or the Dock
-icon, or press ⌘O.
+icon, press ⌘O, or choose **File → Open Folder…** for a workspace.
 
 Vim-flavoured, since nothing in a read-only viewer is expecting your typing.
 Moving around is a single key; the commands that are not motion sit behind `g`,
@@ -172,6 +180,8 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
 | g n / g p | Next / previous tab |
+| g f | Open a Markdown file from the workspace |
+| g / | Search across the workspace |
 | g s | Toggle the sidebar |
 | g m | Toggle the minimap |
 | g o / g b | Outline / bookmarks in the sidebar |

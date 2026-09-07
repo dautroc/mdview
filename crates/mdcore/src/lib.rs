@@ -4,8 +4,8 @@
 
 pub mod assets;
 pub mod chrome;
-pub mod document;
 pub mod diff;
+pub mod document;
 pub mod escape;
 pub mod frontmatter;
 pub mod highlight;
@@ -15,18 +15,23 @@ pub mod page;
 pub mod rdiff;
 pub mod render;
 pub mod theme;
+pub mod workspace;
 
 use std::path::{Path, PathBuf};
 
 pub use chrome::Rgb;
-pub use document::{Document, DocumentError};
 pub use diff::{
     DiffAvailability, DiffError, DiffHunk, DiffLayout, DiffLine, DiffLineKind, GitDiff,
     HistoryEntry, Repository, Revision, SourceLayout, SplitRow, TrackedPath,
 };
+pub use document::{Document, DocumentError};
 pub use highlight::Highlighter;
 pub use render::headings;
 pub use theme::Theme;
+pub use workspace::{
+    DiscoverySummary, SearchHit, SearchQuery, WorkspaceError, WorkspaceFile, WorkspaceIndex,
+    WorkspaceLimits, WorkspaceRoot, WorkspaceSnapshot,
+};
 
 /// A document rendered and ready to hand to a web view.
 #[derive(Debug, Clone)]

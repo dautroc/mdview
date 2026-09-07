@@ -22,6 +22,11 @@ pub const SIDEBAR_WIDTH_KEY: &str = "MDViewSidebarWidth";
 pub const MINIMAP_OPEN_KEY: &str = "MDViewMinimapOpen";
 #[allow(dead_code)]
 pub const SHORTCUTS_HINT_SHOWN_KEY: &str = "MDViewShortcutsHintShown";
+pub const WORKSPACE_SESSION_VERSION_KEY: &str = "MDViewWorkspaceSessionVersion";
+pub const WORKSPACE_ROOT_KEY: &str = "MDViewWorkspaceRoot";
+pub const WORKSPACE_TABS_KEY: &str = "MDViewWorkspaceTabs";
+pub const WORKSPACE_SELECTED_KEY: &str = "MDViewWorkspaceSelected";
+pub const WORKSPACE_SCROLLS_KEY: &str = "MDViewWorkspaceScrolls";
 
 fn defaults() -> objc2::rc::Retained<NSUserDefaults> {
     NSUserDefaults::standardUserDefaults()
@@ -69,7 +74,9 @@ pub fn get_bool(key: &str) -> bool {
 pub fn get_bool_opt(key: &str) -> Option<bool> {
     let key = NSString::from_str(key);
     let defaults = defaults();
-    defaults.objectForKey(&key).map(|_| defaults.boolForKey(&key))
+    defaults
+        .objectForKey(&key)
+        .map(|_| defaults.boolForKey(&key))
 }
 
 #[allow(dead_code)]

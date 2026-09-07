@@ -3,6 +3,25 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.21.0](https://github.com/dautroc/mdview/releases/tag/v0.21.0) — 2026-09-07
+
+### What's new
+
+- **Open a documentation project as one workspace.** File → Open Folder… scans
+  supported Markdown files away from the main thread. `g f` navigates them,
+  `g /` searches their contents with heading-aware snippets, and the Files
+  sidebar keeps the collection visible.
+- **Workspaces stay current and come back after relaunch.** A recursive watcher
+  triggers bounded reconciliation scans. Versioned local session state restores
+  the workspace root, ordered tabs, selected tab, and per-document reading
+  positions without allowing restored paths outside the indexed root.
+
+### Notes
+
+- Workspace discovery skips symlinks, hidden and common generated directories,
+  documents over 2 MiB, and stops at 10,000 files or 64 MiB of indexed text.
+  Search returns at most 100 results. Partial scans are identified in the UI.
+
 ## [v0.20.0](https://github.com/dautroc/mdview/releases/tag/v0.20.0) — 2026-09-07
 
 ### What's new

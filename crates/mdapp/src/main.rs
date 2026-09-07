@@ -511,7 +511,7 @@ mod bundle_version_tests {
             );
             found += 1;
         }
-        assert_eq!(found, 8, "the tour is eight sections, one demo each");
+        assert_eq!(found, 9, "the tour is nine sections, one demo each");
     }
 
     /// The same list main.rs already holds the README to. The tour is the only
@@ -556,7 +556,7 @@ mod bundle_version_tests {
             );
             seen += 1;
         }
-        assert_eq!(seen, 8, "eight reels, one per section of the tour");
+        assert_eq!(seen, 9, "nine reels, one per section of the tour");
     }
 
     #[test]
