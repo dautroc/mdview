@@ -129,6 +129,11 @@ pub fn shortcuts_script() -> &'static str {
     "window.mdviewToggleShortcuts && window.mdviewToggleShortcuts();"
 }
 
+#[allow(dead_code)]
+pub fn open_history_script() -> &'static str {
+    "window.mdviewOpenHistory && window.mdviewOpenHistory();"
+}
+
 /// The one-time nudge that tells a first-time user the keys exist. With no
 /// buttons on the page there is nothing else to notice, so this is the only
 /// thing standing between a new user and an apparently inert window.
@@ -227,6 +232,8 @@ pub enum Message {
     ToggleBookmark,
     ToggleDiff,
     SetDiffLayout(DiffLayout),
+    OpenHistory,
+    SelectHistory(String),
     ToggleFullWidth,
     NextTab,
     PreviousTab,
@@ -261,6 +268,9 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     if raw == "toggleFullWidth" {
         return Some(Message::ToggleFullWidth);
     }
+    if raw == "openHistory" {
+        return Some(Message::OpenHistory);
+    }
     if raw == "reloadDocument" {
         return Some(Message::ReloadDocument);
     }
@@ -285,6 +295,14 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     let (kind, rest) = raw.split_once(':')?;
     match kind {
         "setDiffLayout" => DiffLayout::from_wire(rest).map(Message::SetDiffLayout),
+        "selectHistory" => {
+            let revision = percent_decode(rest)?;
+            if revision.is_empty() {
+                None
+            } else {
+                Some(Message::SelectHistory(revision))
+            }
+        }
         "setTheme" => {
             // Format: setTheme:<wire> or setTheme:<wire>:<scrollY>
             let (wire, scroll_str) = match rest.split_once(':') {
@@ -485,6 +503,29 @@ pub fn damaged_review_banner(
 /// Hand the page its comment list. Built here rather than in `app.rs` because
 /// it is a pure function of pure inputs, and the objc layer has no tests.
 #[allow(dead_code)]
+pub fn history_script(entries: &[mdcore::HistoryEntry], error: Option<&str>) -> String {
+    let items: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "{{revision:{},short:{},author:{},date:{},subject:{}}}",
+                mdcore::escape::js_string_literal(entry.revision.as_str()),
+                mdcore::escape::js_string_literal(&entry.short_revision),
+                mdcore::escape::js_string_literal(&entry.author),
+                mdcore::escape::js_string_literal(&entry.date),
+                mdcore::escape::js_string_literal(&entry.subject),
+            )
+        })
+        .collect();
+    let error = error
+        .map(mdcore::escape::js_string_literal)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "window.mdviewSetHistory && window.mdviewSetHistory([{}], {error});",
+        items.join(",")
+    )
+}
+
 pub fn comments_script(comments: &[crate::review::Comment]) -> String {
     let items: Vec<String> = comments
         .iter()
@@ -675,6 +716,23 @@ mod tests {
     /// Same hazard as the bookmarks list: a quote is arbitrary document text,
     /// and an unescaped `</script>` or newline in one would break the page.
     #[test]
+    fn the_history_script_escapes_metadata_and_is_guarded() {
+        let entry = mdcore::HistoryEntry {
+            revision: mdcore::Revision::parse("abc123").unwrap(),
+            short_revision: "abc123".into(),
+            author: "A 'Reviewer'".into(),
+            date: "2026-09-07".into(),
+            subject: "Fix </script> history".into(),
+            path: std::path::PathBuf::from("docs/readme.md"),
+        };
+        let script = history_script(&[entry], None);
+        assert!(script.contains("mdviewSetHistory &&"));
+        assert!(script.contains("abc123"));
+        assert!(!script.contains("</script>"));
+        assert!(history_script(&[], Some("not available")).contains("not available"));
+    }
+
+    #[test]
     fn the_comments_script_escapes_every_field_and_is_guarded() {
         let comments = [crate::review::Comment::new("1", 2, 0, "</script>\n\"q\"", "note")];
         let script = comments_script(&comments);
@@ -718,6 +776,7 @@ mod tests {
                 "setSidebarWidth:" => "setSidebarWidth:260".to_string(),
                 "setMinimap:" => "setMinimap:1".to_string(),
                 "setDiffLayout:" => "setDiffLayout:split".to_string(),
+                "selectHistory:" => "selectHistory:abc123".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),
                 "addComment:" => "addComment:1:0:a%20quote:a%20note".to_string(),
                 "editComment:" => "editComment:2f:a%20note".to_string(),
@@ -903,6 +962,11 @@ mod tests {
             Some(Message::OpenPath("/Users/x/a.md".into()))
         );
         assert_eq!(parse_message("toggleDiff"), Some(Message::ToggleDiff));
+        assert_eq!(parse_message("openHistory"), Some(Message::OpenHistory));
+        assert_eq!(
+            parse_message("selectHistory:feature%2Fdocs"),
+            Some(Message::SelectHistory("feature/docs".into()))
+        );
         assert_eq!(
             parse_message("setDiffLayout:split"),
             Some(Message::SetDiffLayout(DiffLayout::Split))

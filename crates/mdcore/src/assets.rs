@@ -217,6 +217,23 @@ mod tests {
         assert!(js.contains("wrapRuns(runsFor(index, winner.from, winner.to)"), "wrapping is not a separate pass");
     }
 
+    #[test]
+    fn document_history_is_reachable_and_styled() {
+        let js = super::INIT_JS;
+        for hook in [
+            "function openHistoryPalette(",
+            "window.mdviewOpenHistory",
+            "window.mdviewSetHistory",
+            "postToHost(\"openHistory\")",
+            "postToHost(\"selectHistory:\"",
+            "keys: [\"g h\"]",
+        ] {
+            assert!(js.contains(hook), "document history is missing {hook}");
+        }
+        assert!(super::PAGE_CSS.contains("#mdview-history-palette"));
+        assert!(super::PAGE_CSS.contains(".mdview-diff-context"));
+    }
+
     /// `g l` is the only way to the rendered layout, and the layout is only a
     /// layout because the stylesheet knows the class the body comes wrapped in.
     #[test]

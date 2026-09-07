@@ -130,6 +130,80 @@ fn theme_flag_does_not_consume_a_following_flag() {
 }
 
 #[test]
+fn print_html_diff_accepts_an_explicit_base_revision() {
+    if Command::new("git").output().is_err() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "mdview-cli-history-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("history.md");
+    let run_git = |args: &[&str]| {
+        let status = Command::new("git")
+            .current_dir(&dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git command failed: {args:?}");
+    };
+    run_git(&["init", "-q"]);
+    std::fs::write(&path, "# Before\n").unwrap();
+    run_git(&["add", "--", "history.md"]);
+    run_git(&[
+        "-c",
+        "user.name=MDView Test",
+        "-c",
+        "user.email=mdview@example.test",
+        "commit",
+        "-qm",
+        "before",
+    ]);
+    std::fs::write(&path, "# IntermediateOnlyQzxv\n").unwrap();
+    run_git(&[
+        "-c",
+        "user.name=MDView Test",
+        "-c",
+        "user.email=mdview@example.test",
+        "commit",
+        "-am",
+        "middle",
+        "-q",
+    ]);
+    std::fs::write(&path, "# Working tree\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mdview"))
+        .args(["--print-html", "--diff", "--diff-base", "HEAD~1"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let html = String::from_utf8(output.stdout).unwrap();
+    assert!(html.contains("Working tree compared with <strong>HEAD~1</strong>"));
+    assert!(html.contains("Before"));
+    assert!(html.contains("Working tree"));
+    assert!(!html.contains("IntermediateOnlyQzxv"));
+}
+
+#[test]
+fn an_unsafe_diff_base_is_rejected() {
+    let path = fixture_file("unsafe-base.md", "# T\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_mdview"))
+        .args(["--print-html", "--diff", "--diff-base", "HEAD:other.md"])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid Git revision"));
+}
+
+#[test]
 fn print_html_without_a_path_exits_two() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdview"))
         .arg("--print-html")

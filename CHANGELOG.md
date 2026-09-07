@@ -1,7 +1,19 @@
 # Changelog
 
 Release notes for MDView, organized around user-visible features, fixes, and
-the commits that introduced them. The newest release is listed first.
+  the commits that introduced them. The newest release is listed first.
+
+## [v0.20.0](https://github.com/dautroc/mdview/releases/tag/v0.20.0) — 2026-09-07
+
+### What's new
+
+- **Browse the history of the document, not the repository.** `g h` opens the
+  commits that touched the file in a searchable palette, follows its name across
+  renames, and compares the selected version with the working tree in all four
+  existing source and rendered layouts. Git loading runs off the main thread,
+  and a late result stays with the tab that requested it.
+- **Headless historical diffs.** `--print-html --diff --diff-base REV` exposes
+  the same arbitrary-revision comparison for scripts and generated demos.
 
 ## [v0.19.0](https://github.com/dautroc/mdview/releases/tag/v0.19.0) — 2026-09-07
 

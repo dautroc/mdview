@@ -356,6 +356,14 @@ img { max-width: 100%; }
 
 .mdview-diff-placeholder { background: var(--code-bg); }
 
+.mdview-diff-context {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  padding: .55rem .85rem;
+}
+.mdview-diff-context strong { color: var(--fg); font-weight: 500; }
+
 .mdview-diff-empty {
   color: var(--muted);
   font: 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
@@ -1028,6 +1036,7 @@ body.mdview-resizing #mdview-sidebar-resizer {
    a search field and a list. */
 #mdview-theme-palette,
 #mdview-recent-palette,
+#mdview-history-palette,
 #mdview-command-palette {
   align-items: flex-start;
   background: rgba(0, 0, 0, .55);
@@ -1042,6 +1051,7 @@ body.mdview-resizing #mdview-sidebar-resizer {
 }
 #mdview-theme-palette[hidden],
 #mdview-recent-palette[hidden],
+#mdview-history-palette[hidden],
 #mdview-command-palette[hidden] { display: none; }
 .mdview-palette-panel {
   background: var(--bg);
@@ -1104,7 +1114,8 @@ body.mdview-resizing #mdview-sidebar-resizer {
 }
 /* Wider than the other two: a theme or a file is a name, a command is a
    sentence with a keycap after it. */
-#mdview-command-palette .mdview-palette-panel { width: min(30rem, 90vw); }
+#mdview-command-palette .mdview-palette-panel,
+#mdview-history-palette .mdview-palette-panel { width: min(30rem, 90vw); }
 /* Label left, keys right, and the label is the part that gives way -- a
    command you can only half read is still findable, a key you cannot see at
    all defeats the point of showing it. */

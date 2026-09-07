@@ -22,7 +22,7 @@ pub use chrome::Rgb;
 pub use document::{Document, DocumentError};
 pub use diff::{
     DiffAvailability, DiffError, DiffHunk, DiffLayout, DiffLine, DiffLineKind, GitDiff,
-    SourceLayout, SplitRow,
+    HistoryEntry, Repository, Revision, SourceLayout, SplitRow, TrackedPath,
 };
 pub use highlight::Highlighter;
 pub use render::headings;
@@ -79,8 +79,50 @@ pub fn render_diff_document_with(
     theme: Theme,
     layout: DiffLayout,
 ) -> Result<RenderedDoc, DiffError> {
+    render_diff_document(path, highlighter, theme, layout, None)
+}
+
+/// Render a working-tree document against an explicit Git revision.
+pub fn render_diff_document_against_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+    base: &Revision,
+) -> Result<RenderedDoc, DiffError> {
     let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
-    let diff = diff::load_diff(&doc.path)?;
+    let diff = diff::load_diff_against(&doc.path, base)?;
+    let body = diff_body(&doc, &diff, highlighter, layout);
+    Ok(RenderedDoc {
+        html: page::build_diff_page(&doc, &body, theme, layout),
+        base_dir: doc.base_dir.clone(),
+        lossy: doc.lossy,
+    })
+}
+
+/// Render a working-tree document against one entry from its Git history.
+pub fn render_diff_document_from_history_with(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+    entry: &HistoryEntry,
+) -> Result<RenderedDoc, DiffError> {
+    render_diff_document(path, highlighter, theme, layout, Some(entry))
+}
+
+fn render_diff_document(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    theme: Theme,
+    layout: DiffLayout,
+    entry: Option<&HistoryEntry>,
+) -> Result<RenderedDoc, DiffError> {
+    let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
+    let diff = match entry {
+        Some(entry) => diff::load_diff_from_history(&doc.path, entry)?,
+        None => diff::load_diff(&doc.path)?,
+    };
     let body = diff_body(&doc, &diff, highlighter, layout);
     Ok(RenderedDoc {
         html: page::build_diff_page(&doc, &body, theme, layout),
@@ -102,16 +144,17 @@ fn diff_body(
     layout: DiffLayout,
 ) -> String {
     if diff.patch.is_empty() {
-        return diff::NO_CHANGES_HTML.to_string();
+        return diff::empty_html(diff);
     }
     let rendered = |columns| {
-        rdiff::render_body(
+        let body = rdiff::render_body(
             &diff.old_source,
             &doc.source,
             highlighter,
             Some(&doc.base_dir),
             columns,
-        )
+        );
+        diff::comparison_html(diff, body)
     };
     match layout {
         DiffLayout::Unified => {
@@ -129,8 +172,29 @@ pub fn render_diff_body_of(
     highlighter: &Highlighter,
     layout: DiffLayout,
 ) -> Result<(String, bool), DiffError> {
+    render_diff_body(path, highlighter, layout, None)
+}
+
+pub fn render_diff_body_from_history_of(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    layout: DiffLayout,
+    entry: &HistoryEntry,
+) -> Result<(String, bool), DiffError> {
+    render_diff_body(path, highlighter, layout, Some(entry))
+}
+
+fn render_diff_body(
+    path: impl AsRef<Path>,
+    highlighter: &Highlighter,
+    layout: DiffLayout,
+    entry: Option<&HistoryEntry>,
+) -> Result<(String, bool), DiffError> {
     let doc = Document::load(path).map_err(|err| DiffError::Git(err.to_string()))?;
-    let diff = diff::load_diff(&doc.path)?;
+    let diff = match entry {
+        Some(entry) => diff::load_diff_from_history(&doc.path, entry)?,
+        None => diff::load_diff(&doc.path)?,
+    };
     Ok((diff_body(&doc, &diff, highlighter, layout), doc.lossy))
 }
 

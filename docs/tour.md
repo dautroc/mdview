@@ -48,6 +48,14 @@ so a comment leaves as soon as it is dealt with. A comment whose passage was
 rewritten instead stays, struck through, rather than vanishing with the words
 it was about.
 
+## Reading a document's history
+
+![Choosing a commit from the document history and opening its rendered comparison](gifs/history.gif)
+
+`g h` lists the commits that touched this document. Type to narrow by subject,
+author, date, or commit id; enter compares that version with the working tree.
+The file's path is followed across renames.
+
 ## Seeing what changed
 
 ![Cycling the four diff layouts against HEAD](gifs/changes.gif)

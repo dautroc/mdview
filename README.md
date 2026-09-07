@@ -52,8 +52,10 @@ file that never closes it.
   If the review file ends up in a state MDView cannot wholly read, it says so
   and stops writing to it rather than saving over the part it did not
   understand.
-- **Diff against HEAD.** `g d` on a file Git tracks shows what has changed
-  since the last commit, and `g l` lays it out four ways: the source or the
+- **Git history and diffs.** `g h` opens the commits that touched the document
+  in a searchable palette; selecting one compares that version with the working
+  tree. `g d` goes straight to the usual comparison against HEAD, and `g l`
+  lays either comparison out four ways: the source or the
   document, in one column or two. The source layouts go line by line, which is
   the view for checking a table's pipes. Rendered shows the document — the
   prose, as it renders — with a bar beside every block that changed and the
@@ -135,7 +137,8 @@ make install-cli   # /usr/local/bin/mdview
 
 ```sh
 mdview notes.md               # open a file
-mdview --print-html notes.md  # render to stdout
+mdview --print-html notes.md                       # render to stdout
+mdview --print-html --diff --diff-base HEAD~2 notes.md  # compare a revision
 ```
 
 Or double-click a `.md` file in Finder, drop one on the window or the Dock
@@ -179,7 +182,8 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | C | Copy the review prompt for Claude |
 | g t | Themes |
 | g r | Recent files |
-| g d | Diff, and back to Markdown (needs a tracked file) |
+| g h | Document history (needs a tracked file) |
+| g d | Diff against HEAD, and back to Markdown |
 | g l | Diff layout: source or rendered, one column or two |
 | z | Zoom the nearest image or diagram |
 | g w | Toggle fullwidth view |

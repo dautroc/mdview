@@ -180,6 +180,7 @@ pub fn install(app: &NSApplication, mtm: MainThreadMarker) -> Retained<NSMenu> {
     full_width_item.setState(full_width_menu_state(full_width));
     view_menu.addItem(&full_width_item);
     view_menu.addItem(&item(mtm, DIFF_TITLE, sel!(toggleDiff:), ""));
+    view_menu.addItem(&item(mtm, "Document History…", sel!(showDocumentHistory:), ""));
     view_menu.addItem(NSMenuItem::separatorItem(mtm).as_ref());
     // The sidebar's tabs used to be buttons in its header. The keys o and b
     // still switch tabs; these are what is left for a mouse.

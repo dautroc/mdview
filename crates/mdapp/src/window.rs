@@ -135,6 +135,9 @@ pub struct DocumentWindow {
     /// load makes a late completion from an older page harmless.
     expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
     view_mode: Cell<ViewMode>,
+    /// None is the established HEAD comparison. A history selection belongs to
+    /// this tab and carries the path the document had at that commit.
+    history_entry: RefCell<Option<mdcore::HistoryEntry>>,
     /// Not a bool: `D` has to say WHY it will not open the diff, and "no" on
     /// its own cannot. See `state::diff_unavailable_note`.
     diff_state: Cell<mdcore::DiffAvailability>,
@@ -244,6 +247,7 @@ impl DocumentWindow {
             page_ready,
             expected_navigation,
             view_mode: Cell::new(ViewMode::Rendered),
+            history_entry: RefCell::new(None),
             diff_state: Cell::new(mdcore::diff::availability(path)),
         });
 
@@ -290,12 +294,21 @@ impl DocumentWindow {
         let rendered = match self.view_mode.get() {
             ViewMode::Rendered => mdcore::render_document_with(&path, highlighter, theme)
                 .map_err(|err| err.to_string()),
-            ViewMode::Diff => mdcore::render_diff_document_with(
-                &path,
-                highlighter,
-                theme,
-                self.diff_layout(),
-            )
+            ViewMode::Diff => match self.history_entry.borrow().as_ref() {
+                Some(entry) => mdcore::render_diff_document_from_history_with(
+                    &path,
+                    highlighter,
+                    theme,
+                    self.diff_layout(),
+                    entry,
+                ),
+                None => mdcore::render_diff_document_with(
+                    &path,
+                    highlighter,
+                    theme,
+                    self.diff_layout(),
+                ),
+            }
             .map_err(|err| err.to_string()),
         };
         match rendered {
@@ -459,6 +472,15 @@ impl DocumentWindow {
             ViewMode::Rendered => ViewMode::Diff,
             ViewMode::Diff => ViewMode::Rendered,
         });
+        // `g d` always means the established HEAD comparison. A historical
+        // selection is left by toggling out and must be chosen again explicitly.
+        *self.history_entry.borrow_mut() = None;
+        self.reload(highlighter);
+    }
+
+    pub fn show_history(&self, entry: mdcore::HistoryEntry, highlighter: &Highlighter) {
+        *self.history_entry.borrow_mut() = Some(entry);
+        self.view_mode.set(ViewMode::Diff);
         self.reload(highlighter);
     }
 
@@ -518,11 +540,19 @@ impl DocumentWindow {
         let rendered = match self.view_mode.get() {
             ViewMode::Rendered => mdcore::render_body_of(&path, highlighter)
                 .map_err(|err| err.to_string()),
-            ViewMode::Diff => mdcore::render_diff_body_of(
-                &path,
-                highlighter,
-                self.diff_layout(),
-            )
+            ViewMode::Diff => match self.history_entry.borrow().as_ref() {
+                Some(entry) => mdcore::render_diff_body_from_history_of(
+                    &path,
+                    highlighter,
+                    self.diff_layout(),
+                    entry,
+                ),
+                None => mdcore::render_diff_body_of(
+                    &path,
+                    highlighter,
+                    self.diff_layout(),
+                ),
+            }
             .map_err(|err| err.to_string()),
         };
         let (body, lossy) = match rendered {

@@ -18,6 +18,8 @@ fn main() {
     let mut diff = false;
     let mut diff_layout = mdcore::DiffLayout::Unified;
     let mut want_diff_layout = false;
+    let mut diff_base: Option<String> = None;
+    let mut want_diff_base = false;
     let mut paths: Vec<PathBuf> = Vec::new();
 
     for arg in std::env::args_os().skip(1) {
@@ -33,6 +35,14 @@ fn main() {
             // normally below instead of being consumed here.
             if !arg.starts_with("--") {
                 theme = mdcore::Theme::from_wire(&arg);
+                continue;
+            }
+        }
+
+        if want_diff_base {
+            want_diff_base = false;
+            if !arg.starts_with("--") {
+                diff_base = Some(arg);
                 continue;
             }
         }
@@ -65,14 +75,15 @@ fn main() {
             "--theme" => want_theme = true,
             "--diff" => diff = true,
             "--diff-layout" => want_diff_layout = true,
+            "--diff-base" => want_diff_base = true,
             "--version" => {
                 println!("mdview {}", mdcore::version());
                 return;
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: mdview [--print-html [--diff [--diff-layout LAYOUT]]] \
-                     [--theme THEME] [FILE...]"
+                    "usage: mdview [--print-html [--diff [--diff-layout LAYOUT] \
+                     [--diff-base REV]]] [--theme THEME] [FILE...]"
                 );
                 return;
             }
@@ -92,7 +103,23 @@ fn main() {
         // rendered outside it, which is why `make shot` has never shown one.
         let html = if diff {
             let highlighter = mdcore::Highlighter::new();
-            match mdcore::render_diff_document_with(path, &highlighter, theme, diff_layout) {
+            let rendered = match diff_base {
+                Some(base) => match mdcore::Revision::parse(base) {
+                    Ok(base) => mdcore::render_diff_document_against_with(
+                        path,
+                        &highlighter,
+                        theme,
+                        diff_layout,
+                        &base,
+                    ),
+                    Err(err) => {
+                        eprintln!("mdview: {err}");
+                        std::process::exit(2);
+                    }
+                },
+                None => mdcore::render_diff_document_with(path, &highlighter, theme, diff_layout),
+            };
+            match rendered {
                 Ok(doc) => doc.html,
                 Err(err) => {
                     eprintln!("mdview: {err}");
@@ -114,6 +141,10 @@ fn main() {
 
     if diff {
         eprintln!("mdview: --diff only applies to --print-html");
+        std::process::exit(2);
+    }
+    if diff_base.is_some() {
+        eprintln!("mdview: --diff-base requires --print-html --diff");
         std::process::exit(2);
     }
 
@@ -423,6 +454,25 @@ mod bundle_version_tests {
         );
     }
 
+    #[test]
+    fn document_history_is_wired_from_native_ui_through_each_tab_to_the_page() {
+        let menu = include_str!("menu.rs");
+        assert!(menu.contains("sel!(showDocumentHistory:)"));
+
+        let app = include_str!("app.rs");
+        assert!(app.contains("#[unsafe(method(showDocumentHistory:))]"));
+        assert!(app.contains("Message::OpenHistory => self.request_history(source_id)"));
+        assert!(app.contains("history_cache: RefCell<HashMap<u64, Vec<mdcore::HistoryEntry>>>"));
+        assert!(app.contains("std::thread::spawn"), "Git history must not block AppKit");
+
+        let window = include_str!("window.rs");
+        assert!(window.contains("history_entry: RefCell<Option<mdcore::HistoryEntry>>"));
+
+        let readme = include_str!("../../../README.md");
+        assert!(readme.contains("| g h | Document history (needs a tracked file) |"));
+        assert!(mdcore::assets::INIT_JS.contains("keys: [\"g h\"]"));
+    }
+
     /// The one-time hint has to be QUEUED: loadHTMLString is asynchronous, so
     /// evaluating it directly would run against a page that does not exist yet.
     #[test]
@@ -461,7 +511,7 @@ mod bundle_version_tests {
             );
             found += 1;
         }
-        assert_eq!(found, 7, "the tour is seven sections, one demo each");
+        assert_eq!(found, 8, "the tour is eight sections, one demo each");
     }
 
     /// The same list main.rs already holds the README to. The tour is the only
@@ -506,7 +556,7 @@ mod bundle_version_tests {
             );
             seen += 1;
         }
-        assert_eq!(seen, 7, "seven reels, one per section of the tour");
+        assert_eq!(seen, 8, "eight reels, one per section of the tour");
     }
 
     #[test]

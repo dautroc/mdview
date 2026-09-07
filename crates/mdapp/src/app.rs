@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use mdcore::Highlighter;
 use objc2::rc::Retained;
@@ -17,6 +19,12 @@ use objc2_foundation::{
 
 use crate::window::DocumentWindow;
 
+pub(crate) struct HistoryResponse {
+    tab_id: u64,
+    generation: u64,
+    result: Result<Vec<mdcore::HistoryEntry>, String>,
+}
+
 /// Everything the delegate owns. Held in the delegate's ivars.
 pub struct AppState {
     pub windows: RefCell<Vec<Rc<DocumentWindow>>>,
@@ -29,6 +37,11 @@ pub struct AppState {
     pub highlighter: Highlighter,
     pub startup_paths: RefCell<Vec<PathBuf>>,
     pub recent_menu: RefCell<Option<Retained<NSMenu>>>,
+    pub history_sender: Sender<HistoryResponse>,
+    pub history_receiver: RefCell<Receiver<HistoryResponse>>,
+    pub next_history_generation: Cell<u64>,
+    pub history_requests: RefCell<HashMap<u64, u64>>,
+    pub history_cache: RefCell<HashMap<u64, Vec<mdcore::HistoryEntry>>>,
 }
 
 define_class!(
@@ -72,6 +85,9 @@ define_class!(
                 }
                 Some(action) if action == objc2::sel!(toggleDiff:) => {
                     window.can_show_diff() || window.view_mode() == crate::window::ViewMode::Diff
+                },
+                Some(action) if action == objc2::sel!(showDocumentHistory:) => {
+                    window.can_show_diff()
                 },
                 Some(action)
                     if action == objc2::sel!(setUnifiedDiff:)
@@ -180,6 +196,7 @@ define_class!(
             for window in state.windows.borrow().iter() {
                 window.drain_pending_banners();
             }
+            self.drain_history_results();
 
             // Collect first, then update: live_update can trigger reentrancy
             // into `windows`, and holding the borrow across it would panic.
@@ -347,6 +364,11 @@ define_class!(
             }
         }
 
+        #[unsafe(method(showDocumentHistory:))]
+        fn show_document_history_action(&self, _sender: Option<&NSObject>) {
+            self.run_page_script(crate::state::open_history_script());
+        }
+
         #[unsafe(method(toggleDiff:))]
         fn toggle_diff_action(&self, sender: Option<&NSMenuItem>) {
             let Some(window) = self.frontmost_window() else { return };
@@ -499,6 +521,7 @@ impl AppDelegate {
         startup_paths: Vec<PathBuf>,
         recent_menu: Retained<NSMenu>,
     ) -> Retained<Self> {
+        let (history_sender, history_receiver) = mpsc::channel();
         let this = Self::alloc(mtm).set_ivars(AppState {
             windows: RefCell::new(Vec::new()),
             active_tab: Rc::new(Cell::new(None)),
@@ -506,8 +529,84 @@ impl AppDelegate {
             highlighter: Highlighter::new(),
             startup_paths: RefCell::new(startup_paths),
             recent_menu: RefCell::new(Some(recent_menu)),
+            history_sender,
+            history_receiver: RefCell::new(history_receiver),
+            next_history_generation: Cell::new(1),
+            history_requests: RefCell::new(HashMap::new()),
+            history_cache: RefCell::new(HashMap::new()),
         });
         unsafe { objc2::msg_send![super(this), init] }
+    }
+
+    fn request_history(&self, source_id: Option<u64>) {
+        let Some(window) = self.message_window(source_id) else { return };
+        if !window.can_show_diff() {
+            window.show_note("Document history needs a tracked file with a commit.");
+            return;
+        }
+        let state = self.ivars();
+        let generation = state.next_history_generation.get();
+        state.next_history_generation.set(
+            generation
+                .checked_add(1)
+                .expect("history request generation overflow"),
+        );
+        state.history_requests.borrow_mut().insert(window.id, generation);
+        state.history_cache.borrow_mut().remove(&window.id);
+        let sender = state.history_sender.clone();
+        let tab_id = window.id;
+        let path = window.path.clone();
+        std::thread::spawn(move || {
+            let result = mdcore::diff::history_for_path(&path, 100).map_err(|err| err.to_string());
+            let _ = sender.send(HistoryResponse { tab_id, generation, result });
+        });
+    }
+
+    fn drain_history_results(&self) {
+        loop {
+            let response = match self.ivars().history_receiver.borrow().try_recv() {
+                Ok(response) => response,
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
+            };
+            let expected = self
+                .ivars()
+                .history_requests
+                .borrow()
+                .get(&response.tab_id)
+                .copied();
+            if expected != Some(response.generation) {
+                continue;
+            }
+            let Some(window) = self.window_by_id(response.tab_id) else { continue };
+            let script = match response.result {
+                Ok(entries) => {
+                    let script = crate::state::history_script(&entries, None);
+                    self.ivars().history_cache.borrow_mut().insert(response.tab_id, entries);
+                    script
+                }
+                Err(error) => crate::state::history_script(&[], Some(&error)),
+            };
+            window.pending_scripts.borrow_mut().push(script);
+        }
+    }
+
+    fn select_history(&self, source_id: Option<u64>, revision: &str) {
+        let Some(window) = self.message_window(source_id) else { return };
+        let entry = self
+            .ivars()
+            .history_cache
+            .borrow()
+            .get(&window.id)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.revision.as_str() == revision)
+                    .cloned()
+            });
+        match entry {
+            Some(entry) => window.show_history(entry, &self.ivars().highlighter),
+            None => window.show_note("That history entry is no longer available."),
+        }
     }
 
     /// History filtered to entries that still exist on disk. This is a snapshot;
@@ -871,6 +970,8 @@ impl AppDelegate {
                     window.set_diff_layout(layout, &self.ivars().highlighter);
                 }
             }
+            Message::OpenHistory => self.request_history(source_id),
+            Message::SelectHistory(revision) => self.select_history(source_id, &revision),
             Message::ToggleFullWidth => {
                 self.toggle_full_width_native();
             }

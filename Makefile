@@ -201,7 +201,7 @@ reels: $(REEL_BIN) reel-pages
 		$(MAKE) --no-print-directory reel REEL=$$name || exit 1; done
 	@$(MAKE) --no-print-directory reel-size
 
-# Committed weight, said out loud. Seven reels should come to about five
+# Committed weight, said out loud. Eight reels should come to about five
 # megabytes; past that, cut frames before cutting quality.
 reel-size:
 	@du -ch $(GIF_DIR)/*.gif 2>/dev/null | tail -1

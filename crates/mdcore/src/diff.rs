@@ -49,6 +49,8 @@ pub enum DiffError {
     Untracked,
     #[error("repository has no HEAD commit")]
     NoHead,
+    #[error("invalid Git revision: {0}")]
+    InvalidRevision(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,125 @@ pub enum DiffAvailability {
     Untracked,
     NoHead,
     GitUnavailable,
+}
+
+/// A Git revision safe to pass as one argument to the `git` process.
+///
+/// Git treats a leading `-` as an option, and `revision:path` uses `:` as a
+/// separator. Rejecting both here keeps every caller on the argument-array path
+/// and gives later history UI one validation rule rather than several subtly
+/// different command-specific ones.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Revision(String);
+
+impl Revision {
+    pub fn parse(value: impl Into<String>) -> Result<Self, DiffError> {
+        let value = value.into();
+        if value.is_empty()
+            || value.starts_with('-')
+            || value.contains(':')
+            || value.contains('\0')
+            || value.contains('\n')
+            || value.contains('\r')
+        {
+            return Err(DiffError::InvalidRevision(value));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn head() -> Self {
+        Self("HEAD".to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A discovered Git repository. Discovery is separate from file resolution so
+/// later history and workspace queries can reuse one root without repeatedly
+/// asking Git for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repository {
+    pub root: PathBuf,
+}
+
+impl Repository {
+    pub fn discover(path: &Path) -> Result<Self, DiffError> {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let cwd = if path.is_dir() {
+            path.as_path()
+        } else {
+            path.parent().unwrap_or_else(|| Path::new("."))
+        };
+        let root = git_output(cwd, &["rev-parse", "--show-toplevel"])
+            .ok_or(DiffError::GitUnavailable)?;
+        Ok(Self {
+            root: PathBuf::from(root.trim()),
+        })
+    }
+
+    pub fn tracked_path(&self, path: &Path) -> Result<TrackedPath, DiffError> {
+        let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let relative = absolute
+            .strip_prefix(&self.root)
+            .map_err(|_| DiffError::Untracked)?
+            .to_path_buf();
+        let relative_arg = relative.to_string_lossy();
+        if git_output(
+            &self.root,
+            &["ls-files", "--error-unmatch", "--", relative_arg.as_ref()],
+        )
+        .is_none()
+        {
+            return Err(DiffError::Untracked);
+        }
+        Ok(TrackedPath { absolute, relative })
+    }
+
+    pub fn has_revision(&self, revision: &Revision) -> bool {
+        let commit = format!("{}^{{commit}}", revision.as_str());
+        git_output(&self.root, &["rev-parse", "--verify", &commit]).is_some()
+    }
+
+    fn source_at(
+        &self,
+        path: &TrackedPath,
+        revision: &Revision,
+    ) -> Result<Option<String>, DiffError> {
+        let object = format!("{}:{}", revision.as_str(), path.relative.to_string_lossy());
+        if git_output(&self.root, &["cat-file", "-e", &object]).is_none() {
+            return Ok(None);
+        }
+        git_required(&self.root, &["show", &object]).map(Some)
+    }
+}
+
+/// One tracked file expressed both for the filesystem and relative to its Git
+/// repository. Git commands always receive the relative form after `--`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedPath {
+    pub absolute: PathBuf,
+    pub relative: PathBuf,
+}
+
+/// One commit that touched a file, including the path the file had at that
+/// point in history. The path is what lets a selection before a rename load the
+/// right blob instead of treating the current name as a newly added file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub revision: Revision,
+    pub short_revision: String,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
+    pub path: PathBuf,
+}
+
+impl HistoryEntry {
+    pub fn label(&self) -> String {
+        format!("{} — {}", self.short_revision, self.subject)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,78 +379,155 @@ pub struct GitDiff {
     pub repo_root: PathBuf,
     pub old_source: String,
     pub patch: Vec<DiffHunk>,
+    pub base: Revision,
+    pub base_label: String,
 }
 
 /// Resolve the repository and confirm the file can be compared with HEAD.
 pub fn availability(path: &Path) -> DiffAvailability {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let Some(root) = git_output(
-        path.parent().unwrap_or_else(|| Path::new(".")),
-        &["rev-parse", "--show-toplevel"],
-    ) else {
-        return DiffAvailability::GitUnavailable;
+    let repository = match Repository::discover(path) {
+        Ok(repository) => repository,
+        Err(_) => return DiffAvailability::GitUnavailable,
     };
-    let root = PathBuf::from(root.trim());
-    let Ok(relative) = path.strip_prefix(&root) else {
-        return DiffAvailability::Untracked;
-    };
-    let relative = relative.to_string_lossy().into_owned();
-    if git_output(&root, &["ls-files", "--error-unmatch", "--", &relative]).is_none() {
+    if repository.tracked_path(path).is_err() {
         return DiffAvailability::Untracked;
     }
-    if git_output(&root, &["rev-parse", "--verify", "HEAD^{commit}"]).is_none() {
+    if !repository.has_revision(&Revision::head()) {
         return DiffAvailability::NoHead;
     }
     DiffAvailability::Available
 }
 
 /// Load the current file's Git diff against HEAD.
+///
+/// Kept as the existing public shorthand while history views call
+/// `load_diff_against` with the revision selected by the reader.
 pub fn load_diff(path: &Path) -> Result<GitDiff, DiffError> {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let root = match git_output(
-        path.parent().unwrap_or_else(|| Path::new(".")),
-        &["rev-parse", "--show-toplevel"],
-    ) {
-        Some(root) => PathBuf::from(root.trim()),
-        None => return Err(DiffError::GitUnavailable),
-    };
-    let relative = path
-        .strip_prefix(&root)
-        .map_err(|_| DiffError::Untracked)?
+    load_diff_against(path, &Revision::head())
+}
+
+/// Load the working-tree file's Git diff against an explicit base revision.
+pub fn load_diff_against(path: &Path, base: &Revision) -> Result<GitDiff, DiffError> {
+    load_diff_from(path, base, None, base.as_str())
+}
+
+/// Load the working-tree file against an entry returned by `history_for_path`.
+/// Its historical path is significant when the document has been renamed.
+pub fn load_diff_from_history(path: &Path, entry: &HistoryEntry) -> Result<GitDiff, DiffError> {
+    load_diff_from(path, &entry.revision, Some(&entry.path), &entry.label())
+}
+
+fn load_diff_from(
+    path: &Path,
+    base: &Revision,
+    historical_path: Option<&Path>,
+    base_label: &str,
+) -> Result<GitDiff, DiffError> {
+    let repository = Repository::discover(path)?;
+    let tracked = repository.tracked_path(path)?;
+    if !repository.has_revision(base) {
+        if base.as_str() == "HEAD" {
+            return Err(DiffError::NoHead);
+        }
+        return Err(DiffError::Git(format!(
+            "revision {:?} does not name a commit",
+            base.as_str()
+        )));
+    }
+
+    let current = tracked.relative.to_string_lossy().into_owned();
+    let historical = historical_path
+        .unwrap_or(&tracked.relative)
         .to_string_lossy()
         .into_owned();
-    if git_output(&root, &["ls-files", "--error-unmatch", "--", &relative]).is_none() {
-        return Err(DiffError::Untracked);
+    let mut args = vec![
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--text",
+        "--find-renames",
+        "--unified=3",
+        base.as_str(),
+        "--",
+        &current,
+    ];
+    if historical != current {
+        args.push(&historical);
     }
-    if git_output(&root, &["rev-parse", "--verify", "HEAD^{commit}"]).is_none() {
+    let patch = git_required(&repository.root, &args)?;
+    let historical_tracked = TrackedPath {
+        absolute: tracked.absolute.clone(),
+        relative: PathBuf::from(&historical),
+    };
+    let old_source = repository
+        .source_at(&historical_tracked, base)?
+        .unwrap_or_default();
+    Ok(GitDiff {
+        path: tracked.absolute,
+        repo_root: repository.root,
+        old_source,
+        patch: parse_patch(&patch)?,
+        base: base.clone(),
+        base_label: base_label.to_string(),
+    })
+}
+
+/// Commits that touched `path`, newest first, with the file's name at each
+/// commit. Git performs the rename walk; this parser only turns its
+/// record-delimited output into typed entries.
+pub fn history_for_path(path: &Path, limit: usize) -> Result<Vec<HistoryEntry>, DiffError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let repository = Repository::discover(path)?;
+    let tracked = repository.tracked_path(path)?;
+    if !repository.has_revision(&Revision::head()) {
         return Err(DiffError::NoHead);
     }
 
-    let patch = git_required(
-        &root,
+    let count = format!("-{limit}");
+    let relative = tracked.relative.to_string_lossy().into_owned();
+    let output = git_required(
+        &repository.root,
         &[
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--text",
-            "--no-renames",
-            "--unified=3",
-            "HEAD",
+            "log",
+            "--follow",
+            &count,
+            "--date=short",
+            "--format=%x1e%H%x1f%h%x1f%an%x1f%ad%x1f%s",
+            "--name-only",
             "--",
             &relative,
         ],
     )?;
-    let old_source = match git_output(&root, &["cat-file", "-e", &format!("HEAD:{relative}")]) {
-        Some(_) => git_required(&root, &["show", &format!("HEAD:{relative}")])?,
-        None => String::new(),
-    };
-    Ok(GitDiff {
-        path,
-        repo_root: root,
-        old_source,
-        patch: parse_patch(&patch)?,
-    })
+    parse_history(&output)
+}
+
+fn parse_history(output: &str) -> Result<Vec<HistoryEntry>, DiffError> {
+    let mut entries = Vec::new();
+    for record in output.split('\x1e').filter(|record| !record.trim().is_empty()) {
+        let mut lines = record.lines();
+        let metadata = lines.next().unwrap_or_default();
+        let fields: Vec<&str> = metadata.splitn(5, '\x1f').collect();
+        let [revision, short_revision, author, date, subject] = fields.as_slice() else {
+            return Err(DiffError::Git("Git returned malformed history metadata".to_string()));
+        };
+        let path = lines
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .last()
+            .ok_or_else(|| DiffError::Git("Git returned a history entry without a path".to_string()))?;
+        entries.push(HistoryEntry {
+            revision: Revision::parse((*revision).to_string())?,
+            short_revision: (*short_revision).to_string(),
+            author: (*author).to_string(),
+            date: (*date).to_string(),
+            subject: (*subject).to_string(),
+            path: PathBuf::from(path),
+        });
+    }
+    Ok(entries)
 }
 
 /// Render parsed Git hunks as themed, escaped diff markup.
@@ -340,7 +538,7 @@ pub fn render_body(
     layout: SourceLayout,
 ) -> String {
     if diff.patch.is_empty() {
-        return NO_CHANGES_HTML.to_string();
+        return empty_html(diff);
     }
     let old_lines = highlighter.render_markdown_lines(&diff.old_source);
     let new_lines = highlighter.render_markdown_lines(working_source);
@@ -367,7 +565,28 @@ pub fn render_body(
         html.push_str("</section>");
     }
     html.push_str("</div>");
-    html
+    comparison_html(diff, html)
+}
+
+/// Label non-HEAD comparisons without changing the established HEAD page.
+pub fn comparison_html(diff: &GitDiff, body: String) -> String {
+    if diff.base.as_str() == "HEAD" {
+        return body;
+    }
+    format!(
+        "<div class=\"mdview-diff-context\">Working tree compared with <strong>{}</strong></div>{body}",
+        escape_html(&diff.base_label)
+    )
+}
+
+pub fn empty_html(diff: &GitDiff) -> String {
+    if diff.base.as_str() == "HEAD" {
+        return NO_CHANGES_HTML.to_string();
+    }
+    format!(
+        "<div class=\"mdview-diff-empty\">No changes against {}.</div>",
+        escape_html(&diff.base_label)
+    )
 }
 
 fn render_unified_rows(
@@ -583,6 +802,19 @@ mod tests {
     }
 
     #[test]
+    fn revision_rejects_values_that_can_change_git_argument_meaning() {
+        for invalid in ["", "--help", "HEAD:note.md", "HEAD\nmain", "HEAD\0main"] {
+            assert!(
+                matches!(Revision::parse(invalid), Err(DiffError::InvalidRevision(_))),
+                "accepted unsafe revision {invalid:?}"
+            );
+        }
+        for valid in ["HEAD", "HEAD~2", "main", "refs/tags/v1.0.0", "abc123"] {
+            assert_eq!(Revision::parse(valid).unwrap().as_str(), valid);
+        }
+    }
+
+    #[test]
     fn loads_head_diff_for_a_tracked_file_and_keeps_paths_out_of_the_shell() {
         if Command::new("git").output().is_err() {
             return;
@@ -619,6 +851,110 @@ mod tests {
             .lines
             .iter()
             .any(|line| line.kind == DiffLineKind::Added && line.content.contains("script")));
+    }
+
+    #[test]
+    fn an_explicit_revision_can_be_compared_with_the_working_tree() {
+        if Command::new("git").output().is_err() {
+            return;
+        }
+        let dir = temp_repo();
+        let path = dir.join("note.md");
+        std::fs::write(&path, "# Middle\n").unwrap();
+        let status = Command::new("git")
+            .current_dir(&dir)
+            .args([
+                "-c",
+                "user.name=MDView Test",
+                "-c",
+                "user.email=mdview@example.test",
+                "commit",
+                "-am",
+                "middle",
+                "-q",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::write(&path, "# Working tree\n").unwrap();
+
+        let diff = load_diff_against(&path, &Revision::parse("HEAD~1").unwrap()).unwrap();
+        assert_eq!(diff.old_source, "# Before\n");
+        let text = diff
+            .patch
+            .iter()
+            .flat_map(|hunk| hunk.lines.iter())
+            .map(|line| line.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("# Before"));
+        assert!(text.contains("# Working tree"));
+        assert!(!text.contains("# Middle"));
+    }
+
+    #[test]
+    fn history_keeps_the_path_each_commit_used_across_a_rename() {
+        if Command::new("git").output().is_err() {
+            return;
+        }
+        let dir = temp_repo();
+        let old_path = dir.join("note.md");
+        std::fs::write(&old_path, "# Middle\n").unwrap();
+        let run = |args: &[&str]| {
+            let status = Command::new("git")
+                .current_dir(&dir)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "git command failed: {args:?}");
+        };
+        run(&[
+            "-c",
+            "user.name=MDView Test",
+            "-c",
+            "user.email=mdview@example.test",
+            "commit",
+            "-am",
+            "middle",
+            "-q",
+        ]);
+        let new_path = dir.join("guide.md");
+        std::fs::rename(&old_path, &new_path).unwrap();
+        run(&["add", "-A"]);
+        run(&[
+            "-c",
+            "user.name=MDView Test",
+            "-c",
+            "user.email=mdview@example.test",
+            "commit",
+            "-m",
+            "rename the guide",
+            "-q",
+        ]);
+        std::fs::write(&new_path, "# Working tree\n").unwrap();
+
+        let history = history_for_path(&new_path, 20).unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0].path, PathBuf::from("guide.md"));
+        assert_eq!(history.last().unwrap().path, PathBuf::from("note.md"));
+        assert_eq!(history[0].subject, "rename the guide");
+
+        let diff = load_diff_from_history(&new_path, history.last().unwrap()).unwrap();
+        assert_eq!(diff.old_source, "# Before\n");
+        assert_eq!(diff.base_label, history.last().unwrap().label());
+        assert!(!diff.patch.is_empty());
+    }
+
+    #[test]
+    fn history_respects_its_result_limit() {
+        if Command::new("git").output().is_err() {
+            return;
+        }
+        let dir = temp_repo();
+        let history = history_for_path(&dir.join("note.md"), 1).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history_for_path(&dir.join("note.md"), 0).unwrap(), Vec::new());
     }
 
     #[test]
@@ -758,6 +1094,8 @@ A new paragraph.
             repo_root: PathBuf::from("."),
             old_source: "# Before\n".to_string(),
             patch: parse_patch("@@ -1 +1,2 @@\n-# Before\n+# After\n+<script>alert(1)</script>\n").unwrap(),
+            base: Revision::head(),
+            base_label: "HEAD".to_string(),
         };
         let highlighter = Highlighter::new();
         let unified = render_body(&diff, "# After\n<script>alert(1)</script>\n", &highlighter, SourceLayout::Unified);

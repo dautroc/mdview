@@ -1,0 +1,29 @@
+{
+  "page": "proposal.html",
+  "width": 1120, "height": 640,
+  "openHold": 1000,
+  "loadSettle": 2500,
+  "pages": {
+    "unified": "target/reels/pages/proposal.unified.html",
+    "split": "target/reels/pages/proposal.split.html",
+    "rendered": "target/reels/pages/proposal.rendered.html",
+    "rendered-split": "target/reels/pages/proposal.rendered-split.html"
+  },
+  "seed": ["window.mdviewSetDiffAvailability && window.mdviewSetDiffAvailability(true)"],
+  "bridge": {
+    "openHistory": {
+      "js": "window.mdviewSetHistory([{revision:'abc123',short:'abc123',author:'Mina Chen',date:'2026-08-30',subject:'Clarify the retry policy'},{revision:'def456',short:'def456',author:'Sam Lee',date:'2026-08-24',subject:'Add backpressure guidance'},{revision:'987fed',short:'987fed',author:'Mina Chen',date:'2026-08-18',subject:'Write the initial proposal'}], null)"
+    },
+    "selectHistory:": { "load": "unified" },
+    "setDiffLayout:": { "loadByArg": "%s" },
+    "*": { "ignore": true }
+  },
+  "steps": [
+    { "key": "g h", "settle": 500, "hold": 1400 },
+    { "type": "#mdview-history-search", "text": "retry", "hold": 1400 },
+    { "key": "Enter", "settle": 900, "hold": 1800 },
+    { "key": "g l", "settle": 900, "hold": 1800 },
+    { "key": "g l", "settle": 900, "hold": 1800 },
+    { "key": "g l", "settle": 900, "hold": 2200 }
+  ]
+}

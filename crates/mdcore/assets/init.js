@@ -1881,9 +1881,233 @@
   }
 
 
+  // ---- Document history palette --------------------------------------------
+
+  var historyEntries = [];
+  var historyRows = [];
+  var historyMatches = [];
+  var historyIndex = -1;
+  var historyLoading = false;
+  var historyError = null;
+
+  function historyPaletteEl() {
+    return document.getElementById("mdview-history-palette");
+  }
+
+  function historyPaletteInput() {
+    return document.getElementById("mdview-history-search");
+  }
+
+  function historyPaletteIsOpen() {
+    var el = historyPaletteEl();
+    return !!el && !el.hidden;
+  }
+
+  function buildHistoryPalette() {
+    var overlay = document.createElement("div");
+    overlay.id = "mdview-history-palette";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Document history");
+
+    var panel = document.createElement("div");
+    panel.className = "mdview-palette-panel";
+
+    var input = document.createElement("input");
+    input.type = "text";
+    input.id = "mdview-history-search";
+    input.className = "mdview-palette-search";
+    input.placeholder = "Document history";
+    input.setAttribute("aria-label", "Search document history");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    panel.appendChild(input);
+
+    var list = document.createElement("div");
+    list.className = "mdview-palette-list";
+    list.id = "mdview-history-list";
+    list.setAttribute("role", "listbox");
+    panel.appendChild(list);
+
+    var empty = document.createElement("p");
+    empty.className = "mdview-palette-empty";
+    empty.id = "mdview-history-empty";
+    panel.appendChild(empty);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function (event) {
+      if (event.target === overlay) closeHistoryPalette();
+    });
+    input.addEventListener("input", function () {
+      filterHistory(input.value);
+    });
+    return overlay;
+  }
+
+  window.mdviewSetHistory = function (entries, error) {
+    historyEntries = Array.isArray(entries) ? entries : [];
+    historyLoading = false;
+    historyError = error || null;
+    if (historyPaletteIsOpen()) {
+      renderHistoryRows();
+      var input = historyPaletteInput();
+      filterHistory(input ? input.value : "");
+    }
+  };
+
+  function renderHistoryRows() {
+    var list = document.getElementById("mdview-history-list");
+    if (!list) return;
+    list.textContent = "";
+    historyRows = [];
+    historyMatches = [];
+    historyIndex = -1;
+    for (var i = 0; i < historyEntries.length; i++) {
+      (function (entry) {
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "mdview-palette-row mdview-history-row";
+        row.setAttribute("role", "option");
+        row.setAttribute("data-revision", entry.revision);
+        row.title = entry.revision;
+
+        var subject = document.createElement("span");
+        subject.className = "mdview-palette-name";
+        subject.textContent = entry.subject || "(no commit subject)";
+        row.appendChild(subject);
+
+        var meta = document.createElement("span");
+        meta.className = "mdview-palette-dir";
+        meta.textContent = [entry.short, entry.author, entry.date].filter(Boolean).join("  ·  ");
+        row.appendChild(meta);
+        row.setAttribute("data-search", row.textContent.toLowerCase());
+        row.addEventListener("mouseenter", function () {
+          highlightHistory(historyMatches.indexOf(row));
+        });
+        row.addEventListener("click", function () {
+          selectHistory(row);
+        });
+        list.appendChild(row);
+        historyRows.push(row);
+      })(historyEntries[i]);
+    }
+  }
+
+  function highlightHistory(index) {
+    if (!historyMatches.length) {
+      historyIndex = -1;
+      return;
+    }
+    var count = historyMatches.length;
+    historyIndex = ((index % count) + count) % count;
+    for (var i = 0; i < historyRows.length; i++) {
+      historyRows[i].classList.remove("is-current");
+      historyRows[i].setAttribute("aria-selected", "false");
+    }
+    var row = historyMatches[historyIndex];
+    row.classList.add("is-current");
+    row.setAttribute("aria-selected", "true");
+    if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function filterHistory(query) {
+    var needle = (query || "").toLowerCase().trim();
+    historyMatches = [];
+    for (var i = 0; i < historyRows.length; i++) {
+      var hay = historyRows[i].getAttribute("data-search") || "";
+      var hit = !needle || hay.indexOf(needle) >= 0;
+      historyRows[i].hidden = !hit;
+      if (hit) historyMatches.push(historyRows[i]);
+    }
+    var empty = document.getElementById("mdview-history-empty");
+    if (empty) {
+      empty.textContent = historyLoading
+        ? "Loading history…"
+        : historyError
+          ? historyError
+          : historyRows.length
+            ? "No commits match."
+            : "This file has no commit history.";
+      empty.hidden = historyMatches.length > 0;
+    }
+    if (historyMatches.length) highlightHistory(0);
+    else historyIndex = -1;
+  }
+
+  function selectHistory(row) {
+    if (!row) return;
+    var revision = row.getAttribute("data-revision");
+    if (!revision) return;
+    closeHistoryPalette();
+    postToHost("selectHistory:" + encodeURIComponent(revision));
+  }
+
+  function closeHistoryPalette() {
+    var overlay = historyPaletteEl();
+    if (!overlay) return;
+    var input = historyPaletteInput();
+    if (input) input.blur();
+    overlay.hidden = true;
+  }
+
+  function openHistoryPalette() {
+    exitVisual();
+    var overlay = historyPaletteEl() || buildHistoryPalette();
+    overlay.hidden = false;
+    historyEntries = [];
+    historyLoading = true;
+    historyError = null;
+    renderHistoryRows();
+    var input = historyPaletteInput();
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    filterHistory("");
+    if (!postToHost("openHistory")) {
+      historyLoading = false;
+      historyError = "Document history needs the MDView app.";
+      filterHistory("");
+    }
+  }
+
+  window.mdviewOpenHistory = openHistoryPalette;
+
+  function toggleHistoryPalette() {
+    if (historyPaletteIsOpen()) closeHistoryPalette();
+    else openHistoryPalette();
+  }
+
+  function onHistoryPaletteKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        closeHistoryPalette();
+        break;
+      case "Enter":
+        event.preventDefault();
+        selectHistory(historyMatches[historyIndex]);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        highlightHistory(historyIndex + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        highlightHistory(historyIndex - 1);
+        break;
+      default:
+        break;
+    }
+  }
+
   // ---- Command palette ------------------------------------------------------
   //
-  // The third palette on the same shell, and the only one with no list of its
+  // The next palette on the same shell, and the only one with no list of its
   // own: its rows ARE the SHORTCUTS table, read at open time. A command is in
   // the palette because it is documented, so the two can never disagree, and
   // the key it names is the one the dispatcher would have run.
@@ -4350,6 +4574,7 @@
     {
       title: "View",
       items: [
+        { keys: ["g h"], hint: "g  h", label: "Document history", run: toggleHistoryPalette },
         { keys: ["g d"], hint: "g  d", label: "Diff and back to Markdown", run: toggleDiffKey },
         { keys: ["g l"], hint: "g  l", label: "Diff layout: source or rendered, one column or two", run: cycleDiffLayout },
         { keys: ["z"], hint: "z", label: "Zoom the nearest image", run: zoomNearest },
@@ -4584,6 +4809,11 @@
     // any of them goes through this handler, and it returns above.
     if (recentPaletteIsOpen()) {
       onRecentPaletteKey(event);
+      return;
+    }
+
+    if (historyPaletteIsOpen()) {
+      onHistoryPaletteKey(event);
       return;
     }
 
