@@ -3,6 +3,19 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.24.1](https://github.com/dautroc/mdview/releases/tag/v0.24.1) — 2026-09-07
+
+### Fixes
+
+- **The Review Inbox and its copy prompt work while a workspace is still
+  opening.** `C` (and File → Copy Review Inbox Prompt) could report “The Review
+  Inbox is still being indexed” until the whole workspace analysis finished,
+  because the review index was built only as part of the link-graph pass. The
+  index only needs the file allowlist the snapshot already has, so it is now
+  built the moment the snapshot arrives; the prompt and the inbox are ready
+  immediately, and the full analysis still replaces it with the authoritative
+  index when it completes.
+
 ## [v0.24.0](https://github.com/dautroc/mdview/releases/tag/v0.24.0) — 2026-09-07
 
 ### What's new
