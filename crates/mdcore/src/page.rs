@@ -752,6 +752,47 @@ mod tests {
         }
     }
 
+    /// Paging animates and line motion does not, and the split is the whole
+    /// point: half a page is far enough that arriving instantly costs the
+    /// reader their place, while a held ⌃e has to track the key exactly and
+    /// cannot afford one queued animation per repeat. Both halves are a single
+    /// call each, and either would be easy to "tidy" into the other.
+    #[test]
+    fn paging_animates_and_line_motion_does_not() {
+        let js = assets::INIT_JS;
+        for run in [
+            "run: function () { scrollPage(halfPage()); }",
+            "run: function () { scrollPage(-halfPage()); }",
+            "run: function () { scrollPage(pageStep()); }",
+            "run: function () { scrollPage(-pageStep()); }",
+        ] {
+            assert!(js.contains(run), "a page must scroll smoothly: {run}");
+        }
+        for run in [
+            "run: function () { scrollLines(SCROLL_LINE); }",
+            "run: function () { scrollLines(-SCROLL_LINE); }",
+        ] {
+            assert!(js.contains(run), "a line must scroll instantly: {run}");
+        }
+        // Without the chain, "d d d" pressed quickly reads an intermediate
+        // position three times and travels barely one half page. Nothing about
+        // the view would look wrong; it would just go the wrong distance.
+        let start = js.find("function scrollPage(").expect("the paging primitive");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        assert!(
+            body.contains("lastScrollSpan"),
+            "scrollPage must chain from the last target, not from a live scrollY"
+        );
+        // And the chain has to lapse. A span that outlived its animation would
+        // let a reader who wheeled back up half a paragraph press d and travel
+        // a whole page, chaining off a target reached minutes ago.
+        assert!(
+            body.contains("SCROLL_CHAIN_MS"),
+            "the chain must expire, or a stale target keeps being scrolled from"
+        );
+    }
+
     /// The command palette's rows ARE the SHORTCUTS table, walked when it
     /// opens. A separate list of commands would be a second thing to keep in
     /// sync with the keys, and the first one to drift -- so what is guarded is

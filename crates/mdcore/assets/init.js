@@ -4995,6 +4995,11 @@
   // the smooth scroll has reached -- without this, "]]]" pressed quickly reads
   // an intermediate position three times and lands one heading along.
   var HEADING_CHAIN_MS = 700;
+  // The same idea for d, u, ⌃f and ⌃b, and long enough to outlast the smooth
+  // scroll a press starts: a second press inside the window carries on from
+  // where the last one was HEADING FOR, so "d d d" travels three half pages
+  // rather than reading an intermediate position three times.
+  var SCROLL_CHAIN_MS = 700;
   // Breathing room above a heading the jump lands on.
   var HEADING_MARGIN = 12;
   // A heading nearer the top than this is the one you are standing on rather
@@ -5010,9 +5015,10 @@
     return Math.max(0, (doc.scrollHeight || 0) - window.innerHeight);
   }
 
-  // Instant, deliberately. Smooth scrolling on a held j queues one animation
-  // per repeat and they fight each other; line-at-a-time motion has to track
-  // the key exactly.
+  // Instant, deliberately, and only for line-at-a-time motion, which has to
+  // track the key exactly: smooth scrolling on a held j or a held Ctrl+e queues
+  // one animation per repeat and they fight each other. A page is far enough to
+  // be worth animating -- see scrollPage.
   function scrollLines(px) {
     window.scrollBy(0, px);
   }
@@ -5026,6 +5032,38 @@
     } catch (err) {
       window.scrollTo(0, target);
     }
+  }
+
+  // A half page or a whole one is far enough that arriving instantly costs the
+  // reader their place: the animation is what tells them the text slid rather
+  // than changed. Line motion stays instant -- see scrollLines.
+  //
+  // Chained from the last TARGET, not from window.scrollY, which mid-animation
+  // reads an intermediate position and would leave "d d d" barely one half page
+  // along -- the reason "] ] ]" needs lastHeadingJump.
+  //
+  // The chain only stands while the last press could still be animating, and
+  // only while the reader is somewhere on the span it was crossing. Both
+  // guards earn their place: without the window, wheeling back up half a
+  // paragraph to re-read something and pressing d again would chain off a
+  // target reached minutes ago and travel a whole page; without the span, a
+  // wheel or a j inside the window would be scrolled straight past. Once
+  // neither holds, the live position is the honest base -- and once the
+  // animation has landed the two agree anyway.
+  var lastScrollSpan = null; // { from, to, at } -- what the last press aimed across
+
+  function scrollPage(px) {
+    var now = window.scrollY;
+    var base = now;
+    if (lastScrollSpan &&
+        Date.now() - lastScrollSpan.at < SCROLL_CHAIN_MS &&
+        now >= Math.min(lastScrollSpan.from, lastScrollSpan.to) &&
+        now <= Math.max(lastScrollSpan.from, lastScrollSpan.to)) {
+      base = lastScrollSpan.to;
+    }
+    var to = Math.min(maxScrollY(), Math.max(0, base + px));
+    lastScrollSpan = { from: now, to: to, at: Date.now() };
+    scrollToY(to);
   }
 
   function halfPage() {
@@ -5221,10 +5259,10 @@
     {
       title: "Scrolling",
       items: [
-        { keys: ["d", "Ctrl+d"], hint: "d", label: "Half a page down", run: function () { scrollLines(halfPage()); } },
-        { keys: ["u", "Ctrl+u"], hint: "u", label: "Half a page up", run: function () { scrollLines(-halfPage()); } },
-        { vim: true, keys: ["Ctrl+f"], hint: "⌃f", label: "A page down", run: function () { scrollLines(pageStep()); } },
-        { vim: true, keys: ["Ctrl+b"], hint: "⌃b", label: "A page up", run: function () { scrollLines(-pageStep()); } },
+        { keys: ["d", "Ctrl+d"], hint: "d", label: "Half a page down", run: function () { scrollPage(halfPage()); } },
+        { keys: ["u", "Ctrl+u"], hint: "u", label: "Half a page up", run: function () { scrollPage(-halfPage()); } },
+        { vim: true, keys: ["Ctrl+f"], hint: "⌃f", label: "A page down", run: function () { scrollPage(pageStep()); } },
+        { vim: true, keys: ["Ctrl+b"], hint: "⌃b", label: "A page up", run: function () { scrollPage(-pageStep()); } },
         { vim: true, keys: ["Ctrl+e"], hint: "⌃e", label: "A line down, leaving the cursor", run: function () { scrollLines(SCROLL_LINE); } },
         { vim: true, keys: ["Ctrl+y"], hint: "⌃y", label: "A line up, leaving the cursor", run: function () { scrollLines(-SCROLL_LINE); } },
       ],
