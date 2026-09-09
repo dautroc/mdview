@@ -3,6 +3,32 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.25.0](https://github.com/dautroc/mdview/releases/tag/v0.25.0) — 2026-09-09
+
+### What's new
+
+- **A half page and a page now slide rather than cut.** `d` / `u` and `⌃f` /
+  `⌃b` used to arrive instantly, and at that distance nothing on screen tells
+  you whether the text moved or changed — you land on a paragraph with no sense
+  of where it came from. They now animate, which is what `g g`, `G`, `]` and
+  `[` have always done, and for the same reason: the motion is the part that
+  says you travelled.
+- **Line motion is left alone.** `⌃e`, `⌃y`, `j` and `k` still cut, because a
+  held key has to track the key exactly and smooth scrolling on a repeat queues
+  one animation per press for them all to fight over. The split is now the
+  point rather than an oversight: far enough to lose your place animates, a
+  line at a time does not.
+- **A held `d` still travels the distance it should.** Reading the scroll
+  position while an animation is in flight gives an intermediate answer, so
+  `d d d` pressed quickly would have gone barely one half page. Each press
+  carries on from where the last one was heading instead — the same trick
+  `] ] ]` needs — and stops doing so once the press is old enough, or once you
+  have wheeled off the stretch it was crossing, so scrolling by hand between
+  two presses is not scrolled past.
+- **The cursor still ends up where you are reading.** It is dragged to the edge
+  you scrolled towards across the animation rather than in one step, and lands
+  in the same place, so `j` carries on from the text now in front of you.
+
 ## [v0.24.1](https://github.com/dautroc/mdview/releases/tag/v0.24.1) — 2026-09-07
 
 ### Fixes
