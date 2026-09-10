@@ -209,9 +209,32 @@
     resetBtn.addEventListener("click", resetZoom);
 
     stage.addEventListener("wheel", onWheel, { passive: false });
+    stage.addEventListener("gesturestart", onGestureStart, { passive: false });
+    stage.addEventListener("gesturechange", onGestureChange, { passive: false });
+    stage.addEventListener("gestureend", onGestureEnd, { passive: false });
     stage.addEventListener("mousedown", onMouseDown);
 
     return overlay;
+  }
+
+  // The content is kept inside the stage: an axis it does not fill stays
+  // centred on, and one it overflows cannot have its edge pulled inside the
+  // stage. Every pan goes through applyTransform, so this holds for the drag
+  // and the keys too -- but it is the two-finger scroll that needs it, because
+  // an inertial flick would otherwise carry the diagram out of sight and leave
+  // the stage empty with nothing on screen saying which way to scroll back.
+  function clampPan(overlay) {
+    var rect = overlay._stage.getBoundingClientRect();
+    var w = zoomState.baseW * zoomState.scale;
+    var h = zoomState.baseH * zoomState.scale;
+    zoomState.x =
+      w <= rect.width
+        ? (rect.width - w) / 2
+        : clamp(zoomState.x, rect.width - w, 0);
+    zoomState.y =
+      h <= rect.height
+        ? (rect.height - h) / 2
+        : clamp(zoomState.y, rect.height - h, 0);
   }
 
   // Zoom RESIZES the content rather than scaling a painted copy of it. WebKit
@@ -226,6 +249,7 @@
   function applyTransform() {
     var overlay = document.getElementById("mdview-lightbox");
     if (!overlay || !zoomState) return;
+    clampPan(overlay);
     var pan = "translate(" + zoomState.x + "px, " + zoomState.y + "px)";
     var content = overlay._inner.firstElementChild;
     if (content && zoomState.resizable) {
@@ -270,8 +294,45 @@
     applyTransform();
   }
 
-  // A macOS trackpad pinch arrives as a wheel event with ctrlKey true; both
-  // it and an ordinary wheel scroll are handled through this one path.
+  // WebKit reports a trackpad pinch as its own gesture event, and WKWebView is
+  // WebKit -- so this, not the ctrl-wheel other engines send, is the pinch that
+  // actually arrives here. `scale` is cumulative from the gesture's start, so
+  // each change zooms by the ratio since the last one, about the pointer.
+  var gestureScale = 0;
+
+  function onGestureStart(event) {
+    if (!zoomState) return;
+    event.preventDefault();
+    gestureScale = event.scale || 1;
+  }
+
+  function onGestureChange(event) {
+    if (!zoomState || !gestureScale) return;
+    event.preventDefault();
+    var scale = event.scale || 1;
+    var overlay = document.getElementById("mdview-lightbox");
+    var rect = overlay._stage.getBoundingClientRect();
+    zoomAbout(
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      scale / gestureScale
+    );
+    gestureScale = scale;
+  }
+
+  function onGestureEnd(event) {
+    if (!zoomState) return;
+    event.preventDefault();
+    gestureScale = 0;
+  }
+
+  // A two-finger scroll pans the diagram, which is what the gesture does
+  // everywhere else on the machine -- it used to zoom, leaving a drag as the
+  // only way to reach the rest of a diagram you had zoomed into. Zooming is the
+  // pinch (handled above), so a mouse wheel pans too, and ⌘ or ⌃ held with it
+  // zooms: the escape hatch for a pointer with no second finger, and the
+  // ctrl-wheel a non-WebKit engine would report a pinch as.
+  //
   // preventDefault() keeps the page behind from scrolling and keeps the
   // gesture from falling through to the app's own page-zoom.
   function onWheel(event) {
@@ -279,10 +340,25 @@
     event.preventDefault();
     var overlay = document.getElementById("mdview-lightbox");
     var rect = overlay._stage.getBoundingClientRect();
-    var cx = event.clientX - rect.left;
-    var cy = event.clientY - rect.top;
-    var factor = Math.exp(-event.deltaY * 0.0015);
-    zoomAbout(cx, cy, factor);
+    // A trackpad reports pixels, but a wheel under some drivers reports lines
+    // or pages; both are converted so one step of either moves a sane amount.
+    var lines = event.deltaMode === 1;
+    var pages = event.deltaMode === 2;
+    var dx = event.deltaX * (lines ? 16 : pages ? rect.width : 1);
+    var dy = event.deltaY * (lines ? 16 : pages ? rect.height : 1);
+    if (event.ctrlKey || event.metaKey) {
+      // A pinch already being reported as a gesture is not zoomed twice.
+      if (gestureScale) return;
+      zoomAbout(
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+        Math.exp(-dy * 0.0015)
+      );
+      return;
+    }
+    // Scrolling down or right moves the view that way, so the content goes the
+    // other -- the direction the same gesture takes a scrolled page.
+    panBy(-dx, -dy);
   }
 
   function onMouseDown(event) {
@@ -442,6 +518,7 @@
     overlay._inner.innerHTML = "";
     zoomState = null;
     dragState = null;
+    gestureScale = 0;
 
     document.body.style.overflow = savedBodyOverflow;
     window.scrollTo(0, savedScrollY);

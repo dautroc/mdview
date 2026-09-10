@@ -122,8 +122,9 @@ file that never closes it.
   save, anchored to its section, so editing elsewhere in the document does not
   move it. `?` lists the lot.
 - **Click to zoom** an image or a Mermaid diagram to fill the window, or press
-  `z` for whichever one you are looking at. Once it is zoomed, the arrows and
-  `h`/`j`/`k`/`l` pan it.
+  `z` for whichever one you are looking at. Once it is zoomed, pinch to zoom
+  and scroll to move around it; a drag, the arrows and `h`/`j`/`k`/`l` pan it
+  too, and `⌘`/`⌃` with a wheel zooms for a mouse with no second finger.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
 - **Native tabs.** Opening another document adds it to the current window

@@ -752,6 +752,42 @@ mod tests {
         }
     }
 
+    /// In the lightbox a two-finger scroll pans and a pinch zooms, the way
+    /// every other zoomable surface on the machine behaves. The wheel used to
+    /// zoom outright, which left a drag as the only way to reach the rest of a
+    /// diagram -- so what is guarded is that the unmodified wheel pans, that
+    /// the pinch has its own path, and that the pan is clamped: an inertial
+    /// flick would otherwise fling the diagram off an empty stage.
+    #[test]
+    fn a_two_finger_scroll_pans_the_lightbox_and_a_pinch_zooms() {
+        let js = assets::INIT_JS;
+        let start = js.find("function onWheel(").expect("the lightbox wheel handler");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        assert!(
+            body.contains("panBy(-dx, -dy)"),
+            "an unmodified wheel or two-finger scroll must pan, not zoom"
+        );
+        assert!(
+            body.contains("event.ctrlKey || event.metaKey"),
+            "⌘/⌃ with a wheel must stay a zoom, for a pointer with no second finger"
+        );
+        // WKWebView reports a pinch as a gesture event, not as the ctrl-wheel
+        // other engines send: drop these and pinch-to-zoom is simply gone.
+        for listener in ["\"gesturestart\"", "\"gesturechange\"", "\"gestureend\""] {
+            assert!(
+                js.contains(listener),
+                "the pinch arrives as a gesture event: {listener} must be handled"
+            );
+        }
+        let start = js.find("function applyTransform(").expect("the lightbox transform");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        assert!(
+            js[start..end].contains("clampPan(overlay)"),
+            "every pan must be clamped, or a scroll can carry the diagram out of sight"
+        );
+    }
+
     /// Paging animates and line motion does not, and the split is the whole
     /// point: half a page is far enough that arriving instantly costs the
     /// reader their place, while a held ⌃e has to track the key exactly and
