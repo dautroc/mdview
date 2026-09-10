@@ -3,6 +3,28 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.26.0](https://github.com/dautroc/mdview/releases/tag/v0.26.0) — 2026-09-10
+
+### What's new
+
+- **A two-finger scroll now moves a zoomed diagram around.** Every wheel event
+  in the lightbox used to zoom, so the gesture you reach for to see the rest of
+  a diagram you had just magnified changed the magnification instead, and a
+  click-drag was the only way to reach what had gone off the stage. Scrolling
+  pans it now, the way it moves the content of everything else on the machine.
+- **Pinch to zoom.** Zooming is the pinch, which is what a pinch does
+  everywhere else, and it zooms about the pointer so the part you are pinching
+  towards stays under your fingers. `⌘` or `⌃` with a wheel zooms as well, for
+  a mouse with no second finger; a drag, the arrows and `h`/`j`/`k`/`l` still
+  pan, and one notch of a plain mouse wheel pans by a sane distance rather than
+  by three lines.
+- **The diagram can no longer be flung off the stage.** The pan was unbounded,
+  which a drag makes hard to notice — you stop dragging — but a trackpad flick
+  carries momentum, and it would leave you looking at an empty stage with
+  nothing on screen saying which way to scroll back. An axis the diagram does
+  not fill now stays centred, and one it overflows cannot have its edge pulled
+  inside the stage.
+
 ## [v0.25.0](https://github.com/dautroc/mdview/releases/tag/v0.25.0) — 2026-09-09
 
 ### What's new
