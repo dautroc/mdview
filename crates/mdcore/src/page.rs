@@ -923,6 +923,40 @@ mod tests {
         );
     }
 
+    /// `V` takes the largest unit the document itself names. In prose that is
+    /// the block, because a line there is an artefact of the window width and
+    /// the same paragraph is a different number of lines at every size. Inside
+    /// a <pre> the newlines are the author's, the window cannot move them, and
+    /// the block is the entire listing -- so there it is the line. Collapsing
+    /// this back to one rule would either swallow a whole code listing or
+    /// select a fragment of a reflowed paragraph.
+    #[test]
+    fn visual_block_takes_a_line_in_code_and_a_block_in_prose() {
+        let js = assets::INIT_JS;
+        let start = js.find("function visualRange(").expect("the visual range");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        assert!(
+            body.contains("unitStartAt(") && body.contains("unitEndAfter("),
+            "V must ask what unit applies rather than always taking the block"
+        );
+        assert!(
+            !body.contains("blockStartAt(index, from)"),
+            "expanding straight to the block swallows a whole code listing"
+        );
+        let start = js.find("function isCodeAt(").expect("the code test");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        assert!(
+            js[start..end].contains("\"PRE\""),
+            "a line is only a real thing where the newlines are the author's"
+        );
+        // The cheat sheet is the only documentation this key has.
+        assert!(
+            js.contains("Select whole blocks, or a line of code"),
+            "the ? sheet must say what V actually does"
+        );
+    }
+
     /// Paging animates and line motion does not, and the split is the whole
     /// point: half a page is far enough that arriving instantly costs the
     /// reader their place, while a held ⌃e has to track the key exactly and

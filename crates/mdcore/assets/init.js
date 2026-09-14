@@ -4455,6 +4455,45 @@
     return bounds;
   }
 
+  // What `V` expands to, and why it is not always the block.
+  //
+  // In prose a "line" is an artefact of the window width: the same paragraph is
+  // three lines wide and five lines narrow, so there is no line to select and
+  // the block is the only unit the document actually names. Inside a <pre>
+  // that is reversed -- every newline is a character the author typed, the
+  // window cannot move them, and the block is the whole listing. So the rule is
+  // one rule in both places: take the largest unit the document itself names,
+  // which is the line in code and the block everywhere else.
+  function isCodeAt(index, at) {
+    var runs = runsFor(index, at, at + 1);
+    if (!runs.length) return false;
+    var block = nearestBlock(runs[0].node);
+    return !!(block && block.tagName === "PRE");
+  }
+
+  // The authored line around an offset, clamped to its block so a scan can
+  // never run past the listing into the document around it. The trailing
+  // newline is left out: it is the separator between two lines, not part of
+  // either, and selecting it drags the highlight out to the edge of the block.
+  function lineBoundsAt(index, at) {
+    var blockFrom = blockStartAt(index, at);
+    var blockTo = blockEndAfter(index, at);
+    var from = index.text.lastIndexOf("\n", at - 1) + 1;
+    if (from < blockFrom) from = blockFrom;
+    var to = index.text.indexOf("\n", at);
+    if (to < 0 || to > blockTo) to = blockTo;
+    if (to < from) to = from;
+    return { from: from, to: to };
+  }
+
+  function unitStartAt(index, at) {
+    return isCodeAt(index, at) ? lineBoundsAt(index, at).from : blockStartAt(index, at);
+  }
+
+  function unitEndAfter(index, at) {
+    return isCodeAt(index, at) ? lineBoundsAt(index, at).to : blockEndAfter(index, at);
+  }
+
   function blockStartAt(index, at) {
     var bounds = blockBoundaries(index);
     var from = 0;
@@ -4888,8 +4927,11 @@
     var from = Math.min(visual.anchor, cursorAt);
     var to = Math.min(index.text.length, Math.max(visual.anchor, cursorAt) + 1);
     if (visual.block) {
-      from = blockStartAt(index, from);
-      to = blockEndAfter(index, to - 1);
+      // Each end independently: a selection that starts in code and ends in the
+      // prose below takes the line at one end and the block at the other, which
+      // is what both ends look like on screen.
+      from = unitStartAt(index, from);
+      to = unitEndAfter(index, to - 1);
     }
     return { from: from, to: to };
   }
@@ -5544,7 +5586,7 @@
       title: "Selecting",
       items: [
         { vim: true, keys: ["v"], hint: "v", label: "Select from the cursor", run: function () { toggleVisual(false); } },
-        { vim: true, keys: ["V"], hint: "V", label: "Select whole blocks", run: function () { toggleVisual(true); } },
+        { vim: true, keys: ["V"], hint: "V", label: "Select whole blocks, or a line of code", run: function () { toggleVisual(true); } },
         { vim: true, keys: ["o"], hint: "o", label: "Swap which end you are moving", run: swapVisualEnds },
         { vim: true, keys: ["y"], hint: "y", label: "Copy the selection", run: copyVisual },
         { keys: [], hint: "c", label: "Comment on the selection", run: null },
