@@ -3,6 +3,32 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.27.0](https://github.com/dautroc/mdview/releases/tag/v0.27.0) — 2026-09-14
+
+### What's new
+
+- **A diagram's source is a key away.** `g x` folds the diagram nearest the
+  middle of the window into the Mermaid source that drew it, and `g x` again
+  puts the picture back. A rendered diagram was a picture and nothing else:
+  find skips an `<svg>` outright, so a document could say `A[Client] -->
+  B[Edge]` and searching for `Edge` found nothing, with no way to select or
+  copy a line of it either. The source opens in the document rather than in an
+  overlay, which is what makes it worth having — it is ordinary text the moment
+  it is there, so the cursor, `/`, `n`/`N`, the `s` jump, `v` and the minimap
+  all work on it without learning anything new, and it sits next to the prose
+  that explains it.
+- **It stays open across a save,** and is remembered by the source text rather
+  than by the diagram's position, so editing the document above it does not
+  fold open the wrong one.
+- **`V` takes a line of code rather than the whole listing.** It selects whole
+  blocks, which in prose is the only unit there is — a line in a paragraph is
+  an artefact of the window width, and the same paragraph is three lines wide
+  and five narrow. Inside a fence that reverses: the newlines are the author's,
+  the window cannot move them, and the block is the entire listing, so `V` on
+  one line took all of it. It is now the line in code and the block everywhere
+  else, which is the same rule both times — the largest unit the document
+  itself names.
+
 ## [v0.26.0](https://github.com/dautroc/mdview/releases/tag/v0.26.0) — 2026-09-10
 
 ### What's new
