@@ -140,6 +140,18 @@ img { max-width: 100%; }
 .math-display { display: block; overflow-x: auto; padding: .5rem 0; }
 .mermaid { background: none; text-align: center; }
 
+/* A diagram's source, folded open in its place by `g x`. It is a code block --
+   the bare `pre` rule above already gives it the background, radius, padding
+   and sideways scroll -- and the accent is the only thing that says this is the
+   picture you were just looking at rather than a fence the author wrote. It is
+   a SIBLING of the pre.mermaid, so the centring above never reaches it. */
+.mdview-diagram-source {
+  border-left: .25rem solid var(--link);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  text-align: left;
+}
+
 #mdview-banners { position: sticky; top: 0; z-index: 10; }
 
 .mdview-banner {

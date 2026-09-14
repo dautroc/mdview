@@ -727,6 +727,7 @@ mod tests {
             "\"/\"", "\"n\"", "\"N\"",
             "\"g g\"", "\"g s\"", "\"g o\"", "\"g b\"", "\"g t\"",
             "\"g c\"", "\"g d\"", "\"g l\"", "\"g w\"", "\"g m\"",
+            "\"g x\"",
             "\"h\"", "\"l\"", "\"^\"", "\"$\"",
             "\"v\"", "\"V\"", "\"o\"", "\"y\"", "\"s\"",
             "\"w\"", "\"W\"", "\"e\"", "\"E\"", "\"b\"", "\"B\"",
@@ -785,6 +786,140 @@ mod tests {
         assert!(
             js[start..end].contains("clampPan(overlay)"),
             "every pan must be clamped, or a scroll can carry the diagram out of sight"
+        );
+    }
+
+    /// A diagram's source is folded open BESIDE the picture, never over it.
+    /// Mermaid stamps data-processed on what it has drawn and anything that
+    /// renders into its own output leaves a diagram laid out at zero height,
+    /// broken for good -- so the SVG is never touched and coming back is a flag
+    /// flip. The source leaves the DOM again on the way back, because the find
+    /// walker rejects by tag and class and never by visibility: a block merely
+    /// hidden would still be matched by `/` and still be walked into by the
+    /// cursor.
+    #[test]
+    fn a_diagram_source_is_a_sibling_that_leaves_when_it_is_folded_back() {
+        let js = assets::INIT_JS;
+        let start = js.find("function showDiagramSource(").expect("the fold-open");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let show = &js[start..end];
+        assert!(
+            show.contains("insertBefore") && show.contains("pre.nextSibling"),
+            "the source must be inserted beside the diagram"
+        );
+        assert!(
+            !show.contains("innerHTML"),
+            "writing the diagram's own markup destroys the drawn SVG for good"
+        );
+
+        let start = js.find("function hideDiagramSource(").expect("the fold-back");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        assert!(
+            js[start..end].contains(".remove()"),
+            "a source left hidden in the tree would still be found by / and \
+             walked into by the cursor"
+        );
+    }
+
+    /// `g x` reads the stash that has been written on every render since
+    /// diagrams were added and never once read back. It acts only on a diagram
+    /// that actually drew: one that failed is already showing its own source as
+    /// live text, and folding a second copy in beside it would double every
+    /// find match and strand the cursor. And it rebuilds the highlights,
+    /// because the document's text changed under find, the comment anchors and
+    /// the cursor alike.
+    #[test]
+    fn the_diagram_source_toggle_reads_the_stash_and_rebuilds_the_index() {
+        let js = assets::INIT_JS;
+        let start = js
+            .find("function toggleDiagramSourceKey(")
+            .expect("the g x handler");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let body = &js[start..end];
+        assert!(
+            body.contains("refreshHighlights()"),
+            "the text index, the anchors and the caret would all be stale"
+        );
+        assert!(
+            js.contains("function toggleableDiagrams("),
+            "an undrawn diagram and one inside a rendered diff must be refused"
+        );
+        let start = js.find("function toggleableDiagrams(").expect("the filter");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        let filter = &js[start..end];
+        assert!(
+            filter.contains("querySelector(\"svg\")"),
+            "a diagram that never rendered already shows its source"
+        );
+        assert!(
+            filter.contains("mdview-rdiff-old"),
+            "find and the cursor refuse that subtree; a source there could not be searched"
+        );
+        // The stash (data-mermaid-src) had no reader at all before this: it is
+        // written on every render and was pure cost until the source view.
+        assert!(
+            assets::INIT_JS.matches("data-mermaid-src").count() >= 3,
+            "the stash must be read back, not just written"
+        );
+    }
+
+    /// Mermaid draws into whatever it is handed. A source view restored before
+    /// it has run would hide a <pre> it is about to draw into, which is the
+    /// zero-height diagram the rendered-diff folds already warn about -- so the
+    /// restore waits for the render, and checks the generation, or two
+    /// overlapping reloads both fold the same diagram open.
+    #[test]
+    fn source_views_come_back_only_after_the_diagrams_are_drawn() {
+        let js = assets::INIT_JS;
+        let start = js
+            .find("window.mdviewRenderAll = function")
+            .expect("the render entry point");
+        let end = start + js[start..].find("\n  };").expect("end of fn");
+        let body = &js[start..end];
+        let drawn = body.find("renderDiagrams()").expect("diagrams are drawn");
+        let restored = body
+            .find("restoreDiagramViews()")
+            .expect("source views come back");
+        assert!(
+            drawn < restored,
+            "mermaid would draw into a <pre> already hidden, at zero height"
+        );
+        assert!(
+            body[restored..].contains("refreshHighlights()")
+                || body[..restored].contains("generation !== generation"),
+            "restored source text is text the earlier refreshHighlights never saw"
+        );
+        assert!(
+            body[..restored].contains("window.mdviewRenderState.generation !== generation"),
+            "a superseded render must not fold anything open"
+        );
+    }
+
+    /// A comment is stored as a quote, and a quote taken from a diagram's
+    /// revealed source names words that `g x` can take straight back out of the
+    /// document -- at which point the page reports the comment to the host as
+    /// stale. That is a durable write about text the document never had.
+    #[test]
+    fn a_diagram_source_cannot_hold_a_comment() {
+        let js = assets::INIT_JS;
+        let start = js
+            .find("function insideUncommentableSubtree(")
+            .expect("the refusal");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        assert!(
+            js[start..end].contains("mdview-diagram-source"),
+            "text a key can remove must not be able to anchor a comment"
+        );
+        // ...and the CURSOR must not be bound by that same rule, or j/k, ^/$
+        // and the jump all stop dead at the source they are there to read:
+        // offsetFromPoint probes the DOM through insideUnstableSubtree.
+        let start = js
+            .find("function insideUnstableSubtree(")
+            .expect("the geometry refusal");
+        let end = start + js[start..].find("\n  }").expect("end of fn");
+        assert!(
+            !js[start..end].contains("mdview-diagram-source"),
+            "the cursor must be able to enter a diagram's source"
         );
     }
 

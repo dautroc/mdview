@@ -125,6 +125,11 @@ file that never closes it.
   `z` for whichever one you are looking at. Once it is zoomed, pinch to zoom
   and scroll to move around it; a drag, the arrows and `h`/`j`/`k`/`l` pan it
   too, and `⌘`/`⌃` with a wheel zooms for a mouse with no second finger.
+- **`g x` shows a diagram's source** where the diagram was, and `g x` again puts
+  the picture back. A drawn diagram is otherwise a picture and nothing else —
+  `/` cannot reach a node label, and there is nothing to select. Folded open it
+  is ordinary text in the document, so the cursor, `/`, `n`/`N`, `s` and the
+  minimap all work on it, and it stays open across a save.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
 - **Native tabs.** Opening another document adds it to the current window
@@ -219,6 +224,7 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | g d | Diff against HEAD, and back to Markdown |
 | g l | Diff layout: source or rendered, one column or two |
 | z | Zoom the nearest image or diagram |
+| g x | The nearest diagram's source, and back |
 | g w | Toggle fullwidth view |
 | r | Reload |
 | + / − / 0 | Zoom in / out / actual size |

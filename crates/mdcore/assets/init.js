@@ -527,6 +527,210 @@
     document.removeEventListener("mouseup", onMouseUp);
   }
 
+  // Whichever of these sits nearest the middle of the viewport, which is the
+  // one being read. `boxFor` says what to measure, because a diagram showing
+  // its source is not the box standing in its place. Anything with no box at
+  // all is skipped -- a diagram that failed to render draws nothing.
+  function nearestToViewportMiddle(nodes, boxFor) {
+    var middle = window.innerHeight / 2;
+    var best = null;
+    var bestDistance = Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+      var rect = boxFor(nodes[i]);
+      if (!rect.width && !rect.height) continue;
+      var distance = Math.abs(rect.top + rect.height / 2 - middle);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = nodes[i];
+      }
+    }
+    return best;
+  }
+
+  function elementBox(el) {
+    return el.getBoundingClientRect();
+  }
+
+  // ---- A diagram's source --------------------------------------------------
+  //
+  // A rendered diagram is a picture and nothing else: collectFindTextNodes
+  // rejects <svg> outright, so `/` never reaches a node label and there is
+  // nothing to select or copy. `g x` puts the Mermaid source that drew it back
+  // into the DOCUMENT, where the cursor, find, the jump and the minimap all
+  // already work, rather than into an overlay -- the lightbox is modal and owns
+  // the keyboard, so a source view inside it would have needed its own
+  // scrolling and its own find, and both already exist out here.
+
+  // Stashed on the <pre> before mermaid destroys the text. The fallback is for
+  // a page with no mermaid bundle at all, where stashMermaidSources never ran
+  // and the <pre> still holds the source it was rendered with.
+  // The trailing newline is the fence's, not the diagram's -- render_block
+  // escapes the code block including it, and it would draw as a blank last
+  // line under every diagram's source.
+  function diagramSource(pre) {
+    var stashed = pre.getAttribute("data-mermaid-src");
+    var text = stashed === null ? pre.textContent : stashed;
+    return text.replace(/\n+$/, "");
+  }
+
+  function diagramSourceNode(pre) {
+    var next = pre.nextElementSibling;
+    return next && next.classList.contains("mdview-diagram-source") ? next : null;
+  }
+
+  // The hidden diagram has no box, so the block standing in its place is what
+  // `g x` has to measure to find the one you are looking at.
+  function diagramBox(pre) {
+    return (diagramSourceNode(pre) || pre).getBoundingClientRect();
+  }
+
+  // The diagrams `g x` will act on.
+  //
+  // One that never rendered is excluded because it is ALREADY its own source:
+  // mermaid left the text in place, and hiding the <pre> would not take that
+  // text out of the index -- collectFindTextNodes rejects by tag and class, not
+  // by visibility -- so a second copy would double every find match and strand
+  // the cursor in a region that paints nothing.
+  //
+  // One inside a rendered diff's older version is excluded because find, the
+  // cursor and the comment anchors all deliberately refuse to walk that
+  // subtree. Revealing it would be a source you can see but cannot search.
+  function toggleableDiagrams(content) {
+    var pres = content.querySelectorAll("pre.mermaid");
+    var out = [];
+    for (var i = 0; i < pres.length; i++) {
+      if (!pres[i].querySelector("svg")) continue;
+      if (pres[i].closest(".mdview-rdiff-old")) continue;
+      out.push(pres[i]);
+    }
+    return out;
+  }
+
+  // Shown as a SIBLING, with the diagram merely hidden -- never by rewriting
+  // the <pre>'s own contents. Mermaid stamps data-processed on what it has
+  // drawn, and anything that renders over its own output leaves a diagram at
+  // zero height, broken for good. Leaving the SVG untouched makes coming back
+  // a flag flip that cannot fail.
+  function showDiagramSource(pre) {
+    if (diagramSourceNode(pre)) return;
+    var block = document.createElement("pre");
+    block.className = "mdview-diagram-source";
+    var code = document.createElement("code");
+    code.textContent = diagramSource(pre);
+    block.appendChild(code);
+    pre.parentNode.insertBefore(block, pre.nextSibling);
+    pre.hidden = true;
+    pre.setAttribute("data-mermaid-view", "source");
+  }
+
+  // REMOVED, not hidden. collectFindTextNodes rejects by tag and class, never
+  // by visibility, so a hidden block left in the tree would still be matched by
+  // `/` and still be walked into by the cursor. Absent text is absent, and
+  // nothing else has to learn about this.
+  function hideDiagramSource(pre) {
+    var block = diagramSourceNode(pre);
+    if (block) block.remove();
+    pre.hidden = false;
+    pre.removeAttribute("data-mermaid-view");
+  }
+
+  // Where an element's text begins in the flat index, or -1 when it holds no
+  // text the index carries.
+  function blockStart(index, el) {
+    if (!index || !el) return -1;
+    for (var i = 0; i < index.spans.length; i++) {
+      if (el.contains(index.spans[i].node)) return index.spans[i].start;
+    }
+    return -1;
+  }
+
+  // A save replaces #mdview-content wholesale and takes every source view with
+  // it. MDView holds the scroll position and the cursor across a save, so this
+  // holds too.
+  //
+  // Identity is the SOURCE TEXT, not the diagram's position: a save is an edit,
+  // and an edit that adds or removes a fence higher up the document would make
+  // an ordinal name a different diagram and fold open the wrong one. Two
+  // identical diagrams are consumed one at a time, in order.
+  var diagramSourceViews = [];
+
+  function rememberDiagramViews() {
+    var content = document.getElementById("mdview-content");
+    diagramSourceViews = [];
+    if (!content) return;
+    var pres = content.querySelectorAll("pre.mermaid");
+    for (var i = 0; i < pres.length; i++) {
+      if (pres[i].getAttribute("data-mermaid-view") === "source") {
+        diagramSourceViews.push(diagramSource(pres[i]));
+      }
+    }
+  }
+
+  // Answers whether it changed anything, because the caller has to rebuild the
+  // highlights over the restored text and there is no reason to on the render
+  // where nothing was folded open.
+  function restoreDiagramViews() {
+    var content = document.getElementById("mdview-content");
+    if (!content || !diagramSourceViews.length) return false;
+    var wanted = diagramSourceViews.slice();
+    var pres = toggleableDiagrams(content);
+    var restored = false;
+    for (var i = 0; i < pres.length && wanted.length; i++) {
+      var at = wanted.indexOf(diagramSource(pres[i]));
+      if (at < 0) continue;
+      wanted.splice(at, 1);
+      showDiagramSource(pres[i]);
+      restored = true;
+    }
+    return restored;
+  }
+
+  function toggleDiagramSourceKey() {
+    var content = document.getElementById("mdview-content");
+    if (!content) return;
+    var pre = nearestToViewportMiddle(toggleableDiagrams(content), diagramBox);
+    if (!pre) {
+      showNote(content.querySelector("pre.mermaid")
+        ? "A diagram that never rendered already shows its source."
+        : "No diagram in this document.");
+      return;
+    }
+    // The selection is a pair of offsets into text this is about to move, and
+    // paintVisual would redraw it over whatever now sits there.
+    exitVisual();
+
+    var block = diagramSourceNode(pre);
+    var at = -1;
+    if (block) {
+      // Where the source starts is where the text after the diagram will start
+      // once it is gone, so this offset stays the right place to stand.
+      at = blockStart(cachedIndex(), block);
+      hideDiagramSource(pre);
+    } else {
+      showDiagramSource(pre);
+    }
+    rememberDiagramViews();
+
+    // The document's text changed under find, the comment anchors and the
+    // cursor. This is the one call that rebuilds all three, in the order they
+    // have to be rebuilt in.
+    refreshHighlights();
+
+    var index = cachedIndex();
+    if (!block) at = blockStart(index, diagramSourceNode(pre));
+    // refreshHighlights ends in restoreCursor, which puts the cursor back at a
+    // section-relative offset this toggle has just moved. Land it on what the
+    // key revealed instead: you asked to read this source, so `j` should carry
+    // on into it rather than into wherever the shift left it.
+    if (index && at >= 0) {
+      setCursor(index, at, 1);
+      cursorGoalX = null;
+      rememberCursor(index);
+    }
+    placeCaret();
+    scrollCursorIntoView();
+  }
+
   // Native capture polls this generation-aware state rather than treating
   // navigation completion as render completion.
   var renderGeneration = 0;
@@ -544,6 +748,14 @@
       refreshHighlights();
       window.mdviewRenderPromise = renderDiagrams()
         .then(enhanceZoomables)
+        // Diagrams have to exist and be wrapped before any of them is folded
+        // open again, and the text that reappears is text refreshHighlights
+        // above has not seen -- so it runs a second time, and only when a
+        // source view actually came back.
+        .then(function () {
+          if (window.mdviewRenderState.generation !== generation) return;
+          if (restoreDiagramViews()) refreshHighlights();
+        })
         .then(scheduleMinimapPaint)
         .then(function () {
           if (window.mdviewRenderState.generation === generation) {
@@ -3533,6 +3745,23 @@
 
   // ---- Capturing a selection ------------------------------------------------
 
+  // A comment refuses more than the cursor does.
+  //
+  // insideUnstableSubtree is about text that cannot be POINTED AT -- an SVG's
+  // labels, KaTeX's shadow copy -- and the cursor is bound by the same rule,
+  // because offsetFromPoint reads the same DOM that j and k probe with.
+  //
+  // A diagram's revealed source is the opposite case: it paints, it can be
+  // pointed at, and the cursor belongs in it -- that is the whole feature. What
+  // it cannot do is hold anything DURABLE, because `g x` takes it back out of
+  // the document and the page would then report the comment to the host as
+  // stale: a write about text the document never had.
+  function insideUncommentableSubtree(node) {
+    if (insideUnstableSubtree(node)) return true;
+    var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    return !!(el && el.closest && el.closest(".mdview-diagram-source"));
+  }
+
   function insideUnstableSubtree(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentNode;
     while (el && el !== document.body) {
@@ -3583,7 +3812,7 @@
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
     var range = selection.getRangeAt(0);
     if (!content.contains(range.commonAncestorContainer)) return null;
-    if (insideUnstableSubtree(range.startContainer)) {
+    if (insideUncommentableSubtree(range.startContainer)) {
       showNote("Maths and diagrams cannot hold a comment.");
       return false;
     }
@@ -5242,20 +5471,8 @@
   function zoomNearest() {
     var content = document.getElementById("mdview-content");
     if (!content) return;
-    var nodes = content.querySelectorAll("[data-mdview-zoom]");
-    var middle = window.innerHeight / 2;
-    var best = null;
-    var bestDistance = Infinity;
-    for (var i = 0; i < nodes.length; i++) {
-      var rect = nodes[i].getBoundingClientRect();
-      // Skip anything with no box at all -- a diagram that failed to render.
-      if (!rect.width && !rect.height) continue;
-      var distance = Math.abs(rect.top + rect.height / 2 - middle);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = nodes[i];
-      }
-    }
+    var best = nearestToViewportMiddle(
+      content.querySelectorAll("[data-mdview-zoom]"), elementBox);
     if (best) openLightbox(best);
   }
 
@@ -5411,6 +5628,7 @@
         { keys: ["g d"], hint: "g  d", label: "Diff and back to Markdown", run: toggleDiffKey },
         { keys: ["g l"], hint: "g  l", label: "Diff layout: source or rendered, one column or two", run: cycleDiffLayout },
         { keys: ["z"], hint: "z", label: "Zoom the nearest image", run: zoomNearest },
+        { keys: ["g x"], hint: "g  x", label: "The nearest diagram's source, and back", run: toggleDiagramSourceKey },
         { keys: ["g w"], hint: "g  w", label: "Toggle full width", run: toggleFullWidthKey },
         { keys: ["r"], hint: "r", label: "Reload the document", run: reloadKey },
         { keys: ["+", "="], hint: "+", label: "Zoom in", run: function () { postToHost("zoomIn"); } },
