@@ -3,6 +3,75 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## [v0.28.0](https://github.com/dautroc/mdview/releases/tag/v0.28.0) — 2026-09-17
+
+### What's new
+
+- **Diagrams no longer tangle.** A flow that loops back on itself — a queue
+  that retries, a review that sends work round again — came out with its
+  entry halfway down the picture and the return edges routed back across
+  everything between. That is what the old layout does with a cycle: it
+  breaks the loop wherever the node degrees suggest, which has no idea which
+  node the reader starts at. ELK lays them out now, breaking the loop on the
+  edge a reader following the arrows would call the way back, so the diagram
+  begins where the document does. Routes are orthogonal with rounded corners
+  rather than splines that bulge into whatever is beside them, and there is
+  room between things: the spacing is loosened and the padding around the
+  whole diagram is six times what it was.
+- **A diagram is in the document's colours and the document's typeface.** It
+  used to arrive in Trebuchet MS and a lavender of its own, in every theme —
+  a picture pasted into the page rather than part of it. It now takes the
+  active theme's background, node fill, rules and text, so mocha draws a
+  mocha diagram and chiroptera a chiroptera one, and it reads in the same
+  face as the prose above it. This is the rule v0.17.0 applied to the rest of
+  the document, finally applied to the one thing that had been exempt.
+- **For the diagram that laid out better the old way,** say so in the
+  diagram: a leading `%%{init: {"layout": "dagre"}}%%` puts that one back on
+  the previous engine and leaves every other diagram alone. ELK can lay a
+  wide graph out narrower and taller, and one picture in a document is
+  sometimes worth overriding for.
+- **A document with no diagram no longer carries the machinery to draw one.**
+  Mermaid was inlined into every page whether or not anything used it. It and
+  the new layout engine are five megabytes together, and they are now inlined
+  only into a document that actually draws something; a page of prose is a
+  quarter of what it used to weigh. Saving a document that gains its first
+  diagram rebuilds the page rather than swapping the new text into one with
+  nothing to draw it.
+
+### Fixed
+
+- **The demo tools film the interface again.** v0.24.0 turned `--print-html`
+  into File → Export HTML, and that page deliberately has no sidebar, no
+  minimap and no keyboard handlers — but `make shot` and `make reel` both
+  generate their pages with it. So for four releases a shot photographed a
+  page with no chrome and a reel pressed keys at a page with nothing
+  listening, producing eight copies of one frame. Nothing failed and the
+  document still rendered, which is why it went unnoticed; the only symptom
+  was a GIF in which nothing happened. Both tools now ask for the interactive
+  page, and a test refuses a Makefile that stops asking.
+
+### Notes
+
+- Mermaid moves from 10.9.1 to 11.17.2, which is where the ELK layout,
+  `curve: "rounded"` and `elk.keepEntryNodeOnTop` arrive. Its browser bundle
+  still assigns `globalThis.mermaid`, so the page's nonce-only CSP and its
+  inline `<script>` are unchanged, and `securityLevel: "strict"` stays.
+- `@mermaid-js/layout-elk` ships ESM only and lazily imports 1.6 MB beside
+  itself, which a page built with no base URL cannot resolve.
+  `scripts/vendor-assets.py` bundles it into one plain script with esbuild.
+  That step wants npm, once; the result is committed, and building MDView
+  still asks for no JavaScript toolchain. elkjs runs in-process — nothing
+  constructs a Worker — so `default-src 'none'` is untouched.
+- The Mermaid configuration lived in `init.js` and `export.js` as two
+  byte-identical copies with nothing keeping them in sync. It is one file
+  now, shared by both page runtimes, and a test fails if either starts
+  configuring Mermaid itself.
+- ELK governs the flowchart family. Sequence, state, gantt, pie and ER
+  diagrams keep their own renderers and are changed only by the palette.
+- A cylinder node (`[(Store)]`) that ends a subgraph still overlaps the
+  subgraph's border. That is Mermaid's own shape measurement, it predates
+  this release, and it happens on either layout engine.
+
 ## [v0.27.0](https://github.com/dautroc/mdview/releases/tag/v0.27.0) — 2026-09-14
 
 ### What's new
