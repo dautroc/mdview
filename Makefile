@@ -93,7 +93,7 @@ ifeq ($(FILE),)
 	$(error set FILE to a markdown file, e.g. make shot FILE=README.md)
 endif
 	@mkdir -p target/shots
-	@$(BINARY) --print-html $(if $(THEME),--theme $(THEME),) $(FILE) > target/shots/page.html
+	@$(BINARY) --print-html --interactive $(if $(THEME),--theme $(THEME),) $(FILE) > target/shots/page.html
 	@$(SHOT_BIN) target/shots/page.html $(SHOT_OUT) $(WIDTH) $(HEIGHT) \
 		'$(if $(SIDEBAR),window.mdviewShowSidebarTab("$(if $(filter bookmarks,$(SIDEBAR)),bookmarks,outline)");,) $(JS)'
 
@@ -143,14 +143,14 @@ reel-pages: $(BINARY)
 	@for doc in $(REELS_DIR)/demo/*.md; do \
 		name=$$(basename $$doc .md); \
 		case $$name in changes.*) continue;; esac; \
-		$(BINARY) --print-html --theme $(REEL_THEME) $$doc \
+		$(BINARY) --print-html --interactive --theme $(REEL_THEME) $$doc \
 			> $(REEL_WORK)/pages/$$name.html; \
 	done
 	@# The theme reel commits a theme, and the app answers that by rebuilding
 	@# the page -- so every theme it visits needs its own page, or the frame
 	@# would keep the syntax colours of the theme it just left.
 	@for theme in github solarized-dark mocha chiroptera-dark-hard; do \
-		$(BINARY) --print-html --theme $$theme $(REELS_DIR)/demo/tour.md \
+		$(BINARY) --print-html --interactive --theme $$theme $(REELS_DIR)/demo/tour.md \
 			> $(REEL_WORK)/pages/tour.$$theme.html; \
 	done
 	@rm -rf $(REEL_WORK)/git && mkdir -p $(REEL_WORK)/git
@@ -160,11 +160,11 @@ reel-pages: $(BINARY)
 		&& git -c user.email=reel@localhost -c user.name=reel commit -qm before
 	@cp $(REELS_DIR)/demo/changes.after.md $(REEL_WORK)/git/proposal.md
 	@for layout in unified split rendered rendered-split; do \
-		$(BINARY) --print-html --diff --diff-layout $$layout --theme $(REEL_THEME) \
+		$(BINARY) --print-html --interactive --diff --diff-layout $$layout --theme $(REEL_THEME) \
 			$(REEL_WORK)/git/proposal.md \
 			> $(REEL_WORK)/pages/proposal.$$layout.html; \
 	done
-	@$(BINARY) --print-html --theme $(REEL_THEME) $(REEL_WORK)/git/proposal.md \
+	@$(BINARY) --print-html --interactive --theme $(REEL_THEME) $(REEL_WORK)/git/proposal.md \
 		> $(REEL_WORK)/pages/proposal.html
 	@echo "pages in $(REEL_WORK)/pages"
 

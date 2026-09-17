@@ -19,6 +19,7 @@ fn main() {
     let mut theme = mdcore::Theme::System;
     let mut want_theme = false;
     let mut diff = false;
+    let mut interactive = false;
     let mut diff_layout = mdcore::DiffLayout::Unified;
     let mut want_diff_layout = false;
     let mut diff_base: Option<String> = None;
@@ -75,6 +76,7 @@ fn main() {
 
         match arg.as_str() {
             "--print-html" => print_html = true,
+            "--interactive" => interactive = true,
             "--theme" => want_theme = true,
             "--diff" => diff = true,
             "--diff-layout" => want_diff_layout = true,
@@ -85,8 +87,9 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: mdview [--print-html [--diff [--diff-layout LAYOUT] \
-                     [--diff-base REV]]] [--theme THEME] [FILE...]"
+                    "usage: mdview [--print-html [--interactive] [--diff \
+                     [--diff-layout LAYOUT] [--diff-base REV]]] \
+                     [--theme THEME] [FILE...]"
                 );
                 return;
             }
@@ -99,6 +102,18 @@ fn main() {
             eprintln!("mdview: --print-html requires a file path");
             std::process::exit(2);
         };
+        // Which of the two pages to print. `--print-html` alone is File →
+        // Export HTML from the command line, and that page deliberately drops
+        // the reader's chrome, so it is the wrong thing to hand a tool that
+        // exists to photograph the interface: `make shot` spent from v0.24.0
+        // photographing a page with no sidebar and no key handling, and every
+        // reel filmed one that ignored the keys it was pressing. `shot` and
+        // `reel` ask for the other page; nothing else does.
+        let purpose = if interactive {
+            mdcore::RenderPurpose::Interactive
+        } else {
+            mdcore::RenderPurpose::Print
+        };
         // The diff is a whole other page -- build_diff_page, not a state the
         // normal one can be put into -- so printing it needs its own branch
         // rather than a flag threaded through render_document. Without this
@@ -109,14 +124,14 @@ fn main() {
             let rendered = match diff_base {
                 Some(base) => match mdcore::Revision::parse(base) {
                     Ok(base) => mdcore::render_diff_document_against_for_with(
-                        path, &highlighter, theme, diff_layout, &base, mdcore::RenderPurpose::Print,
+                        path, &highlighter, theme, diff_layout, &base, purpose,
                     ),
                     Err(err) => {
                         eprintln!("mdview: {err}");
                         std::process::exit(2);
                     }
                 },
-                None => mdcore::render_diff_document_for_with(path, &highlighter, theme, diff_layout, mdcore::RenderPurpose::Print),
+                None => mdcore::render_diff_document_for_with(path, &highlighter, theme, diff_layout, purpose),
             };
             match rendered {
                 Ok(doc) => doc.html,
@@ -127,7 +142,7 @@ fn main() {
             }
         } else {
             let highlighter = mdcore::Highlighter::new();
-            match mdcore::render_document_for_with(path, &highlighter, theme, mdcore::RenderPurpose::Print) {
+            match mdcore::render_document_for_with(path, &highlighter, theme, purpose) {
                 Ok(doc) => doc.html,
                 Err(err) => {
                     eprintln!("mdview: {err}");
@@ -141,6 +156,11 @@ fn main() {
 
     if diff {
         eprintln!("mdview: --diff only applies to --print-html");
+        std::process::exit(2);
+    }
+
+    if interactive {
+        eprintln!("mdview: --interactive only applies to --print-html");
         std::process::exit(2);
     }
     if diff_base.is_some() {
@@ -635,6 +655,36 @@ mod bundle_version_tests {
         let app = include_str!("app.rs");
         assert!(app.contains("#[unsafe(method(showShortcuts:))]"));
         assert!(app.contains("crate::state::shortcuts_script()"));
+    }
+
+    /// Every page `shot` and `reel` generate has to be the interactive one.
+    /// The two tools exist to show what the interface DOES, and the export
+    /// page has no interface: from v0.24.0, when `--print-html` became File →
+    /// Export HTML, `make shot SIDEBAR=1` opened a sidebar that was not in the
+    /// page and every reel filmed eight copies of one frame. Nothing failed --
+    /// the document still rendered -- so the assertion has to be here.
+    #[test]
+    fn every_page_the_demo_tools_generate_is_the_interactive_one() {
+        let makefile = include_str!("../../../Makefile");
+        let start = makefile.find("\nshot:").expect("the shot rule");
+        let end = makefile[start..].find("\nreel:").expect("the reel rule") + start;
+        let tools = &makefile[start..end];
+        let generators: Vec<&str> = tools
+            .lines()
+            .filter(|line| line.contains("--print-html"))
+            .collect();
+        assert!(
+            generators.len() >= 5,
+            "expected shot and every reel page generator, saw {}",
+            generators.len()
+        );
+        for line in generators {
+            assert!(
+                line.contains("--interactive"),
+                "this page would be the export one, which has no interface to film: {}",
+                line.trim()
+            );
+        }
     }
 
     /// A save that adds a document's FIRST diagram has to rebuild the page,

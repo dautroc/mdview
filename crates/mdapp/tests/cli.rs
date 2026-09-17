@@ -264,3 +264,69 @@ fn rendered_html_is_self_contained_export_output() {
     assert_eq!(html.matches("<link").count(), 0);
     assert_eq!(html.matches("src=\"http").count(), 0);
 }
+
+/// `--print-html` is File → Export HTML from the command line, and that page
+/// deliberately has no sidebar, no key handling and no lightbox. `make shot`
+/// and `make reel` exist to photograph exactly those things, so they ask for
+/// the other page. Between v0.24.0 and this flag they did not, and neither
+/// said so: a shot of a page with no chrome still looks like a shot, and a
+/// reel of a page that ignores keys is eight copies of one frame.
+#[test]
+fn interactive_flag_prints_the_page_the_app_shows_rather_than_the_export() {
+    let path = fixture_file(
+        "interactive.md",
+        "# Interactive\n\nProse, a [link](other.md), and a diagram:\n\n\
+         ```mermaid\ngraph TD;\nA --> B;\n```\n",
+    );
+
+    let export = run_print_html(&path, &[]);
+    let interactive = run_print_html(&path, &["--interactive"]);
+
+    assert!(export.contains("data-purpose=\"print\""));
+    assert!(interactive.contains("data-purpose=\"interactive\""));
+
+    // The chrome a reel presses keys against and a shot photographs. Each of
+    // these is something a committed reel actually films.
+    for chrome in [
+        "id=\"mdview-banners\"",
+        "id=\"mdview-sidebar\"",
+        "id=\"mdview-minimap\"",
+        "id=\"mdview-find\"",
+    ] {
+        assert!(interactive.contains(chrome), "interactive page is missing {chrome}");
+        assert!(!export.contains(chrome), "export page grew {chrome}");
+    }
+
+    // Both still draw the document itself, and both still wait for diagrams
+    // before they call themselves ready -- the flag picks a runtime, not a
+    // different renderer.
+    for shared in ["pre class=\"mermaid\"", "window.mdviewRenderState", "status = \"ready\""] {
+        assert!(interactive.contains(shared), "interactive page is missing {shared}");
+        assert!(export.contains(shared), "export page is missing {shared}");
+    }
+}
+
+/// The flag says which page `--print-html` prints, so on its own it would
+/// silently do nothing -- the way `--diff` already refuses to.
+#[test]
+fn interactive_without_print_html_exits_two() {
+    let path = fixture_file("lonely.md", "# Lonely\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_mdview"))
+        .arg("--interactive")
+        .arg(&path)
+        .output()
+        .expect("failed to run mdview");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--interactive"));
+}
+
+fn run_print_html(path: &std::path::Path, extra: &[&str]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_mdview"));
+    command.arg("--print-html");
+    for flag in extra {
+        command.arg(flag);
+    }
+    let output = command.arg(path).output().expect("failed to run mdview");
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap()
+}
