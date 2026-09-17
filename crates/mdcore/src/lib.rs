@@ -48,6 +48,11 @@ pub struct RenderedDoc {
     pub base_dir: PathBuf,
     /// True when the file was not valid UTF-8 and was decoded lossily.
     pub lossy: bool,
+    /// Whether this page carries the Mermaid runtime, which it does only when
+    /// the body has a diagram in it. A live reload that swaps a new body into
+    /// this page has to know: a save that adds a document's first diagram
+    /// lands in a page with no Mermaid, and needs the page rebuilt around it.
+    pub has_diagrams: bool,
     pub image_warnings: Vec<ImageWarning>,
 }
 
@@ -77,6 +82,7 @@ pub fn render_document_for_with(
     let body = render::render_body_in(&doc.source, highlighter, Some(&doc.base_dir));
     let image_warnings = render::image_warnings(&doc.source, &doc.base_dir);
     Ok(RenderedDoc {
+        has_diagrams: page::needs_diagrams(&body),
         html: page::build_page_for(&doc, &body, theme, purpose),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
@@ -138,6 +144,7 @@ pub fn render_diff_document_against_for_with(
     let diff = diff::load_diff_against(&doc.path, base)?;
     let body = diff_body(&doc, &diff, highlighter, layout);
     Ok(RenderedDoc {
+        has_diagrams: page::needs_diagrams(&body),
         html: page::build_diff_page_for(&doc, &body, theme, layout, purpose),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,
@@ -182,6 +189,7 @@ fn render_diff_document(
     };
     let body = diff_body(&doc, &diff, highlighter, layout);
     Ok(RenderedDoc {
+        has_diagrams: page::needs_diagrams(&body),
         html: page::build_diff_page_for(&doc, &body, theme, layout, purpose),
         base_dir: doc.base_dir.clone(),
         lossy: doc.lossy,

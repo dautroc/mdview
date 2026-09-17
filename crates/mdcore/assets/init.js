@@ -22,56 +22,12 @@
     }
   }
 
-  // Stash each diagram's ORIGINAL source before mermaid replaces it with an
-  // SVG. A previous attempt re-read the rendered output as if it were source,
-  // which fed mermaid its own SVG and corrupted the diagram. Source is only
-  // recoverable before the first render, so capture it here.
-  function stashMermaidSources() {
-    var nodes = document.querySelectorAll("pre.mermaid");
-    for (var i = 0; i < nodes.length; i++) {
-      if (!nodes[i].hasAttribute("data-mermaid-src")) {
-        nodes[i].setAttribute("data-mermaid-src", nodes[i].textContent);
-      }
-    }
-  }
-
-  // A named theme's wire value ("mocha", "github", ...) does not say
-  // whether it is dark, so JS cannot derive it -- only Rust can, from
-  // Theme::is_dark. Rust stamps that darkness onto the html element as a
-  // data-dark attribute (1 for dark, 0 for light), alongside data-theme.
-  // Only System has no stamp, and defers to the OS media query -- reading
-  // the query for a named theme would render every diagram in the OS
-  // palette while the rest of the page honours the user's choice.
-  function effectiveTheme() {
-    var stamped = document.documentElement.getAttribute("data-dark");
-    if (stamped === "1") return "dark";
-    if (stamped === "0") return "light";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-
-  // Always resolves (never rejects), and resolves synchronously-ish via a
-  // microtask even when mermaid is absent or throws, so callers can chain
-  // off it unconditionally without a try/catch of their own.
+  // The runtime itself lives in diagrams.js, shared with the other page
+  // runtime and inlined only into a page that has a diagram to draw. Absent,
+  // this resolves like a document with no diagrams in it -- which is exactly
+  // what such a page is.
   function renderDiagrams() {
-    if (typeof mermaid === "undefined") return Promise.resolve();
-    stashMermaidSources();
-    try {
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: effectiveTheme() === "dark" ? "dark" : "default",
-      });
-      var result = mermaid.run({ querySelector: "pre.mermaid" });
-      if (result && typeof result.then === "function") {
-        return result.catch(function () {
-          /* leave the diagram source visible as text */
-        });
-      }
-      return Promise.resolve();
-    } catch (err) {
-      /* leave the diagram source visible as text */
-      return Promise.resolve();
-    }
+    return window.mdviewRenderDiagrams ? window.mdviewRenderDiagrams() : Promise.resolve();
   }
 
   // ---- Click-to-zoom ---------------------------------------------------

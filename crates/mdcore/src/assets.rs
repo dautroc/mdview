@@ -8,6 +8,16 @@ pub const KATEX_CSS: &str = include_str!("../assets/katex.css");
 pub const KATEX_JS: &str = include_str!("../assets/katex.js");
 pub const MERMAID_JS: &str = include_str!("../assets/mermaid.js");
 
+/// ELK, Mermaid's other layout engine, bundled into a plain script by
+/// `scripts/vendor-assets.py` because the package itself is ESM only. Sets
+/// `window.mdviewElkLayouts`; `diagrams.js` registers it and falls back to
+/// dagre when it is absent.
+pub const MERMAID_ELK_JS: &str = include_str!("../assets/mermaid-elk.js");
+
+/// The Mermaid configuration and render pass, shared by both page runtimes so
+/// there is one copy of it rather than one per runtime.
+pub const DIAGRAMS_JS: &str = include_str!("../assets/diagrams.js");
+
 /// Monokai Pro's palette is not one of syntect's defaults, so it ships as a
 /// tmTheme embedded like every other asset rather than read from disk.
 pub const MONOKAI_PRO_THEME: &str = include_str!("../assets/monokai-pro.tmTheme");
@@ -19,6 +29,34 @@ pub const CHIROPTERA_DARK_HARD_THEME: &str =
 
 #[cfg(test)]
 mod tests {
+    /// Both runtimes reach the diagram pass through the same shim, so neither
+    /// can drift into its own Mermaid configuration the way they had before
+    /// `diagrams.js` existed -- which is what this pairs with: the shim is
+    /// inert on its own, and the runtime it delegates to is the shared file.
+    #[test]
+    fn neither_page_runtime_configures_mermaid_itself() {
+        for js in [super::INIT_JS, super::EXPORT_JS] {
+            assert!(
+                !js.contains("mermaid.initialize"),
+                "the Mermaid config belongs in diagrams.js, once",
+            );
+            assert!(js.contains("window.mdviewRenderDiagrams"));
+        }
+        assert!(super::DIAGRAMS_JS.contains("mermaid.initialize"));
+        assert!(super::DIAGRAMS_JS.contains("window.mdviewRenderDiagrams = renderDiagrams"));
+    }
+
+    /// ELK is registered before it is named. Mermaid throws on a layout it has
+    /// no loader for, and the throw would take the diagram down rather than
+    /// falling back, so a page built without the bundle has to say dagre.
+    #[test]
+    fn the_elk_layout_is_only_named_once_its_loader_is_registered() {
+        let js = super::DIAGRAMS_JS;
+        assert!(js.contains("mermaid.registerLayoutLoaders(layouts)"));
+        assert!(js.contains(r#"layout: elkAvailable() ? "elk" : "dagre""#));
+        assert!(super::MERMAID_ELK_JS.contains("globalThis.mdviewElkLayouts"));
+    }
+
     #[test]
     fn render_readiness_waits_for_mermaid_in_both_page_runtimes() {
         for js in [super::INIT_JS, super::EXPORT_JS] {

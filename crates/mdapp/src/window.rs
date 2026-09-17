@@ -147,6 +147,12 @@ pub struct DocumentWindow {
     /// The retained navigation expected to finish. Replacing this before each
     /// load makes a late completion from an older page harmless.
     expected_navigation: Rc<RefCell<Option<Retained<WKNavigation>>>>,
+    /// Whether the page currently on screen carries the Mermaid runtime.
+    /// `page.rs` inlines it only for a body that has a diagram, so a save that
+    /// adds a document's FIRST diagram would otherwise swap markup into a page
+    /// with nothing to draw it. `reload_body` rebuilds instead when this is
+    /// false and the new body needs one.
+    page_has_diagrams: Cell<bool>,
     view_mode: Cell<ViewMode>,
     /// None is the established HEAD comparison. A history selection belongs to
     /// this tab and carries the path the document had at that commit.
@@ -261,6 +267,7 @@ impl DocumentWindow {
             expecting_own_load,
             page_ready,
             expected_navigation,
+            page_has_diagrams: Cell::new(false),
             view_mode: Cell::new(ViewMode::Rendered),
             history_entry: RefCell::new(None),
             diff_state: Cell::new(mdcore::diff::availability(path)),
@@ -359,6 +366,7 @@ impl DocumentWindow {
                 let base =
                     NSURL::fileURLWithPath(&NSString::from_str(&doc.base_dir.to_string_lossy()));
                 self.page_ready.set(false);
+                self.page_has_diagrams.set(doc.has_diagrams);
                 *self.expected_navigation.borrow_mut() = None;
                 self.expecting_own_load.set(true);
                 let navigation = unsafe {
@@ -604,6 +612,17 @@ impl DocumentWindow {
                 return;
             }
         };
+
+        // A diagram in the new body, in a page built without the runtime that
+        // draws one: `page.rs` inlines Mermaid only for a document that had a
+        // diagram when the page was built, so a save that adds the first one
+        // needs the page rebuilt around it rather than swapped into. The
+        // reverse costs nothing and is left alone -- a page keeps a runtime it
+        // has stopped using until the next full reload.
+        if mdcore::page::needs_diagrams(&body) && !self.page_has_diagrams.get() {
+            self.reload(highlighter);
+            return;
+        }
 
         self.clear_banner("missing");
         if lossy {

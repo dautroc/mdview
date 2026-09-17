@@ -130,6 +130,18 @@ file that never closes it.
   `/` cannot reach a node label, and there is nothing to select. Folded open it
   is ordinary text in the document, so the cursor, `/`, `n`/`N`, `s` and the
   minimap all work on it, and it stays open across a save.
+- **Diagrams are laid out by ELK,** not the engine Mermaid reaches for by
+  default, because the default ranks a flow that loops back on itself from
+  somewhere in its middle and routes the return edges across everything else.
+  They take the active theme's own colours and the document's typeface, so a
+  diagram belongs to the page it is on rather than to Mermaid. For the one
+  diagram that lays out better the old way, say so in the diagram:
+
+  ```
+  %%{init: {"layout": "dagre"}}%%
+  flowchart LR
+  ```
+
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
 - **Native tabs.** Opening another document adds it to the current window

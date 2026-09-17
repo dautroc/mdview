@@ -637,6 +637,38 @@ mod bundle_version_tests {
         assert!(app.contains("crate::state::shortcuts_script()"));
     }
 
+    /// A save that adds a document's FIRST diagram has to rebuild the page,
+    /// not swap a body into it. `page.rs` inlines Mermaid only for a document
+    /// that had a diagram when the page was built, so the swap would put the
+    /// markup somewhere with nothing to draw it -- and nothing would say so:
+    /// an undrawn diagram looks exactly like one that was meant to stay source.
+    #[test]
+    fn a_save_that_adds_the_first_diagram_rebuilds_the_page_rather_than_swapping() {
+        let window = include_str!("window.rs");
+        // The flag is recorded from the render that built the page, beside the
+        // load it describes -- not recomputed later from a body that may have
+        // moved on.
+        assert!(window.contains("self.page_has_diagrams.set(doc.has_diagrams)"));
+        let start = window
+            .find("pub fn live_update(")
+            .expect("the live reload path");
+        let body = &window[start..];
+        let branch = body
+            .find("mdcore::page::needs_diagrams(&body)")
+            .expect("the swap must ask whether the new body needs a runtime");
+        let swap = body
+            .find("target.innerHTML = {body};")
+            .expect("the swap itself");
+        assert!(
+            branch < swap,
+            "the question has to be asked before the body is swapped in"
+        );
+        assert!(
+            body[branch..swap].contains("self.reload(highlighter)"),
+            "the answer is a full rebuild, which is the only thing that inlines the runtime"
+        );
+    }
+
     #[test]
     fn fullwidth_native_action_is_wired_from_menu_through_reload() {
         let menu = include_str!("menu.rs");

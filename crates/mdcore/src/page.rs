@@ -76,6 +76,17 @@ fn generate_nonce() -> String {
 /// in scope to remove) is inert. `style-src` keeps `'unsafe-inline'`: KaTeX
 /// emits inline `style="..."` attributes it needs, and that is far less
 /// dangerous than inline script.
+/// Whether a rendered body needs the Mermaid runtime.
+///
+/// `highlight::render_block` is the only thing that emits this class, so the
+/// test is exact rather than a guess. It decides two things that have to agree
+/// or a diagram silently never draws: whether `build_page` inlines the three
+/// diagram assets at all, and whether a live reload can swap a new body into
+/// the page it already has (`window.rs`) or has to rebuild the page around it.
+pub fn needs_diagrams(body_html: &str) -> bool {
+    body_html.contains("<pre class=\"mermaid\">")
+}
+
 fn csp_header(nonce: &str) -> String {
     format!(
         "default-src 'none'; img-src 'self' data: file: https:; \
@@ -264,6 +275,25 @@ fn build_page_view(
         )
     };
 
+    // Nearly five megabytes of Mermaid and ELK, inlined into a document that
+    // may well be prose and nothing else. A page carries them only when it has
+    // a diagram to spend them on; everything downstream degrades to a resolved
+    // promise when they are absent, so the cost of being wrong here is a
+    // diagram left showing its own source rather than a broken page.
+    let diagram_js = if needs_diagrams(body_html) {
+        format!(
+            "<script nonce=\"{nonce}\">{mermaid}</script>\n\
+             <script nonce=\"{nonce}\">{elk}</script>\n\
+             <script nonce=\"{nonce}\">{diagrams}</script>\n",
+            nonce = nonce,
+            mermaid = assets::MERMAID_JS,
+            elk = assets::MERMAID_ELK_JS,
+            diagrams = assets::DIAGRAMS_JS,
+        )
+    } else {
+        String::new()
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html{theme_attr}{dark_attr}{purpose_attr}{view_attr}{diff_layout_attr}>
@@ -281,8 +311,7 @@ fn build_page_view(
 {chrome}
 {theme_script}
 <script nonce="{nonce}">{katex_js}</script>
-<script nonce="{nonce}">{mermaid_js}</script>
-<script nonce="{nonce}">{init_js}</script>
+{diagram_js}<script nonce="{nonce}">{init_js}</script>
 </body>
 </html>
 "#,
@@ -305,7 +334,7 @@ fn build_page_view(
         chrome = chrome,
         theme_script = theme_script,
         katex_js = assets::KATEX_JS,
-        mermaid_js = assets::MERMAID_JS,
+        diagram_js = diagram_js,
         init_js = init_js,
     )
 }
@@ -624,13 +653,62 @@ mod tests {
         assert!(occurrences >= 2, "expected both themes, saw {occurrences}");
     }
 
+    /// A body with one diagram in it, for the tests that care whether the
+    /// runtime that draws it was inlined. The class is the one
+    /// `highlight::render_block` writes, and `needs_diagrams` reads.
+    const DIAGRAM_BODY: &str = "<pre class=\"mermaid\">graph TD;\n  A --&gt; B;\n</pre>";
+
     #[test]
     fn assets_are_inlined_not_linked() {
-        let html = build_page(&doc(), "", Theme::System);
+        let html = build_page(&doc(), DIAGRAM_BODY, Theme::System);
         assert!(!html.contains("<link"), "no external stylesheets");
         assert!(!html.contains("src=\"http"), "no external scripts");
         assert!(html.contains("katex"), "katex must be inlined");
-        assert!(html.contains("mermaid"), "mermaid must be inlined");
+        assert!(
+            html.contains(assets::MERMAID_JS),
+            "mermaid must be inlined, whole, not merely mentioned"
+        );
+        assert!(html.contains(assets::MERMAID_ELK_JS), "elk must be inlined");
+        assert!(html.contains(assets::DIAGRAMS_JS), "the diagram runtime must be inlined");
+    }
+
+    /// Nearly five megabytes of Mermaid and ELK, in a document that may be
+    /// prose and nothing else. `html.contains("mermaid")` cannot see this:
+    /// init.js names `pre.mermaid` either way, so the assertion has to be
+    /// against the bundles themselves.
+    #[test]
+    fn a_document_with_no_diagram_carries_no_diagram_runtime() {
+        let html = build_page(&doc(), "<p>Prose, and nothing to draw.</p>", Theme::System);
+        assert!(!html.contains(assets::MERMAID_JS), "mermaid rode along unasked");
+        assert!(!html.contains(assets::MERMAID_ELK_JS), "elk rode along unasked");
+        assert!(!html.contains(assets::DIAGRAMS_JS), "the runtime rode along unasked");
+        assert!(html.contains("katex"), "math is not what this test is about");
+    }
+
+    /// The predicate both sides read: `build_page` to decide what to inline,
+    /// and `window.rs` to decide whether a live reload can swap a new body
+    /// into the page it already has. They cannot be allowed to disagree.
+    #[test]
+    fn needs_diagrams_matches_what_a_mermaid_fence_renders_to() {
+        let hl = crate::highlight::Highlighter::new();
+        assert!(needs_diagrams(&hl.render_block("mermaid", "graph TD;\n")));
+        assert!(needs_diagrams(&hl.render_block("Mermaid", "graph TD;\n")));
+        assert!(!needs_diagrams(&hl.render_block("rust", "fn main() {}\n")));
+        // The word on its own is not a diagram: a document may well write
+        // about Mermaid without drawing anything.
+        assert!(!needs_diagrams("<p>mermaid</p>"));
+        assert!(!needs_diagrams("<pre class=\"code\"><code>mermaid</code></pre>"));
+    }
+
+    /// The export runtime draws diagrams too -- PDF capture waits on them --
+    /// so the print page has to carry the same three assets.
+    #[test]
+    fn the_print_page_carries_the_diagram_runtime_too() {
+        let html = build_page_for(&doc(), DIAGRAM_BODY, Theme::System, RenderPurpose::Print);
+        assert!(html.contains(assets::MERMAID_JS));
+        assert!(html.contains(assets::MERMAID_ELK_JS));
+        assert!(html.contains(assets::DIAGRAMS_JS));
+        assert!(html.contains(assets::EXPORT_JS), "sanity: the print runtime");
     }
 
     #[test]
@@ -856,9 +934,16 @@ mod tests {
             "find and the cursor refuse that subtree; a source there could not be searched"
         );
         // The stash (data-mermaid-src) had no reader at all before this: it is
-        // written on every render and was pure cost until the source view.
+        // written on every render and was pure cost until the source view. The
+        // pairing spans two files now -- written by the shared diagram runtime,
+        // read back here -- so counting occurrences in one of them would miss
+        // half of it.
         assert!(
-            assets::INIT_JS.matches("data-mermaid-src").count() >= 3,
+            assets::DIAGRAMS_JS.contains("setAttribute(\"data-mermaid-src\""),
+            "the stash must still be written, on every render"
+        );
+        assert!(
+            assets::INIT_JS.contains("getAttribute(\"data-mermaid-src\")"),
             "the stash must be read back, not just written"
         );
     }
