@@ -1391,6 +1391,85 @@
     });
   };
 
+  // ---- Opening at a line of the file ---------------------------------------
+  //
+  // What `mdview notes.md:42` asks for, and what every tool that prints a
+  // location -- grep, a compiler, a stack trace -- hands a reader to paste.
+  //
+  // The renderer puts the line each top-level block starts on in `data-line`,
+  // so the block a line is inside is the last one at or before it: a line in
+  // the middle of a list, a table or a fence lands on that list, table or
+  // fence, which is what the line became on screen. A rendered document has
+  // nothing finer to offer -- three lines of Markdown can be one paragraph.
+  //
+  // The cursor lands there too, so j carries on from the line that was asked
+  // for rather than from the top of a document the reader has not read yet.
+
+  // Long enough to catch the eye on arrival, short enough that the document is
+  // back to its own colours by the time it is being read. Paired with the
+  // animation in page.css, which runs for exactly this long.
+  var LINE_FLASH_MS = 1600;
+
+  function blockForSourceLine(line) {
+    var content = contentEl();
+    if (!content) return null;
+    var blocks = content.querySelectorAll("[data-line]");
+    var found = null;
+    for (var i = 0; i < blocks.length; i++) {
+      if (Number(blocks[i].getAttribute("data-line")) > line) break;
+      found = blocks[i];
+    }
+    // A line past the end of the document lands on the last block, which the
+    // loop already holds; a line above the first one -- inside the
+    // frontmatter -- lands on the first. Both beat doing nothing: the reader
+    // named a file as well as a line.
+    return found || blocks[0] || null;
+  }
+
+  function cursorToElement(el) {
+    var index = cachedIndex();
+    if (!index || !index.text.length) return;
+    for (var i = 0; i < index.spans.length; i++) {
+      if (!el.contains(index.spans[i].node)) continue;
+      if (setCursor(index, index.spans[i].start, 1)) {
+        cursorGoalX = null;
+        rememberCursor(index);
+        placeCaret();
+      }
+      return;
+    }
+  }
+
+  function flashSourceLine(el) {
+    el.classList.remove("mdview-line-target");
+    // Reading a layout property between the two restarts the animation, which
+    // is what makes a second reveal of the same block show anything at all.
+    void el.offsetWidth;
+    el.classList.add("mdview-line-target");
+    setTimeout(function () {
+      el.classList.remove("mdview-line-target");
+    }, LINE_FLASH_MS);
+  }
+
+  window.mdviewRevealSourceLine = function (line) {
+    line = Number(line);
+    if (!(line > 0)) return;
+    requestAnimationFrame(function () {
+      var target = blockForSourceLine(line);
+      if (!target) return;
+      target.scrollIntoView({ block: "start" });
+      // scrollIntoView leaves the block flush against the top edge. The same
+      // breathing room a heading jump leaves reads better, and keeps the
+      // caret off the very edge of the window.
+      window.scrollBy(0, -HEADING_MARGIN);
+      // This scroll was asked for BY where the cursor is about to be, so the
+      // follow that a scroll normally triggers must not drag it to an edge.
+      cursorLedScrollUntil = Date.now() + HEADING_CHAIN_MS;
+      cursorToElement(target);
+      flashSourceLine(target);
+    });
+  };
+
   function enhanceDocumentLinks() {
     var links = document.querySelectorAll("#mdview-content a[href]");
     for (var i = 0; i < links.length; i++) {

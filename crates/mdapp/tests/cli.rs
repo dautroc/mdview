@@ -22,7 +22,7 @@ fn print_html_emits_a_complete_document() {
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     let html = String::from_utf8(output.stdout).unwrap();
     assert!(html.starts_with("<!DOCTYPE html>"));
-    assert!(html.contains("<h1 id=\"title\">Title</h1>"));
+    assert!(html.contains("<h1 data-line=\"1\" id=\"title\">Title</h1>"));
     assert!(html.contains("<title>doc.md</title>"));
 }
 
@@ -41,7 +41,8 @@ fn print_html_strips_a_frontmatter_block() {
 
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     let html = String::from_utf8(output.stdout).unwrap();
-    assert!(html.contains("<h1 id=\"title\">Title</h1>"));
+    // Line 6 of the file: the metadata block is what the other five are.
+    assert!(html.contains("<h1 data-line=\"6\" id=\"title\">Title</h1>"));
     assert!(!html.contains("My Note"), "the metadata reached the page");
     assert!(!html.contains("<hr"), "the opening fence rendered as a rule");
 }
@@ -56,6 +57,26 @@ fn print_html_on_a_missing_file_exits_one() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("nope.md"));
+}
+
+/// `mdview notes.md:42` is a path and a line, everywhere a path is taken.
+/// Printing has no reading position to put anywhere, so the line is dropped
+/// rather than refused -- what must not happen is the app looking for a file
+/// called `doc.md:42` and reporting it missing.
+#[test]
+fn a_line_number_on_the_path_does_not_stop_the_file_being_found() {
+    let path = fixture_file("lines.md", "# Title\n\nSecond block.\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mdview"))
+        .arg("--print-html")
+        .arg(format!("{}:3", path.display()))
+        .output()
+        .expect("failed to run mdview");
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let html = String::from_utf8(output.stdout).unwrap();
+    // And the page carries what a reveal would aim at.
+    assert!(html.contains("<p data-line=\"3\">Second block.</p>"), "got: {html}");
 }
 
 /// `--theme` is the headless seam for exercising all three appearance
@@ -300,7 +321,7 @@ fn interactive_flag_prints_the_page_the_app_shows_rather_than_the_export() {
     // Both still draw the document itself, and both still wait for diagrams
     // before they call themselves ready -- the flag picks a runtime, not a
     // different renderer.
-    for shared in ["pre class=\"mermaid\"", "window.mdviewRenderState", "status = \"ready\""] {
+    for shared in ["class=\"mermaid\"", "window.mdviewRenderState", "status = \"ready\""] {
         assert!(interactive.contains(shared), "interactive page is missing {shared}");
         assert!(export.contains(shared), "export page is missing {shared}");
     }

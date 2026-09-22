@@ -2,7 +2,7 @@
 source: crates/mdcore/tests/render_snapshots.rs
 expression: html
 ---
-<p>A relative image: <img src="./img/diagram.png" alt="local diagram" /></p>
-<p>A parent-relative image: <img src="../shared/logo.png" alt="up one" /></p>
-<p>A remote image: <img src="https://example.com/x.png" alt="remote" /></p>
-<p>An image with a title: <img src="./a.png" alt="alt text" title="The title" /></p>
+<p data-line="1">A relative image: <img src="./img/diagram.png" alt="local diagram" /></p>
+<p data-line="3">A parent-relative image: <img src="../shared/logo.png" alt="up one" /></p>
+<p data-line="5">A remote image: <img src="https://example.com/x.png" alt="remote" /></p>
+<p data-line="7">An image with a title: <img src="./a.png" alt="alt text" title="The title" /></p>

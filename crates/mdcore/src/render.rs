@@ -35,21 +35,29 @@ pub fn render_body_in(
     highlighter: &Highlighter,
     base_dir: Option<&std::path::Path>,
 ) -> String {
-    // Frontmatter comes off before the parser sees it. Doing it here rather
-    // than in `Document` keeps it out of the diff view, which shows the file
-    // as it is on disk and would be wrong to hide a metadata edit from.
-    let markdown = crate::frontmatter::strip(markdown);
-    let parser = Parser::new_ext(markdown, markdown_options());
-    let slugs = crate::links::headings(markdown)
-        .into_iter()
-        .map(|heading| heading.slug)
-        .collect::<Vec<_>>();
-    let events = assign_heading_ids(parser, &slugs);
-    let events = transform_events(events.into_iter(), highlighter);
-    let events = inline_images(events, base_dir);
-    let mut out = String::new();
-    html::push_html(&mut out, events.into_iter());
-    out
+    let grouped = group_document(markdown, highlighter, base_dir);
+    if grouped.events.is_empty() {
+        return String::new();
+    }
+    // Pushed in one pass and split back into blocks, so that each block can be
+    // told which line of the file it came from: that attribute is what
+    // `mdview notes.md:42` aims at. The split is the one `render_blocks`
+    // makes, and when the sentinel does not survive it, the body is pushed
+    // whole instead -- the line numbers are what a stray U+0001 costs, never
+    // the document.
+    match push_grouped_html(&grouped.events) {
+        Some(parts) => parts
+            .iter()
+            .zip(&grouped.lines)
+            .map(|(html, line)| with_source_line(html, *line))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => {
+            let mut out = String::new();
+            html::push_html(&mut out, grouped.events.into_iter().flatten());
+            out
+        }
+    }
 }
 
 pub fn image_warnings(markdown: &str, base_dir: &std::path::Path) -> Vec<crate::images::ImageWarning> {
@@ -98,11 +106,44 @@ fn inline_images<'a>(events: Vec<Event<'a>>, base_dir: Option<&std::path::Path>)
 /// One top-level block of a document: the Markdown it came from, and the HTML
 /// it rendered to. `range` is a byte range into the document *after*
 /// frontmatter is stripped, which is the only text the parser ever sees.
+///
+/// `line` is the other direction, and counts what the parser never saw: the
+/// 1-based line of the *file* the block starts on, metadata block included,
+/// because a line number that has to be corrected for frontmatter is not the
+/// number the editor, the compiler or `grep -n` that sent the reader here
+/// printed.
+///
+/// The HTML is deliberately free of it. The rendered diff decides that a block
+/// is unchanged by comparing two blocks' HTML, and a line number in the markup
+/// would report every paragraph below an inserted line as rewritten.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
     pub html: String,
     pub source: String,
     pub range: std::ops::Range<usize>,
+    pub line: u32,
+}
+
+/// `html` with the line of the file it came from on its outermost element.
+///
+/// Inserted after the tag name rather than before the `>`: an attribute value
+/// is allowed to contain one, and finding the end of an opening tag properly
+/// means parsing the HTML this crate just generated. A block that opens with
+/// no tag at all -- an HTML comment, a reference definition that rendered to
+/// nothing -- is handed back untouched, and the reveal aims at the block above
+/// it instead.
+pub fn with_source_line(html: &str, line: u32) -> String {
+    let Some(rest) = html.strip_prefix('<') else {
+        return html.to_string();
+    };
+    let name = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    if name == 0 {
+        return html.to_string();
+    }
+    let at = 1 + name;
+    format!("{} data-line=\"{line}\"{}", &html[..at], &html[at..])
 }
 
 /// Separates one block's HTML from the next inside a single `push_html` pass.
@@ -129,26 +170,86 @@ pub fn render_blocks(
     highlighter: &Highlighter,
     base_dir: Option<&std::path::Path>,
 ) -> Vec<Block> {
-    let markdown = crate::frontmatter::strip(markdown);
-    let mut ranges = Vec::new();
-    let mut groups = Vec::new();
+    let grouped = group_document(markdown, highlighter, base_dir);
+    if grouped.events.is_empty() {
+        return Vec::new();
+    }
+    let htmls = push_grouped_html(&grouped.events).unwrap_or_else(|| {
+        // The sentinel came back cut or doubled. Rendering each block on its
+        // own gets the footnote numbers wrong, which is a smaller lie than a
+        // document sliced in the wrong places.
+        grouped
+            .events
+            .iter()
+            .map(|events| {
+                let mut html = String::new();
+                html::push_html(&mut html, events.iter().cloned());
+                html.trim().to_string()
+            })
+            .collect()
+    });
+    htmls
+        .into_iter()
+        .zip(grouped.ranges)
+        .zip(grouped.lines)
+        .map(|((html, range), line)| Block {
+            source: grouped.markdown[range.clone()].to_string(),
+            html,
+            range,
+            line,
+        })
+        .collect()
+}
+
+/// A document parsed once and cut into its top-level blocks: the events of
+/// each block, the byte range it occupies in the Markdown the parser saw, and
+/// the line of the file it begins on. Both renderings above are built from
+/// this, which is what keeps them the same document.
+struct Grouped<'a> {
+    events: Vec<Vec<Event<'a>>>,
+    ranges: Vec<std::ops::Range<usize>>,
+    lines: Vec<u32>,
+    /// `source` with its frontmatter removed: what `ranges` index into.
+    markdown: &'a str,
+}
+
+fn group_document<'a>(
+    source: &'a str,
+    highlighter: &Highlighter,
+    base_dir: Option<&std::path::Path>,
+) -> Grouped<'a> {
+    // Frontmatter comes off before the parser sees it. Doing it here rather
+    // than in `Document` keeps it out of the diff view, which shows the file
+    // as it is on disk and would be wrong to hide a metadata edit from.
+    let markdown = crate::frontmatter::strip(source);
     let slugs = crate::links::headings(markdown)
         .into_iter()
         .map(|heading| heading.slug)
         .collect::<Vec<_>>();
     let mut heading_index = 0;
-    for (range, events) in group_events(markdown) {
-        let events = assign_heading_ids_from(events, &slugs, &mut heading_index);
-        groups.push(inline_images(
-            transform_events(events.into_iter(), highlighter),
+    let mut events = Vec::new();
+    let mut ranges = Vec::new();
+    for (range, group) in group_events(markdown) {
+        let group = assign_heading_ids_from(group, &slugs, &mut heading_index);
+        events.push(inline_images(
+            transform_events(group.into_iter(), highlighter),
             base_dir,
         ));
         ranges.push(range);
     }
-    if groups.is_empty() {
-        return Vec::new();
+    let lines = source_lines(source, markdown, &ranges);
+    Grouped {
+        events,
+        ranges,
+        lines,
+        markdown,
     }
+}
 
+/// Push every block's HTML in a single pass and hand back one string per
+/// block, or `None` when the sentinel came back cut or doubled and the pieces
+/// therefore do not line up with the blocks.
+fn push_grouped_html(groups: &[Vec<Event<'_>>]) -> Option<Vec<String>> {
     let mut combined: Vec<Event> = Vec::new();
     for (index, events) in groups.iter().enumerate() {
         if index > 0 {
@@ -160,36 +261,37 @@ pub fn render_blocks(
     html::push_html(&mut html, combined.into_iter());
     let parts = html
         .split(BLOCK_SENTINEL)
-        .map(str::trim)
+        .map(|part| part.trim().to_string())
         .collect::<Vec<_>>();
+    (parts.len() == groups.len()).then_some(parts)
+}
 
-    if parts.len() == groups.len() {
-        return parts
-            .into_iter()
-            .zip(ranges)
-            .map(|(html, range)| Block {
-                source: markdown[range.clone()].to_string(),
-                html: html.to_string(),
-                range,
-            })
-            .collect();
+/// The 1-based line of the file each block starts on. `markdown` is `source`
+/// with its frontmatter taken off, so the lines that block occupied are added
+/// back on here -- the parser's offsets are into the text it was given, and
+/// nobody counts lines from below the metadata.
+fn source_lines(source: &str, markdown: &str, ranges: &[std::ops::Range<usize>]) -> Vec<u32> {
+    let first = 1 + newlines(&source[..source.len() - markdown.len()]);
+    let mut line = first;
+    let mut scanned = 0;
+    let mut lines = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        let start = range.start.min(markdown.len());
+        // Blocks arrive in document order, so the scan walks the text once.
+        // A range that went backwards would still be counted correctly.
+        if start < scanned {
+            line = first;
+            scanned = 0;
+        }
+        line += newlines(&markdown[scanned..start]);
+        scanned = start;
+        lines.push(line);
     }
-    // The sentinel came back cut or doubled. Rendering each block on its own
-    // gets the footnote numbers wrong, which is a smaller lie than a document
-    // sliced in the wrong places.
-    groups
-        .into_iter()
-        .zip(ranges)
-        .map(|(events, range)| {
-            let mut html = String::new();
-            html::push_html(&mut html, events.into_iter());
-            Block {
-                source: markdown[range.clone()].to_string(),
-                html: html.trim().to_string(),
-                range,
-            }
-        })
-        .collect()
+    lines
+}
+
+fn newlines(text: &str) -> u32 {
+    text.bytes().filter(|byte| *byte == b'\n').count() as u32
 }
 
 /// Group a document's events by top-level block. A `Start` event's range spans
@@ -221,14 +323,6 @@ fn group_events(markdown: &str) -> Vec<(std::ops::Range<usize>, Vec<Event<'_>>)>
         }
     }
     groups
-}
-
-fn assign_heading_ids<'a>(
-    events: impl IntoIterator<Item = Event<'a>>,
-    slugs: &[String],
-) -> Vec<Event<'a>> {
-    let mut index = 0;
-    assign_heading_ids_from(events, slugs, &mut index)
 }
 
 fn assign_heading_ids_from<'a>(
@@ -373,9 +467,9 @@ mod heading_tests {
     #[test]
     fn rendered_heading_ids_use_the_link_resolvers_duplicate_slugs() {
         let html = super::render_body("# Repeat\n\n# Repeat\n\n# Café & tea\n");
-        assert!(html.contains("<h1 id=\"repeat\">Repeat</h1>"));
-        assert!(html.contains("<h1 id=\"repeat-1\">Repeat</h1>"));
-        assert!(html.contains("<h1 id=\"café--tea\">Café &amp; tea</h1>"));
+        assert!(html.contains("id=\"repeat\">Repeat</h1>"));
+        assert!(html.contains("id=\"repeat-1\">Repeat</h1>"));
+        assert!(html.contains("id=\"café--tea\">Café &amp; tea</h1>"));
     }
 }
 
@@ -398,7 +492,7 @@ mod frontmatter_tests {
             "the metadata is still in the body: {html}"
         );
         assert!(
-            html.starts_with("<h1 id=\"hello\">Hello</h1>"),
+            html.starts_with("<h1 data-line=\"6\" id=\"hello\">Hello</h1>"),
             "got: {html}"
         );
     }
@@ -478,5 +572,67 @@ mod block_tests {
     #[test]
     fn an_empty_document_has_no_blocks() {
         assert!(blocks("").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod source_line_tests {
+    use super::{render_blocks, render_body, with_source_line};
+    use crate::highlight::Highlighter;
+
+    fn lines(markdown: &str) -> Vec<u32> {
+        render_blocks(markdown, &Highlighter::new(), None)
+            .into_iter()
+            .map(|block| block.line)
+            .collect()
+    }
+
+    /// The line a block *starts* on, not the line it ends on: a request for a
+    /// line inside a list or a fence is answered by the block containing it,
+    /// which is the block whose own line is the last one at or before it.
+    #[test]
+    fn a_block_carries_the_line_of_the_file_it_starts_on() {
+        let markdown = "# Title\n\nA paragraph.\n\n- one\n- two\n- three\n\n```rust\nfn main() {}\n```\n";
+        assert_eq!(lines(markdown), vec![1, 3, 5, 9]);
+    }
+
+    /// Frontmatter never reaches the parser, so its offsets are into a
+    /// document that starts three lines late. `grep -n` counts the metadata,
+    /// and so does the number printed beside a line in any editor, so the
+    /// stripped lines are added back.
+    #[test]
+    fn the_stripped_frontmatter_is_counted_back_in() {
+        let markdown = "---\ntitle: My Note\n---\n\n# Title\n\nBody.\n";
+        assert_eq!(lines(markdown), vec![5, 7]);
+    }
+
+    /// What the reveal actually reads. The attribute is on the outermost
+    /// element of each block and nowhere else -- an inline element inside a
+    /// paragraph has no line of its own to give.
+    #[test]
+    fn the_body_puts_the_line_on_each_top_level_element() {
+        let html = render_body("# Title\n\nA *paragraph*.\n");
+        assert!(html.contains("<h1 data-line=\"1\""), "got: {html}");
+        assert!(html.contains("<p data-line=\"3\">"), "got: {html}");
+        assert_eq!(html.matches("data-line=").count(), 2, "got: {html}");
+    }
+
+    /// The attribute goes after the tag name, so everything the writer emitted
+    /// is still there, in its original order, behind it.
+    #[test]
+    fn annotating_keeps_the_attributes_the_writer_wrote() {
+        assert_eq!(
+            with_source_line("<h1 id=\"title\">Title</h1>", 4),
+            "<h1 data-line=\"4\" id=\"title\">Title</h1>"
+        );
+    }
+
+    /// A block with no tag to hang it on is handed back whole rather than
+    /// having an attribute forced into its text.
+    #[test]
+    fn a_block_that_opens_with_no_tag_is_left_alone() {
+        for html in ["", "<!-- a note -->", "plain text"] {
+            assert_eq!(with_source_line(html, 7), html);
+        }
     }
 }

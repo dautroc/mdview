@@ -788,6 +788,133 @@ pub fn reveal_anchor_script(anchor: Option<&str>, position: u32) -> String {
     )
 }
 
+/// Scroll to the block a line of the file is in, once the page is ready.
+pub fn reveal_source_line_script(line: u32) -> String {
+    format!("window.mdviewRevealSourceLine && window.mdviewRevealSourceLine({line});")
+}
+
+/// A file named on the command line, and the line of it the reader asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenTarget {
+    pub path: std::path::PathBuf,
+    pub line: Option<u32>,
+}
+
+/// Read one command-line argument as a file and, when it carries one, the line
+/// to open it at.
+///
+/// `notes.md:42` is the spelling everything that prints a location uses --
+/// `grep -n`, ripgrep, a compiler, a stack trace, Claude Code -- so it is the
+/// one to accept, along with the `:42:7` that a column adds to it. The column
+/// itself is dropped: this is a reader of rendered prose, and a character
+/// offset into the Markdown behind it points at nothing on screen.
+///
+/// A file whose own name ends in `:42` wins, because `exists` is asked first.
+/// That is the only way to open one, and it costs a stat of a path the app is
+/// about to open anyway.
+pub fn parse_open_target(arg: &str) -> OpenTarget {
+    parse_open_target_where(arg, |path| std::path::Path::new(path).exists())
+}
+
+fn parse_open_target_where(arg: &str, exists: impl Fn(&str) -> bool) -> OpenTarget {
+    let whole = OpenTarget {
+        path: std::path::PathBuf::from(arg),
+        line: None,
+    };
+    if exists(arg) {
+        return whole;
+    }
+    // Right to left, at most twice: the line, then the column in front of it.
+    let mut rest = arg;
+    let mut numbers = Vec::new();
+    while numbers.len() < 2 {
+        let Some((head, tail)) = rest.rsplit_once(':') else {
+            break;
+        };
+        if head.is_empty() || tail.is_empty() || !tail.bytes().all(|byte| byte.is_ascii_digit()) {
+            break;
+        }
+        let Ok(number) = tail.parse::<u32>() else {
+            break;
+        };
+        numbers.push(number);
+        rest = head;
+    }
+    // The leftmost of what was peeled is the line; a lone `:0` is no line at
+    // all, and the document opens at the top the way it always has.
+    match numbers.last().copied().filter(|line| *line > 0) {
+        Some(line) => OpenTarget {
+            path: std::path::PathBuf::from(rest),
+            line: Some(line),
+        },
+        None => whole,
+    }
+}
+
+/// The URL scheme the `mdview` command opens a `FILE:LINE` through.
+///
+/// `open` is how the command reaches the app -- it is the same Apple event
+/// Finder sends, so a second document becomes a tab in the window already on
+/// screen rather than a second copy of the app -- and `open` carries a path
+/// and nothing else. A line number needs a URL, and a URL needs a scheme of
+/// our own. `Info.plist` declares it; `application:openURLs:` reads it.
+pub const OPEN_SCHEME: &str = "mdview";
+
+/// One target as the URL the app answers: `mdview://open?path=…&line=42`.
+///
+/// The path is percent-encoded here rather than in the shell shim, which has
+/// no way to do it that is worth reading -- a document under a directory with
+/// a `&`, a `#` or a space in its name is not exotic.
+pub fn open_url(target: &OpenTarget) -> String {
+    let mut url = format!(
+        "{OPEN_SCHEME}://open?path={}",
+        percent_encode(&target.path.to_string_lossy())
+    );
+    if let Some(line) = target.line {
+        url.push_str(&format!("&line={line}"));
+    }
+    url
+}
+
+/// Everything but the unreserved set and `/`, which is legal in a query and
+/// is most of a path: the encoding is for the shell and the URL parser, not
+/// for the eye, but a path that survives legible is easier to debug.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Read one back. `None` for anything that is not this app's own URL, for a
+/// path that is not absolute, and for an empty one -- the handler is reachable
+/// by any process on the machine, and the app opens what it is given.
+pub fn parse_open_url(url: &str) -> Option<OpenTarget> {
+    let rest = url.strip_prefix(OPEN_SCHEME)?.strip_prefix(':')?;
+    let rest = rest.strip_prefix("//").unwrap_or(rest);
+    let query = rest.strip_prefix("open?")?;
+    let mut path = None;
+    let mut line = None;
+    for field in query.split('&') {
+        let (key, value) = field.split_once('=')?;
+        match key {
+            "path" => path = percent_decode(value),
+            "line" => line = value.parse::<u32>().ok().filter(|line| *line > 0),
+            // An unknown field is a newer build's, or somebody's guess. Either
+            // way the path and the line are all this reads.
+            _ => {}
+        }
+    }
+    let path = std::path::PathBuf::from(path?);
+    path.is_absolute().then_some(OpenTarget { path, line })
+}
+
 pub fn workspace_reveal_script(heading: Option<&str>, query: &str) -> String {
     let heading = heading
         .map(mdcore::escape::js_string_literal)
@@ -1657,6 +1784,97 @@ mod tests {
     fn a_layout_this_build_does_not_have_is_still_unified() {
         assert_eq!(resolve_diff_layout(Some("sidebyside")), DiffLayout::Unified);
         assert_eq!(resolve_diff_layout(Some("")), DiffLayout::Unified);
+    }
+
+    fn target(arg: &str, existing: &[&str]) -> OpenTarget {
+        parse_open_target_where(arg, |path| existing.contains(&path))
+    }
+
+    /// What every tool that prints a location prints, and the column some of
+    /// them add to it. The column is read only so that it cannot be mistaken
+    /// for part of the path.
+    #[test]
+    fn a_trailing_line_and_column_are_read_off_the_path() {
+        assert_eq!(
+            target("notes.md:42", &[]),
+            OpenTarget { path: "notes.md".into(), line: Some(42) }
+        );
+        assert_eq!(
+            target("docs/tour.md:42:7", &[]),
+            OpenTarget { path: "docs/tour.md".into(), line: Some(42) }
+        );
+    }
+
+    /// Everything that is not a number on the end of a path is part of the
+    /// path. `grep -n` output pasted whole -- `notes.md:42:some text` -- is a
+    /// path this app will fail to open, and saying so beats opening line 42 of
+    /// a file the reader did not name.
+    #[test]
+    fn anything_but_a_number_stays_in_the_path() {
+        for arg in ["notes.md", "notes.md:", "notes.md:x", "notes.md:42:some text", ":42"] {
+            assert_eq!(target(arg, &[]), OpenTarget { path: arg.into(), line: None });
+        }
+    }
+
+    /// A file really called `notes.md:42` is opened, not read as a line of
+    /// `notes.md`. It is the only way to open one, and the disk is asked
+    /// before the spelling is.
+    #[test]
+    fn a_file_that_exists_under_its_whole_name_is_opened_whole() {
+        assert_eq!(
+            target("notes.md:42", &["notes.md:42"]),
+            OpenTarget { path: "notes.md:42".into(), line: None }
+        );
+    }
+
+    /// Line 0 is what a tool prints when it has no line to print.
+    #[test]
+    fn line_zero_opens_the_document_at_the_top() {
+        assert_eq!(
+            target("notes.md:0", &[]),
+            OpenTarget { path: "notes.md:0".into(), line: None }
+        );
+    }
+
+    /// The shim builds these and `application:openURLs:` reads them, in two
+    /// different processes, so the pair is only ever exercised together here.
+    #[test]
+    fn a_target_survives_the_round_trip_through_the_apps_own_url() {
+        for target in [
+            OpenTarget { path: "/tmp/notes.md".into(), line: Some(42) },
+            OpenTarget { path: "/tmp/notes.md".into(), line: None },
+            // The names the shell could not have encoded itself.
+            OpenTarget { path: "/tmp/a b & c/#1 ? notes.md".into(), line: Some(7) },
+            OpenTarget { path: "/tmp/notes.md:42".into(), line: Some(1) },
+        ] {
+            let url = open_url(&target);
+            assert_eq!(parse_open_url(&url).as_ref(), Some(&target), "url: {url}");
+        }
+    }
+
+    /// The handler is reachable by anything that can open a URL, so it reads
+    /// its own scheme, its own action, and an absolute path -- and nothing
+    /// else at all.
+    #[test]
+    fn nothing_but_this_apps_own_url_opens_anything() {
+        for url in [
+            "https://example.com/notes.md",
+            "file:///tmp/notes.md",
+            "mdview://quit?path=/tmp/notes.md",
+            "mdview://open?line=42",
+            "mdview://open?path=relative.md",
+            "mdview://open?path=",
+        ] {
+            assert_eq!(parse_open_url(url), None, "url: {url}");
+        }
+    }
+
+    #[test]
+    fn the_reveal_names_the_line_and_survives_a_page_without_the_hook() {
+        assert_eq!(
+            reveal_source_line_script(42),
+            "window.mdviewRevealSourceLine && window.mdviewRevealSourceLine(42);"
+        );
     }
 
     #[test]

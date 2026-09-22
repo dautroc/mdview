@@ -83,8 +83,11 @@ fn generate_nonce() -> String {
 /// or a diagram silently never draws: whether `build_page` inlines the three
 /// diagram assets at all, and whether a live reload can swap a new body into
 /// the page it already has (`window.rs`) or has to rebuild the page around it.
+///
+/// The class alone, not the whole opening tag: a diagram is a top-level block,
+/// and `render.rs` writes the line it came from into that tag in front of it.
 pub fn needs_diagrams(body_html: &str) -> bool {
-    body_html.contains("<pre class=\"mermaid\">")
+    body_html.contains("class=\"mermaid\"")
 }
 
 fn csp_header(nonce: &str) -> String {
@@ -698,6 +701,10 @@ mod tests {
         // about Mermaid without drawing anything.
         assert!(!needs_diagrams("<p>mermaid</p>"));
         assert!(!needs_diagrams("<pre class=\"code\"><code>mermaid</code></pre>"));
+        // The diagram as the body actually carries it, with its source line
+        // ahead of the class. A test for the whole opening tag passed here
+        // and left every real document's diagrams undrawn.
+        assert!(needs_diagrams("<pre data-line=\"12\" class=\"mermaid\">graph TD;</pre>"));
     }
 
     /// The export runtime draws diagrams too -- PDF capture waits on them --

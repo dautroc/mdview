@@ -115,7 +115,9 @@ pub struct AppState {
     /// Built once: loading syntect's syntax set costs tens of milliseconds and
     /// every window and every live reload shares this one.
     pub highlighter: Highlighter,
-    pub startup_paths: RefCell<Vec<PathBuf>>,
+    /// The files named on the command line, each with the line it asked to be
+    /// opened at.
+    pub startup_targets: RefCell<Vec<crate::state::OpenTarget>>,
     pub recent_menu: RefCell<Option<Retained<NSMenu>>>,
     pub history_sender: Sender<HistoryResponse>,
     pub history_receiver: RefCell<Receiver<HistoryResponse>>,
@@ -228,13 +230,18 @@ define_class!(
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
-            let paths = self.ivars().startup_paths.take();
+            let targets = self.ivars().startup_targets.take();
             // Arguments are available now, but Finder and `open -a` deliver
             // their files later through application:openURLs:. Restoring here
             // would briefly create the saved tabs before those explicit files
             // arrive. A true no-document launch restores from open_untitled.
-            if !paths.is_empty() {
+            if !targets.is_empty() {
+                let paths = targets
+                    .iter()
+                    .map(|target| target.path.clone())
+                    .collect::<Vec<_>>();
                 self.open_documents(&paths);
+                self.reveal_target_lines(&targets);
             }
 
             // Refill Open Recent after the menu system is ready.
@@ -266,18 +273,33 @@ define_class!(
         fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
             // Preserve the event's order: every local file becomes a tab and
             // the first requested document is selected when the batch is done.
-            let mut paths = Vec::new();
+            let mut targets = Vec::new();
             for url in urls.iter() {
-                // Ignore anything that is not a local file; the app has no
-                // business fetching remote documents. A path alone is not enough:
-                // https://example.com/foo has a path too.
-                if !url.isFileURL() {
+                // A local file is a document. Anything else is only this app's
+                // own scheme, which is how the `mdview` command carries a line
+                // number -- `open` itself can carry a path and nothing more.
+                // Nothing here ever fetches a remote document, and a path
+                // alone is not enough to tell: https://example.com/foo has one
+                // too.
+                if url.isFileURL() {
+                    let Some(path) = url.path() else { continue };
+                    targets.push(crate::state::OpenTarget {
+                        path: std::path::PathBuf::from(path.to_string()),
+                        line: None,
+                    });
                     continue;
                 }
-                let Some(path) = url.path() else { continue };
-                paths.push(std::path::PathBuf::from(path.to_string()));
+                let Some(absolute) = url.absoluteString() else { continue };
+                if let Some(target) = crate::state::parse_open_url(&absolute.to_string()) {
+                    targets.push(target);
+                }
             }
+            let paths = targets
+                .iter()
+                .map(|target| target.path.clone())
+                .collect::<Vec<_>>();
             self.open_documents(&paths);
+            self.reveal_target_lines(&targets);
         }
 
         #[unsafe(method(applicationShouldOpenUntitledFile:))]
@@ -288,7 +310,7 @@ define_class!(
             // Open panel on top of the document it asked for.
             let state = self.ivars();
             state.windows.borrow().is_empty()
-                && state.startup_paths.borrow().is_empty()
+                && state.startup_targets.borrow().is_empty()
                 && state.workspace_generation.get() == 0
         }
 
@@ -828,7 +850,7 @@ impl AppDelegate {
     }
     pub fn new(
         mtm: MainThreadMarker,
-        startup_paths: Vec<PathBuf>,
+        startup_targets: Vec<crate::state::OpenTarget>,
         recent_menu: Retained<NSMenu>,
     ) -> Retained<Self> {
         let (history_sender, history_receiver) = mpsc::channel();
@@ -838,7 +860,7 @@ impl AppDelegate {
             active_tab: Rc::new(Cell::new(None)),
             next_tab_id: Cell::new(1),
             highlighter: Highlighter::new(),
-            startup_paths: RefCell::new(startup_paths),
+            startup_targets: RefCell::new(startup_targets),
             recent_menu: RefCell::new(Some(recent_menu)),
             history_sender,
             history_receiver: RefCell::new(history_receiver),
@@ -1911,6 +1933,24 @@ impl AppDelegate {
         self.push_recents_to_pages();
         self.push_workspace_to_pages();
         self.rebuild_recent_menu();
+    }
+
+    /// Queue the scroll for every target that named a line -- from the command
+    /// line, or from the app's own URL. The tabs exist by the time this runs
+    /// but their pages do not, so it goes through `pending_scripts` like
+    /// everything else said to a page that is still loading.
+    fn reveal_target_lines(&self, targets: &[crate::state::OpenTarget]) {
+        for target in targets {
+            let Some(line) = target.line else { continue };
+            // Tabs are keyed by the canonical path `open_documents` resolved.
+            let path = crate::watcher::watch_target(&target.path);
+            if let Some(window) = self.window_for_path(&path) {
+                window
+                    .pending_scripts
+                    .borrow_mut()
+                    .push(crate::state::reveal_source_line_script(line));
+            }
+        }
     }
 
     /// The single-document form used by local links, recents, and bookmarks.
@@ -3174,14 +3214,14 @@ impl AppDelegate {
     }
 }
 
-pub fn run(paths: Vec<PathBuf>) -> ! {
+pub fn run(targets: Vec<crate::state::OpenTarget>) -> ! {
     let mtm = MainThreadMarker::new().expect("main() runs on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
     let recent_menu = crate::menu::install(&app, mtm);
 
-    let delegate = AppDelegate::new(mtm, paths, recent_menu);
+    let delegate = AppDelegate::new(mtm, targets, recent_menu);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 
     app.run();

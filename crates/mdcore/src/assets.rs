@@ -69,6 +69,31 @@ mod tests {
         }
     }
 
+    /// The whole path `mdview notes.md:42` takes through the page: the app
+    /// calls the hook, the hook reads the attribute the renderer put on every
+    /// top-level block, and the block it lands on is lit by a class the
+    /// stylesheet has an animation for. Each half is inert without the other,
+    /// and nothing at runtime would say which one had gone.
+    #[test]
+    fn opening_at_a_line_is_wired_from_the_hook_to_the_flash() {
+        let js = super::INIT_JS;
+        assert!(js.contains("window.mdviewRevealSourceLine = function (line)"));
+        assert!(
+            js.contains("content.querySelectorAll(\"[data-line]\")"),
+            "the reveal must read the renderer's own attribute",
+        );
+        assert!(
+            js.contains("el.classList.add(\"mdview-line-target\")"),
+            "nothing lights the block the reveal landed on",
+        );
+        assert!(super::PAGE_CSS.contains("@keyframes mdview-line-flash {"));
+        assert!(super::PAGE_CSS.contains(".mdview-line-target {"));
+        // The class is taken off again on a timer, so the two durations have
+        // to agree or the flash is cut short or left on a re-reveal.
+        assert!(js.contains("var LINE_FLASH_MS = 1600;"));
+        assert!(super::PAGE_CSS.contains("animation: mdview-line-flash 1.6s"));
+    }
+
     /// v0.9.0 shipped a call to `showNote` with no such function anywhere in
     /// the file: every bookmark toggle threw, which took the page's own star
     /// state and the bookmarks list down with it. Nothing failed loudly, so

@@ -43,7 +43,9 @@ fn relative_and_remote_image_paths_are_preserved() {
 fn frontmatter_is_stripped_and_later_rules_are_kept() {
     let html = mdcore::render::render_body(&fixture("frontmatter.md"));
     assert!(!html.contains("tags:"), "metadata leaked into the body: {html}");
-    assert!(html.starts_with("<h1 id=\"my-note\">"), "got: {html}");
+    // Line 7 of the file, not line 1 of what the parser saw: the metadata
+    // block is five lines the reader's editor still counts.
+    assert!(html.starts_with("<h1 data-line=\"7\" id=\"my-note\">"), "got: {html}");
     insta::assert_snapshot!(html);
 }
 
@@ -56,6 +58,11 @@ fn empty_file_renders_an_empty_body() {
 /// have to add up to what the normal view renders -- otherwise a document would
 /// quietly say something different with `g l` on rendered than without it.
 /// Whitespace between blocks is not compared: the split trims each piece.
+///
+/// A block's own HTML carries no line number -- the rendered diff pairs blocks
+/// by comparing it -- so the join puts each block's line back on before the
+/// two are compared. That makes this the test of the mapping as well: the body
+/// is annotated block by block, in this order, from these same numbers.
 #[test]
 fn the_blocks_of_a_document_add_up_to_the_whole_rendering() {
     let highlighter = mdcore::Highlighter::new();
@@ -65,7 +72,7 @@ fn the_blocks_of_a_document_add_up_to_the_whole_rendering() {
         let blocks = mdcore::render::render_blocks(&source, &highlighter, None);
         let joined = blocks
             .iter()
-            .map(|block| block.html.as_str())
+            .map(|block| mdcore::render::with_source_line(&block.html, block.line))
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(squeeze(&joined), squeeze(&whole), "{name} does not add up");

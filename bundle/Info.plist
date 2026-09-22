@@ -13,6 +13,23 @@
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleIconFile</key><string>MDView</string>
 
+  <!-- The scheme the `mdview` shim opens a FILE:LINE through. `open` carries
+       a path and nothing else, and routing through it is what makes a second
+       document a tab in the window already on screen rather than a second
+       copy of the app; a URL is the only thing it will carry that has room
+       for a line number as well. Read by application:openURLs:. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>com.loind.mdview.open</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>mdview</string>
+      </array>
+    </dict>
+  </array>
+
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>

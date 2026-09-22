@@ -2,10 +2,10 @@
 source: crates/mdcore/tests/render_snapshots.rs
 expression: "mdcore::render::render_body(&fixture(\"basic.md\"))"
 ---
-<h1 id="heading-one">Heading One</h1>
-<p>A paragraph with <strong>bold</strong>, <em>italic</em>, <code>inline code</code>, and a <a href="https://example.com">link</a>.</p>
-<h2 id="heading-two">Heading Two</h2>
-<ul>
+<h1 data-line="1" id="heading-one">Heading One</h1>
+<p data-line="3">A paragraph with <strong>bold</strong>, <em>italic</em>, <code>inline code</code>, and a <a href="https://example.com">link</a>.</p>
+<h2 data-line="5" id="heading-two">Heading Two</h2>
+<ul data-line="7">
 <li>first</li>
 <li>second
 <ul>
@@ -13,11 +13,11 @@ expression: "mdcore::render::render_body(&fixture(\"basic.md\"))"
 </ul>
 </li>
 </ul>
-<blockquote>
+<blockquote data-line="11">
 <p>A blockquote.</p>
 </blockquote>
-<hr />
-<ol>
+<hr data-line="13" />
+<ol data-line="15">
 <li>one</li>
 <li>two</li>
 </ol>

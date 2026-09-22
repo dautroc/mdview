@@ -142,6 +142,11 @@ file that never closes it.
   flowchart LR
   ```
 
+- **A line number opens at that line.** `mdview notes.md:42` — the spelling
+  `grep -n`, a compiler and a stack trace all print, and `:42:7` with a column
+  on it too — scrolls to the block that line became, lights it for a moment,
+  and leaves the cursor on it, so `j` carries on from what you were sent to
+  read. A file whose own name ends in `:42` still opens as itself.
 - **Live reload.** Save in your editor and the view updates, holding your
   scroll position.
 - **Native tabs.** Opening another document adds it to the current window
@@ -181,6 +186,7 @@ make install-cli   # /usr/local/bin/mdview
 
 ```sh
 mdview notes.md               # open a file
+mdview notes.md:42            # open it at a line
 mdview --print-html notes.md                       # render to stdout
 mdview --print-html --diff --diff-base HEAD~2 notes.md  # compare a revision
 ```

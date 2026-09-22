@@ -12,10 +12,9 @@ mod store;
 mod watcher;
 mod window;
 
-use std::path::PathBuf;
-
 fn main() {
     let mut print_html = false;
+    let mut open_only = false;
     let mut theme = mdcore::Theme::System;
     let mut want_theme = false;
     let mut diff = false;
@@ -24,7 +23,7 @@ fn main() {
     let mut want_diff_layout = false;
     let mut diff_base: Option<String> = None;
     let mut want_diff_base = false;
-    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut targets: Vec<state::OpenTarget> = Vec::new();
 
     for arg in std::env::args_os().skip(1) {
         let arg = arg.to_string_lossy().into_owned();
@@ -76,6 +75,7 @@ fn main() {
 
         match arg.as_str() {
             "--print-html" => print_html = true,
+            "--open" => open_only = true,
             "--interactive" => interactive = true,
             "--theme" => want_theme = true,
             "--diff" => diff = true,
@@ -89,16 +89,21 @@ fn main() {
                 println!(
                     "usage: mdview [--print-html [--interactive] [--diff \
                      [--diff-layout LAYOUT] [--diff-base REV]]] \
-                     [--theme THEME] [FILE...]"
+                     [--theme THEME] [--open] [FILE[:LINE]...]"
                 );
                 return;
             }
-            other => paths.push(PathBuf::from(other)),
+            // A path may carry the line to open at: `notes.md:42`, the way
+            // everything that prints a location spells one.
+            other => targets.push(state::parse_open_target(other)),
         }
     }
 
     if print_html {
-        let Some(path) = paths.first() else {
+        // A `:42` on the path is dropped rather than refused: printing a
+        // document has no reading position to put anywhere, and the same
+        // spelling has to work in both commands.
+        let Some(path) = targets.first().map(|target| &target.path) else {
             eprintln!("mdview: --print-html requires a file path");
             std::process::exit(2);
         };
@@ -154,6 +159,43 @@ fn main() {
         return;
     }
 
+    if open_only {
+        // What the `mdview` shim runs. It cannot hand a `FILE:LINE` to `open`,
+        // which stats the path, and it must not run the app itself: launching
+        // the binary a second time gives a second copy of MDView instead of a
+        // tab in the one already open. So the files become this app's own URLs
+        // and go back through `open`, which is the same Apple event Finder
+        // sends -- carrying the line as well as the path.
+        if targets.is_empty() {
+            eprintln!("mdview: --open requires a file path");
+            std::process::exit(2);
+        }
+        let mut urls = Vec::with_capacity(targets.len());
+        for target in &targets {
+            // `open` says this, and says it before anything appears on screen.
+            // Without it a mistyped name opens a tab reporting its own error,
+            // which is the right answer for a file that went missing while it
+            // was being read and the wrong one for a typo at the prompt.
+            if !target.path.exists() {
+                eprintln!("mdview: {} does not exist", target.path.display());
+                std::process::exit(1);
+            }
+            // Absolute, because the URL is read by a process that was started
+            // from somewhere else entirely.
+            urls.push(state::open_url(&state::OpenTarget {
+                path: watcher::watch_target(&target.path),
+                line: target.line,
+            }));
+        }
+        match std::process::Command::new("/usr/bin/open").args(&urls).status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(err) => {
+                eprintln!("mdview: could not run open: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     if diff {
         eprintln!("mdview: --diff only applies to --print-html");
         std::process::exit(2);
@@ -168,7 +210,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    app::run(paths);
+    app::run(targets);
 }
 
 #[cfg(test)]
@@ -204,6 +246,76 @@ mod bundle_version_tests {
         );
         let untitled_start = app.find("fn open_untitled").expect("untitled callback");
         assert!(app[untitled_start..].contains("self.restore_workspace_session();"));
+    }
+
+    /// `mdview notes.md:42` has three joints that only meet at runtime: the
+    /// argument is read as a path and a line, the tabs are opened, and the
+    /// reveal is queued against the tab whose canonical path the opening
+    /// resolved. A reveal queued against the spelling the reader typed finds
+    /// no window and does nothing at all, silently.
+    #[test]
+    fn a_line_on_the_command_line_reaches_the_tab_it_opened() {
+        let main = include_str!("main.rs");
+        assert!(main.contains("state::parse_open_target(other)"));
+        let app = include_str!("app.rs");
+        let launch = app.find("fn did_finish_launching").expect("launch callback");
+        let end = launch
+            + app[launch..]
+                .find("fn terminate_after_last_window")
+                .expect("end of launch callback");
+        assert!(
+            app[launch..end].contains("self.reveal_target_lines(&targets);"),
+            "the command line's line numbers are never acted on"
+        );
+        let reveal = app.find("fn reveal_target_lines").expect("the reveal");
+        let body = &app[reveal..reveal + 900];
+        assert!(
+            body.contains("crate::watcher::watch_target(&target.path)"),
+            "tabs are keyed by canonical path, so the lookup must be too"
+        );
+        assert!(
+            body.contains("pending_scripts"),
+            "the page is still loading when the tabs are made"
+        );
+    }
+
+    /// The other half of that path, and the half that made the first one
+    /// useless until it existed. The `mdview` command hands files to `open`,
+    /// which stats the path and cannot carry anything beside it, so a
+    /// `FILE:LINE` never reached the binary's argv at all. It goes through the
+    /// app's own URL scheme instead: the shim asks the binary for the URLs,
+    /// `open` routes them to the app already running, and the handler reads
+    /// the line back out. Four files have to agree for any of that to happen.
+    #[test]
+    fn the_command_carries_a_line_to_an_already_running_app() {
+        let shim = include_str!("../../../scripts/mdview");
+        assert!(
+            shim.contains(r#"*:[0-9]*) exec "$BIN" --open "$@" ;;"#),
+            "the shim still sends FILE:LINE to `open`, which cannot take it"
+        );
+        let main = include_str!("main.rs");
+        assert!(main.contains(r#""--open" => open_only = true,"#));
+        assert!(
+            main.contains(r#"Command::new("/usr/bin/open")"#),
+            "--open must hand the URLs back to LaunchServices, not run the app"
+        );
+        let plist = include_str!("../../../bundle/Info.plist");
+        let schemes = plist
+            .find("<key>CFBundleURLSchemes</key>")
+            .expect("the bundle declares no URL scheme");
+        assert!(
+            plist[schemes..schemes + 160]
+                .contains(&format!("<string>{}</string>", crate::state::OPEN_SCHEME)),
+            "the scheme the shim opens is not the one the bundle claims"
+        );
+        let app = include_str!("app.rs");
+        let urls = app.find("fn open_urls").expect("the openURLs handler");
+        let body = &app[urls..urls + 1600];
+        assert!(
+            body.contains("crate::state::parse_open_url"),
+            "the handler drops every URL that is not a file, lines and all"
+        );
+        assert!(body.contains("self.reveal_target_lines(&targets);"));
     }
 
     /// The README documents the shortcut policy, so it has to move with it.

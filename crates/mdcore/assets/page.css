@@ -634,6 +634,33 @@ body.mdview-resizing #mdview-sidebar-resizer {
   text-align: center;
   white-space: nowrap;
 }
+/* The block `mdview notes.md:42` opened the document at, lit for a moment on
+   arrival and then gone. A highlight that stayed would be one more thing the
+   reader has to clear, and the caret left on the block says where they are
+   once the tint has faded.
+
+   The find hit's own tint, because it means the same thing: this is the part
+   you came here for. It falls back to the banner's: a named theme supplies
+   --find-hit-bg and the System theme does not, and the find highlight only
+   gets away with that because <mark> has a colour of its own to fall back on.
+   A <p> has none, and an undefined var here would light nothing at all.
+
+   The box-shadow spreads the tint past the text box, which a background alone
+   hugs too tightly to read as a highlight of the whole block. */
+@keyframes mdview-line-flash {
+  from {
+    background-color: var(--find-hit-bg, var(--banner-bg));
+    box-shadow: 0 0 0 .35rem var(--find-hit-bg, var(--banner-bg));
+  }
+  to {
+    background-color: transparent;
+    box-shadow: 0 0 0 .35rem transparent;
+  }
+}
+.mdview-line-target {
+  animation: mdview-line-flash 1.6s ease-out;
+  border-radius: 3px;
+}
 /* Match highlights. Both surfaces carry their own foreground, because the
    document's own colour (a link, a heading, a syntax token) is not readable on
    an arbitrary tint. */

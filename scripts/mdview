@@ -17,5 +17,21 @@ fi
 case "$1" in
   --*) exec "$BIN" "$@" ;;
   "")  exec open -a "$APP" ;;
-  *)   exec open -a "$APP" "$@" ;;
 esac
+
+# A `FILE:LINE` cannot go through `open`, which stats the path and reports the
+# whole spelling missing. The binary turns those into the app's own URL and
+# opens THOSE -- same event, same tab, with the line along for the ride. It is
+# not the default route because a plain file must keep working against an older
+# bundle that does not know the scheme yet.
+#
+# The test is deliberately loose -- any colon followed by a digit. The binary
+# reads the suffix properly, and a file that really is called `draft:2.md`
+# comes out of it as itself, opened the same way.
+for arg in "$@"; do
+  case "$arg" in
+    *:[0-9]*) exec "$BIN" --open "$@" ;;
+  esac
+done
+
+exec open -a "$APP" "$@"
