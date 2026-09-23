@@ -65,13 +65,22 @@ file that never closes it.
 - **Project workspaces.** File → Open Folder… treats a documentation folder or
   repository as one collection. `g f` opens a fuzzy file palette and `g /`
   searches every indexed Markdown file, showing its nearest heading and a
-  snippet before opening the match. The Files sidebar exposes the same bounded
-  file list. Scanning and search stay off the main thread, filesystem changes
+  snippet before opening the match. Scanning and search stay off the main thread, filesystem changes
   reconcile automatically, and relaunch restores the workspace, tabs, selected
   tab, and reading positions. MDView skips symlinks, hidden and generated
   directories, files over 2 MiB, and stops at 10,000 files or 64 MiB of text.
+- **A file explorer.** `g e` opens the Files sidebar as a tree and gives it
+  the keys. It starts on the document you are reading, with its folders open.
+  `j` / `k` move, `l` opens a folder or a file, `h` closes a folder or goes up
+  to its parent, and enter opens either one. `g g` / `G` go to the ends, `H` /
+  `L` fold everything or unfold everything under the cursor, and `.` comes
+  back to this document. `/` filters by path, `y` copies the relative path, and
+  esc hands the keys back to the document. The tree lists the workspace's
+  files when this document is inside the workspace. Otherwise it lists the
+  Markdown files under the document's own folder, and `R` looks at that folder
+  again. The folders you left open are remembered for each root.
 - **Intelligent local links.** Hover a Markdown link to preview its target section
-  without leaving the document, or use `g e` for the nearest link from the
+  without leaving the document, or use `g k` for the nearest link from the
   keyboard. Enter opens it in the current navigation lineage; Shift-Enter or
   Command-click keeps the source and opens a native tab. `g [` and `g ]` move
   back and forward while restoring the heading and reading position. The Links
@@ -222,8 +231,9 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | enter | Search, and hand the keyboard back to the document |
 | n / N | Next / previous match (enter / ⇧enter too) |
 | g n / g p | Next / previous tab |
-| g e | Preview the nearest local Markdown link |
+| g k | Preview the nearest local Markdown link |
 | g [ / g ] | Back / forward in link history |
+| g e | File explorer: open it and give it the keys, or close it |
 | g f | Open a Markdown file from the workspace |
 | g / | Search across the workspace |
 | g s | Toggle the sidebar |

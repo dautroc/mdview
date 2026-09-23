@@ -1067,6 +1067,8 @@
               sidebarTab === "bookmarks" ? "Bookmarks" :
                 sidebarTab === "comments" ? "Comments" : "Outline";
     }
+    // The explorer only has the keys while it is on screen.
+    if (!open || sidebarTab !== "files") setExplorerFocus(false);
     renderSidebarBody();
     layoutCommentRail();
     scheduleMinimapPaint();
@@ -1557,43 +1559,558 @@
     }
   }
 
-  function renderWorkspaceFiles(body) {
-    if (workspaceError) {
-      body.innerHTML = "<p class=\"mdview-sidebar-empty\"></p>";
-      body.firstChild.textContent = workspaceError;
-      return;
+  // ---- Explorer --------------------------------------------------------------
+  //
+  // The Files panel as a tree you walk with the keyboard. `g e` opens it and
+  // gives it the keys; esc gives them back. Its files are the workspace's when
+  // this document is inside the open workspace, and otherwise those under the
+  // document's own folder, which the host scans on request (`exploreFolder`).
+  //
+  // The selection is virtual -- a key, not DOM focus -- so no row is ever a
+  // focused link that enter would activate behind the tree's back, and so the
+  // selection survives every re-render a workspace push causes.
+
+  var documentPath = null;
+  var explorerFolder = null;     // {root, files, partial, error} for folder mode
+  var explorerFolderAsked = false;
+  var explorerFocused = false;
+  var explorerRoot = null;       // the root the open set below belongs to
+  var explorerOpen = {};         // folder key -> true
+  var explorerSelected = null;   // row key
+  var explorerIndex = 0;         // last selected row, for when its key vanishes
+  var explorerFilter = "";
+  var explorerRevealPending = false;
+  var explorerRows = [];
+  var explorerTreeCache = null;
+
+  window.mdviewSetDocumentPath = function (path) {
+    documentPath = path || null;
+    if (sidebarTab === "files") renderSidebarBody();
+  };
+
+  window.mdviewSetExplorerFolder = function (root, files, partial, error) {
+    explorerFolder = {
+      root: root || null,
+      files: Array.isArray(files) ? files : [],
+      partial: !!partial,
+      error: error || null,
+    };
+    explorerTreeCache = null;
+    if (sidebarTab === "files") renderSidebarBody();
+  };
+
+  function isUnder(path, root) {
+    return !!path && !!root && path.indexOf(root.replace(/\/$/, "") + "/") === 0;
+  }
+
+  // Which files the tree shows. The workspace wins whenever it holds this
+  // document -- and when the page does not know its own path at all, as in a
+  // reel or --print-html, since that is then all there is.
+  function explorerSource() {
+    if (workspaceRoot && (!documentPath || isUnder(documentPath, workspaceRoot))) {
+      return { mode: "workspace", root: workspaceRoot, files: workspaceFiles, partial: workspacePartial, error: workspaceError };
     }
-    if (!workspaceRoot) {
+    if (!documentPath) return null;
+    if (!explorerFolderAsked) askExplorerFolder();
+    if (!explorerFolder) return { mode: "folder", root: null, files: [], partial: false, error: null, scanning: true };
+    return {
+      mode: "folder",
+      root: explorerFolder.root,
+      files: explorerFolder.files,
+      partial: explorerFolder.partial,
+      error: explorerFolder.error,
+    };
+  }
+
+  function askExplorerFolder() {
+    explorerFolderAsked = postToHost("exploreFolder");
+    return explorerFolderAsked;
+  }
+
+  function explorerCompare(a, b) {
+    if (a.dir !== b.dir) return a.dir ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+  }
+
+  // Nested folders from the flat relative paths. A folder holding nothing but
+  // one other folder is folded into it ("docs/api"), so a deep layout does not
+  // cost a row per level before anything can be opened.
+  function buildExplorerTree(files) {
+    var root = { key: "", name: "", dir: true, children: [], parent: null };
+    var dirs = { "": root };
+    for (var i = 0; i < files.length; i++) {
+      var parts = String(files[i].relative).split("/");
+      var parent = root;
+      for (var p = 0; p < parts.length - 1; p++) {
+        var key = parts.slice(0, p + 1).join("/");
+        if (!dirs[key]) {
+          dirs[key] = { key: key, name: parts[p], dir: true, children: [], parent: parent };
+          parent.children.push(dirs[key]);
+        }
+        parent = dirs[key];
+      }
+      parent.children.push({
+        key: files[i].relative,
+        name: parts[parts.length - 1],
+        dir: false,
+        path: files[i].path,
+        parent: parent,
+      });
+    }
+    (function fold(node) {
+      while (node !== root && node.children.length === 1 && node.children[0].dir) {
+        var only = node.children[0];
+        node.name += "/" + only.name;
+        node.key = only.key;
+        node.children = only.children;
+        for (var c = 0; c < node.children.length; c++) node.children[c].parent = node;
+      }
+      node.children.sort(explorerCompare);
+      for (var k = 0; k < node.children.length; k++) {
+        if (node.children[k].dir) fold(node.children[k]);
+      }
+    })(root);
+    return root;
+  }
+
+  function explorerTree(source) {
+    if (!explorerTreeCache || explorerTreeCache.files !== source.files) {
+      explorerTreeCache = { files: source.files, tree: buildExplorerTree(source.files) };
+    }
+    return explorerTreeCache.tree;
+  }
+
+  function explorerStorageKey(root) {
+    return "mdview.explorer.open:" + root;
+  }
+
+  function loadExplorerOpen(root) {
+    explorerOpen = {};
+    try {
+      var stored = JSON.parse(localStorage.getItem(explorerStorageKey(root)) || "[]");
+      for (var i = 0; i < stored.length; i++) explorerOpen[stored[i]] = true;
+    } catch (err) {
+      explorerOpen = {};
+    }
+  }
+
+  function saveExplorerOpen() {
+    if (!explorerRoot) return;
+    try {
+      localStorage.setItem(explorerStorageKey(explorerRoot), JSON.stringify(Object.keys(explorerOpen)));
+    } catch (err) {
+      // Private browsing or storage off: folds just are not remembered.
+    }
+  }
+
+  // Every term in the filter has to appear in the path, in any order.
+  function explorerMatches(node) {
+    var terms = explorerFilter.toLowerCase().split(/\s+/);
+    var key = node.key.toLowerCase();
+    for (var i = 0; i < terms.length; i++) {
+      if (terms[i] && key.indexOf(terms[i]) < 0) return false;
+    }
+    return true;
+  }
+
+  // The rows on screen, in order. A filter shows the matching files with the
+  // folders above them, open whatever their saved state says.
+  function explorerVisibleRows(tree) {
+    var rows = [];
+    (function walk(node, depth) {
+      for (var i = 0; i < node.children.length; i++) {
+        var child = node.children[i];
+        if (child.dir) {
+          var mark = rows.length;
+          rows.push({ node: child, depth: depth });
+          var open = explorerFilter ? true : !!explorerOpen[child.key];
+          if (open) walk(child, depth + 1);
+          if (explorerFilter && rows.length === mark + 1) rows.pop();
+        } else if (!explorerFilter || explorerMatches(child)) {
+          rows.push({ node: child, depth: depth });
+        }
+      }
+    })(tree, 0);
+    return rows;
+  }
+
+  function explorerDocumentNode(tree) {
+    if (!documentPath) return null;
+    var found = null;
+    (function walk(node) {
+      for (var i = 0; i < node.children.length && !found; i++) {
+        var child = node.children[i];
+        if (child.dir) walk(child);
+        else if (child.path === documentPath) found = child;
+      }
+    })(tree);
+    return found;
+  }
+
+  // Open the folders down to this document and select it.
+  function revealExplorerDocument() {
+    var source = explorerSource();
+    if (!source || !source.files.length) {
+      explorerRevealPending = true;
+      return false;
+    }
+    explorerRevealPending = false;
+    var node = explorerDocumentNode(explorerTree(source));
+    if (!node) return false;
+    for (var up = node.parent; up && up.key; up = up.parent) explorerOpen[up.key] = true;
+    saveExplorerOpen();
+    explorerSelected = node.key;
+    return true;
+  }
+
+  function renderExplorer(body) {
+    var source = explorerSource();
+    if (!source) {
       body.innerHTML = "<p class=\"mdview-sidebar-empty\">Open a folder to browse its Markdown files.</p>";
       return;
     }
-    if (!workspaceFiles.length) {
+    if (source.error) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\"></p>";
+      body.firstChild.textContent = source.error;
+      return;
+    }
+    if (source.scanning) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">Looking for Markdown files…</p>";
+      return;
+    }
+    if (source.root !== explorerRoot) {
+      explorerRoot = source.root;
+      loadExplorerOpen(explorerRoot);
+      explorerSelected = null;
+      explorerRevealPending = true;
+    }
+    if (!source.files.length) {
       body.innerHTML = "<p class=\"mdview-sidebar-empty\">No Markdown files.</p>";
       return;
     }
-    body.innerHTML = "<ul></ul>";
-    var list = body.firstChild;
-    for (var i = 0; i < workspaceFiles.length; i++) {
-      (function (entry) {
-        var li = document.createElement("li");
-        var a = document.createElement("a");
-        a.href = "#";
-        a.textContent = entry.relative;
-        a.title = entry.path;
-        a.addEventListener("click", function (event) {
-          event.preventDefault();
-          postToHost("openWorkspacePath:" + encodeURIComponent(entry.path));
-        });
-        li.appendChild(a);
-        list.appendChild(li);
-      })(workspaceFiles[i]);
-    }
-    if (workspacePartial) {
+    if (explorerRevealPending) revealExplorerDocument();
+
+    body.innerHTML = "";
+    if (explorerFilter || explorerFilterIsOpen()) body.appendChild(buildExplorerFilter());
+    var list = document.createElement("ul");
+    list.className = "mdview-explorer";
+    list.setAttribute("role", "tree");
+    body.appendChild(list);
+    renderExplorerRows(list, source);
+    if (source.partial) {
       var note = document.createElement("p");
       note.className = "mdview-sidebar-empty";
-      note.textContent = "Partial workspace — safety limits excluded some files.";
+      note.textContent = "Partial list — safety limits excluded some files.";
       body.appendChild(note);
     }
+  }
+
+  function renderExplorerRows(list, source) {
+    var tree = explorerTree(source);
+    explorerRows = explorerVisibleRows(tree);
+    list.innerHTML = "";
+    if (!explorerRows.length) {
+      var none = document.createElement("li");
+      none.className = "mdview-sidebar-empty";
+      none.textContent = "Nothing matches.";
+      list.appendChild(none);
+      return;
+    }
+    for (var i = 0; i < explorerRows.length; i++) {
+      (function (row, index) {
+        var node = row.node;
+        var li = document.createElement("li");
+        li.setAttribute("role", "treeitem");
+        li.setAttribute("aria-level", String(row.depth + 1));
+        li.setAttribute("data-key", node.key);
+        li.style.setProperty("--depth", String(row.depth));
+        li.className = node.dir ? "is-folder" : "is-file";
+        if (node.dir) li.setAttribute("aria-expanded", explorerFilter || explorerOpen[node.key] ? "true" : "false");
+        if (!node.dir && node.path === documentPath) li.className += " is-document";
+        var twisty = document.createElement("span");
+        twisty.className = "mdview-explorer-twisty";
+        twisty.textContent = node.dir ? (li.getAttribute("aria-expanded") === "true" ? "▾" : "▸") : "";
+        var name = document.createElement("span");
+        name.className = "mdview-explorer-name";
+        name.textContent = node.name;
+        li.title = node.dir ? node.key + "/" : node.path;
+        li.appendChild(twisty);
+        li.appendChild(name);
+        li.addEventListener("click", function (event) {
+          event.preventDefault();
+          setExplorerFocus(true);
+          selectExplorerRow(index);
+          if (node.dir) toggleExplorerFolder(node);
+          else openExplorerFile(node);
+        });
+        list.appendChild(li);
+      })(explorerRows[i], i);
+    }
+    var at = -1;
+    for (var r = 0; r < explorerRows.length; r++) {
+      if (explorerRows[r].node.key === explorerSelected) at = r;
+    }
+    // The selected row went away -- filtered out, collapsed into, or deleted:
+    // stay about where it was rather than jumping back to the top.
+    if (at < 0) at = Math.min(explorerIndex, explorerRows.length - 1);
+    selectExplorerRow(at);
+  }
+
+  function explorerList() {
+    return document.querySelector("#mdview-sidebar-body .mdview-explorer");
+  }
+
+  function selectExplorerRow(index) {
+    if (!explorerRows.length) return;
+    index = Math.max(0, Math.min(explorerRows.length - 1, index));
+    explorerIndex = index;
+    explorerSelected = explorerRows[index].node.key;
+    var list = explorerList();
+    if (!list) return;
+    var items = list.children;
+    for (var i = 0; i < items.length; i++) {
+      var on = i === index;
+      items[i].classList.toggle("is-current", on);
+      items[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (items[index] && sidebar) revealOutlineRow(items[index], sidebar);
+  }
+
+  function rerenderExplorer() {
+    if (sidebarTab === "files") renderSidebarBody();
+  }
+
+  function toggleExplorerFolder(node, open) {
+    var next = open == null ? !explorerOpen[node.key] : open;
+    if (next) explorerOpen[node.key] = true;
+    else delete explorerOpen[node.key];
+    saveExplorerOpen();
+    rerenderExplorer();
+  }
+
+  function openExplorerFile(node) {
+    if (!postToHost("openWorkspacePath:" + encodeURIComponent(node.path))) {
+      showNote("Opening a file needs the app.");
+      return;
+    }
+    setExplorerFocus(false);
+  }
+
+  function setExplorerFocus(on) {
+    explorerFocused = !!on;
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (sidebar) sidebar.classList.toggle("is-focused", explorerFocused);
+    if (!explorerFocused) closeExplorerFilterInput();
+  }
+
+  // g e: open the explorer and hand it the keys; a second press while it has
+  // them closes it. An explorer already showing but not focused is focused
+  // rather than shut, since the point of pressing it was to use the tree.
+  function toggleExplorerKey() {
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (!sidebar) return;
+    if (explorerFocused && !sidebar.hidden && sidebarTab === "files") {
+      setSidebar(false, "files");
+      return;
+    }
+    exitVisual();
+    closeLinkPreview();
+    var source = explorerSource();
+    // A fresh look at the folder each time: nothing watches it.
+    if (source && source.mode === "folder" && explorerFolder) askExplorerFolder();
+    explorerRevealPending = true;
+    if (sidebar.hidden || sidebarTab !== "files") setSidebar(true, "files");
+    else renderSidebarBody();
+    setExplorerFocus(true);
+  }
+
+  function explorerSelectedRow() {
+    return explorerRows[explorerIndex] || null;
+  }
+
+  function copyExplorerPath() {
+    var row = explorerSelectedRow();
+    if (!row) return;
+    var area = document.createElement("textarea");
+    area.value = row.node.key;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    var copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch (err) {
+      copied = false;
+    }
+    document.body.removeChild(area);
+    showNote(copied ? "Copied " + row.node.key + "." : "Nothing copied.");
+  }
+
+  // The filter. Its input lives at the top of the panel while it is open; the
+  // tree underneath narrows on every keystroke.
+  var explorerFilterOpen = false;
+
+  function explorerFilterIsOpen() {
+    return explorerFilterOpen;
+  }
+
+  function buildExplorerFilter() {
+    var input = document.createElement("input");
+    input.id = "mdview-explorer-filter";
+    input.type = "search";
+    input.placeholder = "Filter files";
+    input.setAttribute("aria-label", "Filter files");
+    input.value = explorerFilter;
+    input.addEventListener("input", function () {
+      explorerFilter = input.value;
+      var source = explorerSource();
+      var list = explorerList();
+      if (source && list) renderExplorerRows(list, source);
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        explorerFilter = "";
+        explorerFilterOpen = false;
+        rerenderExplorer();
+      } else if (event.key === "Enter" || event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        explorerFilterOpen = false;
+        input.blur();
+        // Onto the first file that matched, which is what the filter was for.
+        for (var i = 0; i < explorerRows.length; i++) {
+          if (!explorerRows[i].node.dir) {
+            selectExplorerRow(i);
+            break;
+          }
+        }
+      } else {
+        return;
+      }
+      setExplorerFocus(true);
+    });
+    return input;
+  }
+
+  function openExplorerFilter() {
+    explorerFilterOpen = true;
+    rerenderExplorer();
+    var input = document.getElementById("mdview-explorer-filter");
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+
+  function closeExplorerFilterInput() {
+    var input = document.getElementById("mdview-explorer-filter");
+    if (input && document.activeElement === input) input.blur();
+    explorerFilterOpen = false;
+  }
+
+  function moveExplorerTo(edge) {
+    selectExplorerRow(edge < 0 ? 0 : explorerRows.length - 1);
+  }
+
+  // The keys while the tree has them. Returns false for anything it does not
+  // claim, which then goes on to the document's own table: ? and : still work,
+  // and so does every g chord but g g, which the chord code sends here.
+  function onExplorerKey(event, key) {
+    var row = explorerSelectedRow();
+    var node = row && row.node;
+    switch (key) {
+      case "j":
+      case "ArrowDown":
+        selectExplorerRow(explorerIndex + 1);
+        break;
+      case "k":
+      case "ArrowUp":
+        selectExplorerRow(explorerIndex - 1);
+        break;
+      case "l":
+      case "ArrowRight":
+        if (!node) break;
+        if (!node.dir) openExplorerFile(node);
+        else if (explorerFilter || explorerOpen[node.key]) selectExplorerRow(explorerIndex + 1);
+        else toggleExplorerFolder(node, true);
+        break;
+      case "h":
+      case "ArrowLeft":
+        if (!node) break;
+        if (node.dir && explorerOpen[node.key] && !explorerFilter) {
+          toggleExplorerFolder(node, false);
+        } else if (node.parent && node.parent.key) {
+          explorerSelected = node.parent.key;
+          rerenderExplorer();
+        }
+        break;
+      case "Enter":
+      case "o":
+        if (!node) break;
+        if (node.dir) toggleExplorerFolder(node);
+        else openExplorerFile(node);
+        break;
+      case "G":
+        moveExplorerTo(1);
+        break;
+      case "H":
+        explorerOpen = {};
+        saveExplorerOpen();
+        if (node) {
+          var top = node;
+          while (top.parent && top.parent.key) top = top.parent;
+          explorerSelected = top.key;
+        }
+        rerenderExplorer();
+        break;
+      case "L":
+        if (!node || !node.dir) break;
+        (function openAll(dir) {
+          explorerOpen[dir.key] = true;
+          for (var i = 0; i < dir.children.length; i++) {
+            if (dir.children[i].dir) openAll(dir.children[i]);
+          }
+        })(node);
+        saveExplorerOpen();
+        rerenderExplorer();
+        break;
+      case ".":
+        if (revealExplorerDocument()) rerenderExplorer();
+        else showNote("This document is not in the list.");
+        break;
+      case "/":
+        openExplorerFilter();
+        break;
+      case "y":
+        copyExplorerPath();
+        break;
+      case "R":
+        var source = explorerSource();
+        if (source && source.mode === "folder") {
+          askExplorerFolder();
+          showNote("Looking again.");
+        } else {
+          showNote("The workspace keeps itself up to date.");
+        }
+        break;
+      case "Escape":
+        if (explorerFilter) {
+          explorerFilter = "";
+          rerenderExplorer();
+        } else {
+          setExplorerFocus(false);
+        }
+        break;
+      default:
+        return false;
+    }
+    event.preventDefault();
+    return true;
   }
 
   function reviewMatchesFilter(item) {
@@ -1699,7 +2216,7 @@
     var body = document.getElementById("mdview-sidebar-body");
     if (!body) return;
     if (sidebarTab === "files") {
-      renderWorkspaceFiles(body);
+      renderExplorer(body);
     } else if (sidebarTab === "links") {
       renderLinks(body);
     } else if (sidebarTab === "inbox") {
@@ -5515,7 +6032,7 @@
     if (sidebar) setSidebar(sidebar.hidden, sidebarTab);
   }
 
-  // o and B name a tab rather than toggling blindly: pressing o while the
+  // g o and g b name a tab rather than toggling blindly: pressing g o while the
   // panel is showing bookmarks switches to the outline, and only a second
   // press -- when the outline is already what you are looking at -- closes it.
   function showSidebarTab(tab) {
@@ -5660,7 +6177,7 @@
     {
       title: "Links and history",
       items: [
-        { keys: ["g e"], hint: "g  e", label: "Preview the nearest local link", run: previewCurrentLink },
+        { keys: ["g k"], hint: "g  k", label: "Preview the nearest local link", run: previewCurrentLink },
         { keys: ["g ["], hint: "g  [", label: "Back in link history", run: function () { postToHost("navigateBack"); } },
         { keys: ["g ]"], hint: "g  ]", label: "Forward in link history", run: function () { postToHost("navigateForward"); } },
       ],
@@ -5682,6 +6199,7 @@
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
         { keys: ["g r"], hint: "g  r", label: "Recent files", run: toggleRecentPalette },
+        { keys: ["g e"], hint: "g  e", label: "File explorer", run: toggleExplorerKey },
         { keys: ["g f"], hint: "g  f", label: "Workspace files", run: function () { window.mdviewOpenWorkspaceFiles(); } },
         { keys: ["g i"], hint: "g  i", label: "Links and backlinks", run: function () { showSidebarTab("links"); } },
       ],
@@ -5713,6 +6231,16 @@
         { keys: ["0"], hint: "0", label: "Actual size", run: function () { postToHost("zoomReset"); } },
         { keys: [":"], hint: ":", label: "Run a command by name", run: toggleCommandPalette },
         { keys: ["?"], hint: "?", label: "This list", run: function () { toggleShortcuts(); } },
+      ],
+    },
+    {
+      title: "File explorer",
+      items: [
+        { keys: [], hint: ".", label: "Back to this document", run: null },
+        { keys: [], hint: "/", label: "Filter by path", run: null },
+        { keys: [], hint: "H  L", label: "Fold everything, unfold the folder", run: null },
+        { keys: [], hint: "y", label: "Copy the path", run: null },
+        { keys: [], hint: "R", label: "Look at the folder again", run: null },
       ],
     },
     {
@@ -6004,10 +6532,17 @@
       // listeners and still have to see it.
       if (key === "Escape") return;
       event.preventDefault();
-      if (chord) chord.run();
+      // g g is the top of whatever has the keys.
+      if (explorerFocused && chord && chord.keys[0] === "g g") moveExplorerTo(-1);
+      else if (chord) chord.run();
       return;
     }
     pendingPrefix = null;
+
+    // The tree, while it has the keys. Below the prefix so g chords keep
+    // working from inside it, and above the table so j and k move the tree
+    // rather than the caret behind it.
+    if (explorerFocused && onExplorerKey(event, key)) return;
 
     // Below the modal blocks above, so a sheet or a palette still owns esc
     // first; above nothing else, because find and the comment bar guard their
@@ -6032,6 +6567,12 @@
 
   function attachKeyListeners() {
     document.addEventListener("keydown", onDocumentKeyDown);
+    // A click anywhere outside the panel takes the keys back from the tree.
+    document.addEventListener("mousedown", function (event) {
+      if (!explorerFocused) return;
+      var sidebar = document.getElementById("mdview-sidebar");
+      if (sidebar && !sidebar.contains(event.target)) setExplorerFocus(false);
+    }, true);
   }
 
   // ---- Sidebar event listeners (attach once at DOMContentLoaded) ----------

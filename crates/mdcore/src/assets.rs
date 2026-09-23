@@ -326,11 +326,33 @@ mod tests {
         ] {
             assert!(js.contains(hook), "workspace navigation is missing {hook}");
         }
-        assert!(js.contains("a.textContent = entry.relative"));
+        assert!(js.contains("name.textContent = node.name"), "a file name must never be markup");
         assert!(js.contains("name.textContent = entry.relative"));
         assert!(super::PAGE_CSS.contains("#mdview-workspace-palette {"));
         assert!(super::PAGE_CSS.contains("#mdview-workspace-palette[hidden]"));
         assert!(super::PAGE_CSS.contains(".mdview-workspace-row"));
+    }
+
+    /// The explorer: `g e` hands it the keys, the host tells the page which
+    /// file it is and, outside a workspace, what is in its folder.
+    #[test]
+    fn the_file_explorer_is_reachable_by_key_and_styled() {
+        let js = super::INIT_JS;
+        for hook in [
+            "keys: [\"g e\"], hint: \"g  e\", label: \"File explorer\", run: toggleExplorerKey",
+            "keys: [\"g k\"], hint: \"g  k\", label: \"Preview the nearest local link\"",
+            "window.mdviewSetDocumentPath",
+            "window.mdviewSetExplorerFolder",
+            "postToHost(\"exploreFolder\")",
+            "list.setAttribute(\"role\", \"tree\")",
+            "if (explorerFocused && onExplorerKey(event, key)) return;",
+            "localStorage.setItem(explorerStorageKey(",
+        ] {
+            assert!(js.contains(hook), "the explorer is missing {hook}");
+        }
+        assert!(super::PAGE_CSS.contains(".mdview-explorer li.is-current"));
+        assert!(super::PAGE_CSS.contains("#mdview-sidebar.is-focused"));
+        assert!(super::PAGE_CSS.contains("#mdview-explorer-filter"));
     }
 
     /// `g l` is the only way to the rendered layout, and the layout is only a

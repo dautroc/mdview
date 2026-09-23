@@ -47,6 +47,12 @@ pub(crate) enum WorkspaceResponse {
         generation: u64,
         result: Result<WorkspaceAnalysis, String>,
     },
+    /// A tab's own folder, scanned for the explorer.
+    Folder {
+        tab_id: u64,
+        generation: u64,
+        result: Result<mdcore::WorkspaceSnapshot, String>,
+    },
     Search {
         tab_id: u64,
         workspace_generation: u64,
@@ -1225,6 +1231,35 @@ impl AppDelegate {
         });
     }
 
+    /// Scan the source tab's own folder for the explorer. The workspace would
+    /// do, but only when one is open and holds this document; the page asks
+    /// for this only when it does not.
+    fn explore_folder(&self, source_id: Option<u64>) {
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
+        let Some(folder) = window.path.parent().map(|parent| parent.to_path_buf()) else {
+            return;
+        };
+        let generation = window.explorer_generation.get().wrapping_add(1);
+        window.explorer_generation.set(generation);
+        let sender = self.ivars().workspace_sender.clone();
+        let tab_id = window.id;
+        std::thread::spawn(move || {
+            let result = mdcore::WorkspaceSnapshot::discover(
+                &folder,
+                generation,
+                mdcore::WorkspaceLimits::default(),
+            )
+            .map_err(|err| err.to_string());
+            let _ = sender.send(WorkspaceResponse::Folder {
+                tab_id,
+                generation,
+                result,
+            });
+        });
+    }
+
     fn open_review_item(&self, source_id: Option<u64>, raw_path: &str, id: &str) {
         let path = PathBuf::from(raw_path);
         let allowed = self
@@ -1293,24 +1328,30 @@ impl AppDelegate {
     fn open_workspace_path(&self, source_id: Option<u64>, raw_path: &str) {
         let requested = PathBuf::from(raw_path);
         let current = std::fs::canonicalize(&requested).ok();
+        let allowed = |snapshot: &mdcore::WorkspaceSnapshot| {
+            snapshot
+                .files
+                .iter()
+                .find(|file| {
+                    file.path == requested
+                        && current.as_ref() == Some(&file.path)
+                        && std::fs::symlink_metadata(&file.path)
+                            .map(|metadata| !metadata.file_type().is_symlink())
+                            .unwrap_or(false)
+                })
+                .map(|file| file.path.clone())
+        };
+        // The workspace, or else the folder the source tab's explorer scanned.
         let path = self
             .ivars()
             .workspace
             .borrow()
             .as_ref()
-            .and_then(|workspace| {
-                workspace
-                    .snapshot
-                    .files
-                    .iter()
-                    .find(|file| {
-                        file.path == requested
-                            && current.as_ref() == Some(&file.path)
-                            && std::fs::symlink_metadata(&file.path)
-                                .map(|metadata| !metadata.file_type().is_symlink())
-                                .unwrap_or(false)
-                    })
-                    .map(|file| file.path.clone())
+            .and_then(|workspace| allowed(&workspace.snapshot))
+            .or_else(|| {
+                source_id
+                    .and_then(|id| self.window_by_id(id))
+                    .and_then(|window| window.explorer.borrow().as_ref().and_then(allowed))
             });
         match path {
             Some(path) => {
@@ -1343,7 +1384,7 @@ impl AppDelegate {
             }
             None => {
                 if let Some(window) = self.message_window(source_id) {
-                    window.show_note("That file is no longer in the workspace.");
+                    window.show_note("That file is no longer there.");
                 }
             }
         }
@@ -1623,6 +1664,24 @@ impl AppDelegate {
                             }
                         }
                     }
+                }
+                WorkspaceResponse::Folder {
+                    tab_id,
+                    generation,
+                    result,
+                } => {
+                    let Some(window) = self.window_by_id(tab_id) else {
+                        continue;
+                    };
+                    if window.explorer_generation.get() != generation {
+                        continue;
+                    }
+                    let script = match &result {
+                        Ok(snapshot) => crate::state::explorer_files_script(Some(snapshot), None),
+                        Err(error) => crate::state::explorer_files_script(None, Some(error)),
+                    };
+                    *window.explorer.borrow_mut() = result.ok();
+                    window.pending_scripts.borrow_mut().push(script);
                 }
                 WorkspaceResponse::Search {
                     tab_id,
@@ -2371,6 +2430,7 @@ impl AppDelegate {
             Message::SelectHistory(revision) => self.select_history(source_id, &revision),
             Message::SearchWorkspace(query) => self.search_workspace(source_id, &query),
             Message::OpenWorkspacePath(path) => self.open_workspace_path(source_id, &path),
+            Message::ExploreFolder => self.explore_folder(source_id),
             Message::OpenReviewItem { path, id } => {
                 self.open_review_item(source_id, &path, &id)
             }

@@ -3,6 +3,27 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## Unreleased
+
+### What's new
+
+- **The Files panel is a tree you can walk.** `g e` opens it and gives it the
+  keys, starting on the document you are reading with its folders open. `j`
+  and `k` move, `l` goes into a folder or opens a file, and `h` closes a folder
+  or climbs to its parent. Enter opens whatever is selected. `/` narrows the
+  tree to matching paths, `.` comes back to this document, `y` copies a path,
+  and `H` / `L` fold everything or unfold one folder completely. Esc, or a
+  click in the page, gives the keys back. Folders come before files, `2` sorts
+  before `10`, and a folder holding nothing but another folder takes one row.
+  The tree remembers which folders you left open.
+- **The explorer works without a workspace.** A document outside the open
+  workspace, or opened with no workspace at all, shows the Markdown files
+  under its own folder. `R` scans that folder again.
+
+### Notes
+
+- Link preview moves from `g e` to `g k` to make room for the explorer.
+
 ## [v0.28.0](https://github.com/dautroc/mdview/releases/tag/v0.28.0) — 2026-09-17
 
 ### What's new

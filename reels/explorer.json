@@ -1,0 +1,26 @@
+{
+  "page": "tour.html",
+  "width": 1120, "height": 640,
+  "openHold": 1000,
+  "pages": {
+    "spec": "target/reels/pages/spec.html",
+    "notes": "target/reels/pages/notes.html"
+  },
+  "seed": [
+    "window.mdviewSetWorkspace && window.mdviewSetWorkspace('/notes/scheduler',[{relative:'README.md',path:'tour'},{relative:'design/spec.md',path:'spec'},{relative:'design/render.md',path:'render'},{relative:'meetings/notes.md',path:'notes'}],false,null)"
+  ],
+  "bridge": {
+    "openWorkspacePath:": { "loadByArg": "%s" },
+    "*": { "ignore": true }
+  },
+  "steps": [
+    { "key": "g e", "hold": 1100 },
+    { "key": "l", "hold": 800 },
+    { "key": "j", "hold": 600 },
+    { "key": "j", "hold": 600 },
+    { "key": "j", "hold": 600 },
+    { "key": "l", "hold": 800 },
+    { "key": "j", "hold": 900 },
+    { "key": "Enter", "settle": 800, "hold": 1800 }
+  ]
+}

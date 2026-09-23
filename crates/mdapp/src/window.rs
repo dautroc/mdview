@@ -127,6 +127,12 @@ pub struct DocumentWindow {
     /// `loadHTMLString` is asynchronous, so anything evaluated immediately
     /// after it runs against the OLD document (or none) and silently no-ops.
     pub pending_scripts: RefCell<Vec<String>>,
+    /// The Markdown files under this document's own folder, scanned when the
+    /// explorer asks and the document is outside the workspace. It is also
+    /// the allowlist `openWorkspacePath` checks for this tab.
+    pub explorer: RefCell<Option<mdcore::WorkspaceSnapshot>>,
+    /// Bumped per scan request, so a slow scan cannot overwrite a newer one.
+    pub explorer_generation: Cell<u64>,
     /// Flipped to `true` by `WindowCloseDelegate::windowWillClose` — the only
     /// reliable signal that this window is gone for good. `NSWindow::isVisible`
     /// is also false while merely hidden (⌘H, ⌘M), which is not the same thing.
@@ -262,6 +268,8 @@ impl DocumentWindow {
             review_watcher: RefCell::new(watch_review(path)),
             pending_banners: RefCell::new(Vec::new()),
             pending_scripts: RefCell::new(Vec::new()),
+            explorer: RefCell::new(None),
+            explorer_generation: Cell::new(0),
             closed,
             content_ready: Cell::new(false),
             expecting_own_load,
@@ -382,6 +390,11 @@ impl DocumentWindow {
                     .unwrap_or(true);
                 let sidebar_tab = crate::defaults::get_string(crate::defaults::SIDEBAR_TAB_KEY)
                     .unwrap_or_else(|| "outline".to_string());
+                // Before the sidebar: a restored Files tab needs to know which
+                // file it is looking at the moment it first renders.
+                self.pending_scripts
+                    .borrow_mut()
+                    .push(crate::state::document_path_script(&self.path));
                 let sidebar_script = format!(
                     "window.mdviewSetSidebar && window.mdviewSetSidebar({}, {});",
                     sidebar_open,

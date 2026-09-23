@@ -437,7 +437,7 @@ mod bundle_version_tests {
         assert!(page.contains("mdview-broken-link"));
         assert!(page.contains("function previewDestination(anchor)"));
         assert!(page.contains("querySelectorAll(\"#mdview-content a[href]\")"));
-        assert!(page.contains("keys: [\"g e\"]"));
+        assert!(page.contains("keys: [\"g k\"]"));
         assert!(page.contains("keys: [\"g [\"]"));
         assert!(page.contains("keys: [\"g ]\"]"));
         assert!(page.contains("keys: [\"g i\"]"));
@@ -701,7 +701,7 @@ mod bundle_version_tests {
             );
             found += 1;
         }
-        assert_eq!(found, 11, "the tour is eleven sections, one demo each");
+        assert_eq!(found, 12, "the tour is twelve sections, one demo each");
     }
 
     /// The same list main.rs already holds the README to. The tour is the only
@@ -746,7 +746,7 @@ mod bundle_version_tests {
             );
             seen += 1;
         }
-        assert_eq!(seen, 11, "eleven reels, one per section of the tour");
+        assert_eq!(seen, 12, "twelve reels, one per section of the tour");
     }
 
     #[test]

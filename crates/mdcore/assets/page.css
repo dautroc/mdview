@@ -979,6 +979,54 @@ body.mdview-resizing #mdview-sidebar-resizer {
   color: var(--link);
 }
 .mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }
+/* The explorer. Rows indent by depth rather than by nested lists, so the tree
+   is one flat list the keys can walk; the selected row wears the outline's
+   "you are here" marker. */
+#mdview-sidebar-body ul.mdview-explorer { padding-left: 0; }
+.mdview-explorer li {
+  align-items: baseline;
+  border-radius: 2px;
+  cursor: pointer;
+  display: flex;
+  gap: .3rem;
+  padding: .12rem .4rem .12rem calc(var(--depth, 0) * .85rem + .4rem);
+}
+.mdview-explorer li:hover { color: var(--link); }
+.mdview-explorer-twisty {
+  color: var(--muted);
+  flex: 0 0 .8rem;
+  font-size: .85rem;
+  line-height: 1;
+}
+.mdview-explorer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mdview-explorer li.is-folder .mdview-explorer-name { color: var(--muted); }
+.mdview-explorer li.is-document .mdview-explorer-name { font-weight: 600; }
+.mdview-explorer li.is-current {
+  background: var(--code-bg);
+  box-shadow: inset 2px 0 0 var(--link);
+}
+/* Only while the tree has the keys does the selection take the link colour,
+   so it is plain which of the two, tree or document, j and k will move. */
+#mdview-sidebar.is-focused .mdview-explorer li.is-current,
+#mdview-sidebar.is-focused .mdview-explorer li.is-current .mdview-explorer-name { color: var(--link); }
+#mdview-sidebar.is-focused .mdview-sidebar-head { box-shadow: inset 0 -2px 0 var(--link); }
+#mdview-explorer-filter {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: var(--fg);
+  font: inherit;
+  font-size: .8rem;
+  margin-bottom: .5rem;
+  padding: .3rem .5rem;
+  width: 100%;
+}
+#mdview-explorer-filter:focus { border-color: var(--link); outline: none; }
 .mdview-review-filters {
   display: flex;
   flex-wrap: wrap;

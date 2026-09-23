@@ -39,15 +39,27 @@ The vim alphabet is deliberately not in that list; `?` prints the lot.
 
 Choose **File → Open Folder…** once. `g f` then opens any Markdown file in that
 folder, while `g /` searches their contents and identifies the nearest heading
-before opening the result. The Files sidebar carries the same list. MDView
+before opening the result. MDView
 reconciles filesystem changes in the background and restores the workspace,
 tabs, selected tab, and reading positions on relaunch.
+
+## Walking the files
+
+![Opening the explorer with g e, walking into folders with j and l, then opening a file](gifs/explorer.gif)
+
+`g e` opens the Files sidebar as a tree and gives it the keyboard. It opens on
+the document you are reading, with its folders expanded. `j` and `k` move, `l`
+opens a folder or a file, `h` closes a folder or climbs to its parent, and
+enter opens whichever is selected. `/` narrows the tree to matching paths, `.`
+comes back to the current document, and esc returns the keys to the page. It
+works without a workspace too: the tree then shows the Markdown files under
+the document's own folder.
 
 ## Following links without losing your place
 
 ![Previewing a local link, opening it, inspecting backlinks and broken references, then moving back and forward](gifs/links.gif)
 
-Hover a local Markdown link to preview the target section, or press `g e` for
+Hover a local Markdown link to preview the target section, or press `g k` for
 whichever link is nearest the reading position. Enter follows it in the current
 navigation lineage; Shift-Enter opens a native tab instead. `g [` and `g ]` move
 back and forward, restoring the heading and scroll fallback.

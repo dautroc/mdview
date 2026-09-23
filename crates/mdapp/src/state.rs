@@ -259,6 +259,8 @@ pub enum Message {
     SelectHistory(String),
     SearchWorkspace(String),
     OpenWorkspacePath(String),
+    /// The explorer wants the Markdown files under this tab's own folder.
+    ExploreFolder,
     OpenReviewItem {
         path: String,
         id: String,
@@ -356,6 +358,9 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     if raw == "copyReview" {
         return Some(Message::CopyReview);
+    }
+    if raw == "exploreFolder" {
+        return Some(Message::ExploreFolder);
     }
     if raw == "navigateBack" {
         return Some(Message::NavigateBack);
@@ -681,6 +686,31 @@ pub fn workspace_files_script(
     snapshot: Option<&mdcore::WorkspaceSnapshot>,
     error: Option<&str>,
 ) -> String {
+    files_script("mdviewSetWorkspace", snapshot, error)
+}
+
+/// The Markdown files under a tab's own folder, for the explorer when the
+/// document is not inside the open workspace. Same shape as the workspace's.
+pub fn explorer_files_script(
+    snapshot: Option<&mdcore::WorkspaceSnapshot>,
+    error: Option<&str>,
+) -> String {
+    files_script("mdviewSetExplorerFolder", snapshot, error)
+}
+
+/// The page is told which file it is, so the explorer can mark and reveal it.
+pub fn document_path_script(path: &std::path::Path) -> String {
+    format!(
+        "window.mdviewSetDocumentPath && window.mdviewSetDocumentPath({});",
+        mdcore::escape::js_string_literal(&path.to_string_lossy())
+    )
+}
+
+fn files_script(
+    hook: &str,
+    snapshot: Option<&mdcore::WorkspaceSnapshot>,
+    error: Option<&str>,
+) -> String {
     let (root, partial, items) = match snapshot {
         Some(snapshot) => {
             let items = snapshot
@@ -706,7 +736,7 @@ pub fn workspace_files_script(
         .map(mdcore::escape::js_string_literal)
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "window.mdviewSetWorkspace && window.mdviewSetWorkspace({root},[{}],{partial},{error});",
+        "window.{hook} && window.{hook}({root},[{}],{partial},{error});",
         items.join(",")
     )
 }
@@ -1274,6 +1304,23 @@ mod tests {
         let reveal = workspace_reveal_script(Some("A ' heading"), "retry\nnow");
         assert!(reveal.contains("window.mdviewRevealWorkspaceHit &&"));
         assert!(reveal.contains("\\n"));
+    }
+
+    #[test]
+    fn explorer_scripts_escape_host_data_and_call_guarded_hooks() {
+        let empty = explorer_files_script(None, Some("can't read </script>"));
+        assert!(empty.starts_with("window.mdviewSetExplorerFolder && "));
+        assert!(!empty.contains("</script>"));
+        assert!(empty.contains("(null,[],false,"));
+
+        let here = document_path_script(std::path::Path::new("/tmp/a'b\n</script>.md"));
+        assert!(here.starts_with("window.mdviewSetDocumentPath && "));
+        assert!(!here.contains("</script>"));
+    }
+
+    #[test]
+    fn explore_folder_is_a_bare_message() {
+        assert_eq!(parse_message("exploreFolder"), Some(Message::ExploreFolder));
     }
 
     #[test]

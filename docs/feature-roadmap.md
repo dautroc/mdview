@@ -515,6 +515,7 @@ Create one tracking issue per phase and one implementation issue per milestone b
 - [x] Define workspace discovery rules, caps, and pure models.
 - [x] Build progressive background scanning and the in-memory index.
 - [x] Add Files and workspace Search UI.
+- [x] Make Files a keyboard-navigable tree (`g e`), falling back to the document's folder outside a workspace.
 - [x] Add incremental watcher reconciliation.
 - [x] Add versioned session restore for workspace tabs and reading positions.
 - [x] Measure scale, add fixtures, and generate a workspace reel.
