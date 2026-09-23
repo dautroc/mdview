@@ -3,10 +3,18 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
-## Unreleased
+## [v0.29.0](https://github.com/dautroc/mdview/releases/tag/v0.29.0) — 2026-09-23
 
 ### What's new
 
+- **A file opens at the line it was named with.** `mdview notes.md:42`
+  scrolls to the block that line became, lights it for a moment and leaves
+  the cursor on it, so `j` carries on from what you were sent to read. It is
+  the spelling `grep -n`, a compiler and a stack trace all print, and `:42:7`
+  works too; the column is dropped, since a character offset into the
+  Markdown points at nothing on screen. A file whose own name ends in `:42`
+  still opens as itself, because the disk is asked before the spelling is.
+  ([42dc74c](https://github.com/dautroc/mdview/commit/42dc74c))
 - **The Files panel is a tree you can walk.** `g e` opens it and gives it the
   keys, starting on the document you are reading with its folders open. `j`
   and `k` move, `l` goes into a folder or opens a file, and `h` closes a folder
@@ -19,6 +27,7 @@ Release notes for MDView, organized around user-visible features, fixes, and
 - **The explorer works without a workspace.** A document outside the open
   workspace, or opened with no workspace at all, shows the Markdown files
   under its own folder. `R` scans that folder again.
+  ([6d11109](https://github.com/dautroc/mdview/commit/6d11109))
 
 ### Notes
 
