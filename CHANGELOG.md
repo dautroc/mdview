@@ -3,6 +3,27 @@
 Release notes for MDView, organized around user-visible features, fixes, and
   the commits that introduced them. The newest release is listed first.
 
+## Unreleased
+
+### What's new
+
+- **The outline and the bookmarks take the keys too.** `g o` and `g b` open
+  their panels the way `g e` opens the explorer, and a second press closes
+  them. The outline is now a tree of the document's headings. `j` and `k`
+  move through it, and the document follows. `h` and `l` fold a section or
+  climb out of one, and `H` / `L` fold everything or unfold everything under
+  the cursor. Enter stays on the heading you walked to, and esc goes back to
+  where you were reading. The sections you fold are remembered for each
+  document. In the bookmarks, enter opens a bookmark in this tab, ⇧enter in
+  a new one, `x` takes it off the list and `y` copies its path. `/` filters
+  either panel.
+
+### Notes
+
+- Enter in the file explorer now opens the file in this tab, where `g [`
+  comes back from it, the way enter on a local link does. ⇧enter, or
+  ⌘-click, opens it in a tab of its own.
+
 ## [v0.29.0](https://github.com/dautroc/mdview/releases/tag/v0.29.0) — 2026-09-23
 
 ### What's new

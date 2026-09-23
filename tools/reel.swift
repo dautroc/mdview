@@ -279,8 +279,12 @@ final class Reeler: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 
         if let format = action["loadByArg"] as? String {
             // The argument can carry more than the name -- setTheme: appends a
-            // scroll offset -- so only the first field is the page.
-            let head = argument.split(separator: ":").first.map(String.init) ?? argument
+            // scroll offset -- so only the first field is the page. The
+            // navigate messages lead with where the reader was and end with
+            // where they are going; "field": "last" takes that one instead.
+            let fields = argument.split(separator: ":", omittingEmptySubsequences: false)
+            let field = (action["field"] as? String) == "last" ? fields.last : fields.first
+            let head = field.map(String.init) ?? argument
             load(page: format.replacingOccurrences(of: "%s", with: head))
         } else if let page = action["load"] as? String {
             load(page: page)

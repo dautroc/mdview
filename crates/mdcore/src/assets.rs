@@ -213,7 +213,7 @@ mod tests {
             "the mark has to follow the scroll to be worth anything"
         );
         assert!(
-            super::PAGE_CSS.contains("#mdview-sidebar-body a[data-outline-id].is-current"),
+            super::PAGE_CSS.contains(".mdview-outline li.is-here"),
             "page.css never lights the row"
         );
     }
@@ -339,20 +339,43 @@ mod tests {
     fn the_file_explorer_is_reachable_by_key_and_styled() {
         let js = super::INIT_JS;
         for hook in [
-            "keys: [\"g e\"], hint: \"g  e\", label: \"File explorer\", run: toggleExplorerKey",
+            "keys: [\"g e\"], hint: \"g  e\", label: \"File explorer\", run: function () { togglePanelKey(\"files\"); }",
             "keys: [\"g k\"], hint: \"g  k\", label: \"Preview the nearest local link\"",
             "window.mdviewSetDocumentPath",
             "window.mdviewSetExplorerFolder",
             "postToHost(\"exploreFolder\")",
             "list.setAttribute(\"role\", \"tree\")",
-            "if (explorerFocused && onExplorerKey(event, key)) return;",
+            "if (panelFocus === \"files\") return onExplorerKey(event, key);",
             "localStorage.setItem(explorerStorageKey(",
         ] {
             assert!(js.contains(hook), "the explorer is missing {hook}");
         }
-        assert!(super::PAGE_CSS.contains(".mdview-explorer li.is-current"));
+        assert!(super::PAGE_CSS.contains(".mdview-tree li.is-current"));
         assert!(super::PAGE_CSS.contains("#mdview-sidebar.is-focused"));
-        assert!(super::PAGE_CSS.contains("#mdview-explorer-filter"));
+        assert!(super::PAGE_CSS.contains(".mdview-panel-filter {"));
+    }
+
+    /// `g o` and `g b` hand their panels the keys the way `g e` does, and
+    /// the host hears about the two things only those panels ask for:
+    /// opening a file in this tab, and taking a bookmark off the list.
+    #[test]
+    fn the_outline_and_bookmarks_take_the_keys() {
+        let js = super::INIT_JS;
+        for hook in [
+            "label: \"Outline\", run: function () { togglePanelKey(\"outline\"); }",
+            "label: \"Bookmarks\", run: function () { togglePanelKey(\"bookmarks\"); }",
+            "if (panelFocus && onPanelKey(event, key)) return;",
+            "function onOutlineKey(",
+            "function onBookmarkKey(",
+            "postToHost(\"navigateWorkspacePath:\"",
+            "postToHost(\"navigateBookmark:\"",
+            "postToHost(\"removeBookmark:\"",
+            "\"mdview.outline.fold:\"",
+        ] {
+            assert!(js.contains(hook), "the panels are missing {hook}");
+        }
+        assert!(super::PAGE_CSS.contains(".mdview-outline li.is-here"));
+        assert!(super::PAGE_CSS.contains(".mdview-bookmarks .mdview-tree-twisty"));
     }
 
     /// `g l` is the only way to the rendered layout, and the layout is only a

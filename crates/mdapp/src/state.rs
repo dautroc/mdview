@@ -241,6 +241,11 @@ pub fn toggle_bookmark(list: &[String], path: &str) -> Vec<String> {
     }
 }
 
+/// `path` gone from the list, whatever else is on it.
+pub fn remove_bookmark(list: &[String], path: &str) -> Vec<String> {
+    list.iter().filter(|p| p.as_str() != path).cloned().collect()
+}
+
 #[allow(dead_code)]
 pub fn is_bookmarked(list: &[String], path: &str) -> bool {
     list.iter().any(|p| p.as_str() == path)
@@ -259,6 +264,21 @@ pub enum Message {
     SelectHistory(String),
     SearchWorkspace(String),
     OpenWorkspacePath(String),
+    /// A workspace or explorer file, opened in this tab's own navigation
+    /// history rather than a tab of its own -- enter in the explorer.
+    NavigateWorkspacePath {
+        path: String,
+        position: u32,
+        anchor: Option<String>,
+    },
+    /// A bookmark, opened the same way. Only a path on the bookmark list is
+    /// honoured, so the page cannot use it to open anything else.
+    NavigateBookmark {
+        path: String,
+        position: u32,
+        anchor: Option<String>,
+    },
+    RemoveBookmark(String),
     /// The explorer wants the Markdown files under this tab's own folder.
     ExploreFolder,
     OpenReviewItem {
@@ -320,6 +340,19 @@ pub enum Message {
     },
     CopyReview,
     CopyInboxReview(String),
+}
+
+/// `<position>:<anchor>:<path>`, the tail `openLink` also ends with: where
+/// the reader was, so `g [` can bring them back, and where they are going.
+fn parse_navigation(rest: &str) -> Option<(String, u32, Option<String>)> {
+    let mut parts = rest.splitn(3, ':');
+    let position = parts.next()?.parse::<u32>().ok()?;
+    let anchor = percent_decode(parts.next()?)?;
+    let path = percent_decode(parts.next()?)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some((path, position, (!anchor.is_empty()).then_some(anchor)))
 }
 
 /// Parse a bridge message. Returns `None` for anything unrecognised or
@@ -387,6 +420,26 @@ pub fn parse_message(raw: &str) -> Option<Message> {
             } else {
                 Some(Message::OpenWorkspacePath(path))
             }
+        }
+        "navigateWorkspacePath" => {
+            let (path, position, anchor) = parse_navigation(rest)?;
+            Some(Message::NavigateWorkspacePath {
+                path,
+                position,
+                anchor,
+            })
+        }
+        "navigateBookmark" => {
+            let (path, position, anchor) = parse_navigation(rest)?;
+            Some(Message::NavigateBookmark {
+                path,
+                position,
+                anchor,
+            })
+        }
+        "removeBookmark" => {
+            let path = percent_decode(rest)?;
+            (!path.is_empty()).then_some(Message::RemoveBookmark(path))
         }
         "openReviewItem" => {
             let (path, id) = rest.split_once(':')?;
@@ -1424,6 +1477,9 @@ mod tests {
                 "previewLink:" => "previewLink:guide.md%23intro".to_string(),
                 "openLink:" => "openLink:0:320:intro:guide.md%23intro".to_string(),
                 "openPath:" => "openPath:/tmp/x.md".to_string(),
+                "navigateWorkspacePath:" => "navigateWorkspacePath:320:intro:%2Ftmp%2Fx.md".to_string(),
+                "navigateBookmark:" => "navigateBookmark:0::%2Ftmp%2Fx.md".to_string(),
+                "removeBookmark:" => "removeBookmark:%2Ftmp%2Fx.md".to_string(),
                 "addComment:" => "addComment:1:0:a%20quote:a%20note".to_string(),
                 "editComment:" => "editComment:2f:a%20note".to_string(),
                 "deleteComment:" => "deleteComment:2f".to_string(),
@@ -1625,6 +1681,41 @@ mod tests {
     fn is_bookmarked_reports_membership() {
         assert!(is_bookmarked(&v(&["/a", "/b"]), "/b"));
         assert!(!is_bookmarked(&v(&["/a"]), "/b"));
+    }
+
+    #[test]
+    fn remove_bookmark_drops_only_that_path() {
+        assert_eq!(remove_bookmark(&v(&["/a", "/b", "/c"]), "/b"), v(&["/a", "/c"]));
+        assert_eq!(remove_bookmark(&v(&["/a"]), "/b"), v(&["/a"]));
+    }
+
+    /// The panels' enter: where the reader was, then where they are going.
+    #[test]
+    fn parses_panel_navigation_and_bookmark_removal() {
+        assert_eq!(
+            parse_message("navigateWorkspacePath:320:intro:%2Fw%2Fa%3Ab.md"),
+            Some(Message::NavigateWorkspacePath {
+                path: "/w/a:b.md".into(),
+                position: 320,
+                anchor: Some("intro".into()),
+            })
+        );
+        assert_eq!(
+            parse_message("navigateBookmark:0::%2Fx%2Fa.md"),
+            Some(Message::NavigateBookmark {
+                path: "/x/a.md".into(),
+                position: 0,
+                anchor: None,
+            })
+        );
+        assert_eq!(
+            parse_message("removeBookmark:%2Fx%2Fa.md"),
+            Some(Message::RemoveBookmark("/x/a.md".into()))
+        );
+        assert_eq!(parse_message("navigateBookmark:0::"), None);
+        assert_eq!(parse_message("navigateBookmark:x::%2Fa.md"), None);
+        assert_eq!(parse_message("navigateWorkspacePath:12"), None);
+        assert_eq!(parse_message("removeBookmark:"), None);
     }
 
     #[test]

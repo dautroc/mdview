@@ -1325,7 +1325,9 @@ impl AppDelegate {
         self.write_review(&source, &path, &comments);
     }
 
-    fn open_workspace_path(&self, source_id: Option<u64>, raw_path: &str) {
+    /// `raw_path`, if it is a file the page may open: one in the workspace,
+    /// or else in the folder the source tab's explorer scanned.
+    fn allowed_workspace_path(&self, source_id: Option<u64>, raw_path: &str) -> Option<PathBuf> {
         let requested = PathBuf::from(raw_path);
         let current = std::fs::canonicalize(&requested).ok();
         let allowed = |snapshot: &mdcore::WorkspaceSnapshot| {
@@ -1342,8 +1344,7 @@ impl AppDelegate {
                 .map(|file| file.path.clone())
         };
         // The workspace, or else the folder the source tab's explorer scanned.
-        let path = self
-            .ivars()
+        self.ivars()
             .workspace
             .borrow()
             .as_ref()
@@ -1352,8 +1353,11 @@ impl AppDelegate {
                 source_id
                     .and_then(|id| self.window_by_id(id))
                     .and_then(|window| window.explorer.borrow().as_ref().and_then(allowed))
-            });
-        match path {
+            })
+    }
+
+    fn open_workspace_path(&self, source_id: Option<u64>, raw_path: &str) {
+        match self.allowed_workspace_path(source_id, raw_path) {
             Some(path) => {
                 let reveal = source_id.and_then(|tab_id| {
                     self.ivars()
@@ -1388,6 +1392,25 @@ impl AppDelegate {
                 }
             }
         }
+    }
+
+    /// Open `path` in the source tab's own navigation history, the way enter
+    /// on a local link does, so `g [` comes back to where the reader was.
+    fn navigate_to_path(
+        &self,
+        source_id: Option<u64>,
+        path: PathBuf,
+        position: u32,
+        reading_anchor: Option<String>,
+    ) {
+        let Some(source) = self.message_window(source_id) else {
+            return;
+        };
+        source.update_reading_position(position, reading_anchor);
+        let mut history = source.navigation_history();
+        history.back.push(source.navigation_point());
+        history.forward.clear();
+        self.replace_navigation_tab(source, path, None, 0, history);
     }
 
     fn reconcile_workspace(&self, paths: Vec<PathBuf>) {
@@ -2430,6 +2453,37 @@ impl AppDelegate {
             Message::SelectHistory(revision) => self.select_history(source_id, &revision),
             Message::SearchWorkspace(query) => self.search_workspace(source_id, &query),
             Message::OpenWorkspacePath(path) => self.open_workspace_path(source_id, &path),
+            Message::NavigateWorkspacePath {
+                path,
+                position,
+                anchor,
+            } => match self.allowed_workspace_path(source_id, &path) {
+                Some(path) => self.navigate_to_path(source_id, path, position, anchor),
+                None => {
+                    if let Some(window) = self.message_window(source_id) {
+                        window.show_note("That file is no longer there.");
+                    }
+                }
+            },
+            Message::NavigateBookmark {
+                path,
+                position,
+                anchor,
+            } => {
+                let stored = crate::defaults::get_strings(crate::defaults::BOOKMARKS_KEY);
+                if crate::state::is_bookmarked(&stored, &path) {
+                    self.navigate_to_path(source_id, PathBuf::from(path), position, anchor);
+                }
+            }
+            Message::RemoveBookmark(path) => {
+                let updated = crate::state::remove_bookmark(
+                    &crate::defaults::get_strings(crate::defaults::BOOKMARKS_KEY),
+                    &path,
+                );
+                crate::defaults::set_strings(crate::defaults::BOOKMARKS_KEY, &updated);
+                self.push_bookmarks_to_pages();
+                self.push_comments_to_pages();
+            }
             Message::ExploreFolder => self.explore_folder(source_id),
             Message::OpenReviewItem { path, id } => {
                 self.open_review_item(source_id, &path, &id)

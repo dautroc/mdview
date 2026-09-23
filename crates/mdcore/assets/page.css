@@ -967,23 +967,12 @@ body.mdview-resizing #mdview-sidebar-resizer {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Room for the marker the current heading wears, taken by every row so that
-   lighting one does not shift its words sideways. */
-#mdview-sidebar-body a[data-outline-id] { border-radius: 2px; padding-left: .4rem; }
-/* Where the reader is standing, in the idiom the palette uses for the row it
-   is on: this is where you are, in a list of places you could be. The marker
-   sits at the row's own indent, so the heading level still reads. */
-#mdview-sidebar-body a[data-outline-id].is-current {
-  background: var(--code-bg);
-  box-shadow: inset 2px 0 0 var(--link);
-  color: var(--link);
-}
 .mdview-sidebar-empty { color: var(--muted); font-size: .875rem; padding: .5rem 0; }
-/* The explorer. Rows indent by depth rather than by nested lists, so the tree
-   is one flat list the keys can walk; the selected row wears the outline's
-   "you are here" marker. */
-#mdview-sidebar-body ul.mdview-explorer { padding-left: 0; }
-.mdview-explorer li {
+/* The panels that take the keys -- files, outline, bookmarks. Rows indent by
+   depth rather than by nested lists, so each is one flat list the keys can
+   walk; the selected row wears a "you are here" marker. */
+#mdview-sidebar-body ul.mdview-tree { padding-left: 0; }
+.mdview-tree li {
   align-items: baseline;
   border-radius: 2px;
   cursor: pointer;
@@ -991,30 +980,46 @@ body.mdview-resizing #mdview-sidebar-resizer {
   gap: .3rem;
   padding: .12rem .4rem .12rem calc(var(--depth, 0) * .85rem + .4rem);
 }
-.mdview-explorer li:hover { color: var(--link); }
-.mdview-explorer-twisty {
+.mdview-tree li:hover { color: var(--link); }
+.mdview-tree-twisty {
   color: var(--muted);
   flex: 0 0 .8rem;
   font-size: .85rem;
   line-height: 1;
 }
-.mdview-explorer-name {
+/* A list with nothing to fold does not keep a column for the twisty. */
+.mdview-bookmarks .mdview-tree-twisty { display: none; }
+.mdview-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mdview-explorer li.is-folder .mdview-explorer-name { color: var(--muted); }
-.mdview-explorer li.is-document .mdview-explorer-name { font-weight: 600; }
-.mdview-explorer li.is-current {
+/* A heading can be long, and its words are the point of the row. */
+.mdview-outline .mdview-tree-name { white-space: normal; }
+.mdview-tree li.is-folder .mdview-tree-name { color: var(--muted); }
+.mdview-tree li.is-document .mdview-tree-name { font-weight: 600; }
+.mdview-tree li.is-current {
   background: var(--code-bg);
   box-shadow: inset 2px 0 0 var(--link);
 }
-/* Only while the tree has the keys does the selection take the link colour,
-   so it is plain which of the two, tree or document, j and k will move. */
-#mdview-sidebar.is-focused .mdview-explorer li.is-current,
-#mdview-sidebar.is-focused .mdview-explorer li.is-current .mdview-explorer-name { color: var(--link); }
+/* The outline has two marks: where the reader is standing, and -- only while
+   it has the keys -- the row they have walked to. They agree then, since the
+   document follows the selection, so each shows only in its own mode. */
+#mdview-sidebar:not(.is-focused) .mdview-outline li.is-current {
+  background: none;
+  box-shadow: none;
+}
+#mdview-sidebar:not(.is-focused) .mdview-outline li.is-here {
+  background: var(--code-bg);
+  box-shadow: inset 2px 0 0 var(--link);
+  color: var(--link);
+}
+/* Only while the panel has the keys does the selection take the link colour,
+   so it is plain which of the two, panel or document, j and k will move. */
+#mdview-sidebar.is-focused .mdview-tree li.is-current,
+#mdview-sidebar.is-focused .mdview-tree li.is-current .mdview-tree-name { color: var(--link); }
 #mdview-sidebar.is-focused .mdview-sidebar-head { box-shadow: inset 0 -2px 0 var(--link); }
-#mdview-explorer-filter {
+.mdview-panel-filter {
   background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1026,7 +1031,7 @@ body.mdview-resizing #mdview-sidebar-resizer {
   padding: .3rem .5rem;
   width: 100%;
 }
-#mdview-explorer-filter:focus { border-color: var(--link); outline: none; }
+.mdview-panel-filter:focus { border-color: var(--link); outline: none; }
 .mdview-review-filters {
   display: flex;
   flex-wrap: wrap;

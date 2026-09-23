@@ -1067,8 +1067,8 @@
               sidebarTab === "bookmarks" ? "Bookmarks" :
                 sidebarTab === "comments" ? "Comments" : "Outline";
     }
-    // The explorer only has the keys while it is on screen.
-    if (!open || sidebarTab !== "files") setExplorerFocus(false);
+    // A panel only has the keys while it is on screen.
+    if (panelFocus && (!open || sidebarTab !== panelFocus)) setPanelFocus(null);
     renderSidebarBody();
     layoutCommentRail();
     scheduleMinimapPaint();
@@ -1204,40 +1204,6 @@
       out.push(found[i]);
     }
     return out;
-  }
-
-  // Build the outline from the rendered document. Rebuilt wholesale on every
-  // render rather than patched: incremental updates over already-processed
-  // nodes are the defect class that has bitten this project twice.
-  function buildOutline() {
-    var content = document.getElementById("mdview-content");
-    if (!content) return "<p class=\"mdview-sidebar-empty\">No document.</p>";
-    var headings = documentHeadings(content);
-    if (!headings.length) {
-      return "<p class=\"mdview-sidebar-empty\">No headings.</p>";
-    }
-    var seen = {};
-    var parts = ["<ul>"];
-    for (var i = 0; i < headings.length; i++) {
-      var h = headings[i];
-      if (!h.id) h.id = slugify(h.textContent, seen);
-      var level = parseInt(h.tagName.substring(1), 10);
-      parts.push(
-        '<li style="padding-left:' + ((level - 1) * 0.6) + 'rem">' +
-        '<a href="#" data-outline-id="' + h.id + '"></a></li>'
-      );
-      // textContent is assigned below rather than interpolated, so heading
-      // text can never inject markup into the sidebar.
-    }
-    parts.push("</ul>");
-    var html = parts.join("");
-    var host = document.createElement("div");
-    host.innerHTML = html;
-    var links = host.querySelectorAll("a[data-outline-id]");
-    for (var j = 0; j < links.length; j++) {
-      links[j].textContent = headings[j].textContent;
-    }
-    return host.innerHTML;
   }
 
   window.mdviewSetWorkspace = function (root, files, partial, error) {
@@ -1559,33 +1525,327 @@
     }
   }
 
-  // ---- Explorer --------------------------------------------------------------
+  // ---- Panels that take the keys ---------------------------------------------
   //
-  // The Files panel as a tree you walk with the keyboard. `g e` opens it and
-  // gives it the keys; esc gives them back. Its files are the workspace's when
-  // this document is inside the open workspace, and otherwise those under the
-  // document's own folder, which the host scans on request (`exploreFolder`).
+  // The Files, Outline and Bookmarks panels are lists you walk with the
+  // keyboard. `g e`, `g o` and `g b` open one and give it the keys; esc gives
+  // them back. Only the panel on screen can have them, and only one at a time.
   //
   // The selection is virtual -- a key, not DOM focus -- so no row is ever a
-  // focused link that enter would activate behind the tree's back, and so the
-  // selection survives every re-render a workspace push causes.
+  // focused link that enter would activate behind the list's back, and so the
+  // selection survives every re-render a push from the host causes.
 
+  var panelFocus = null;   // "files", "outline" or "bookmarks" while it has the keys
+
+  // What each panel remembers between renders. `pick` says which row the
+  // filter's enter drops onto: the first one that is somewhere to go.
+  function newPanel(tab, placeholder, pick) {
+    return {
+      tab: tab,
+      placeholder: placeholder,
+      pick: pick,
+      rows: [],
+      index: 0,        // last selected row, for when its key vanishes
+      selected: null,  // row key
+      filter: "",
+      filterOpen: false,
+    };
+  }
+
+  function panelFor(tab) {
+    if (tab === "files") return explorerPanel;
+    if (tab === "outline") return outlinePanel;
+    if (tab === "bookmarks") return bookmarkPanel;
+    return null;
+  }
+
+  function panelList() {
+    return document.querySelector("#mdview-sidebar-body .mdview-tree");
+  }
+
+  function rerenderPanel(panel) {
+    if (sidebarTab === panel.tab) renderSidebarBody();
+  }
+
+  function selectedPanelNode(panel) {
+    var row = panel.rows[panel.index];
+    return row ? row.node : null;
+  }
+
+  // Every term in the filter has to appear in the text, in any order.
+  function matchesTerms(filter, text) {
+    var terms = filter.toLowerCase().split(/\s+/);
+    var haystack = String(text).toLowerCase();
+    for (var i = 0; i < terms.length; i++) {
+      if (terms[i] && haystack.indexOf(terms[i]) < 0) return false;
+    }
+    return true;
+  }
+
+  // The rows on screen, in order, from a tree of {key, children} nodes.
+  // `isOpen` says whether a node shows its children. A filter shows every node
+  // `matches` accepts with the nodes above it, open whatever their saved state
+  // says, and drops a node that neither matches nor leads to one that does.
+  function visibleTreeRows(tree, isOpen, filter, matches) {
+    var rows = [];
+    (function walk(node, depth) {
+      for (var i = 0; i < node.children.length; i++) {
+        var child = node.children[i];
+        var mark = rows.length;
+        rows.push({ node: child, depth: depth });
+        if (child.children.length && (filter || isOpen(child))) walk(child, depth + 1);
+        if (filter && rows.length === mark + 1 && !matches(child)) rows.pop();
+      }
+    })(tree, 0);
+    return rows;
+  }
+
+  // Draw the panel's rows into the list and put its selection back on them.
+  // `describe(node)` gives the row's {className, expanded, title}, where
+  // expanded is null for a row with nothing to fold. `onClick(node, event,
+  // onTwisty)` handles a click once the row is selected.
+  function drawPanelRows(panel, list, describe, onClick) {
+    list.innerHTML = "";
+    if (!panel.rows.length) {
+      var none = document.createElement("li");
+      none.className = "mdview-sidebar-empty";
+      none.textContent = "Nothing matches.";
+      list.appendChild(none);
+      return;
+    }
+    for (var i = 0; i < panel.rows.length; i++) {
+      (function (row, index) {
+        var node = row.node;
+        var about = describe(node);
+        var li = document.createElement("li");
+        li.setAttribute("role", "treeitem");
+        li.setAttribute("aria-level", String(row.depth + 1));
+        li.setAttribute("data-key", node.key);
+        li.style.setProperty("--depth", String(row.depth));
+        li.className = about.className;
+        if (about.expanded != null) li.setAttribute("aria-expanded", about.expanded ? "true" : "false");
+        var twisty = document.createElement("span");
+        twisty.className = "mdview-tree-twisty";
+        twisty.textContent = about.expanded == null ? "" : about.expanded ? "▾" : "▸";
+        var name = document.createElement("span");
+        name.className = "mdview-tree-name";
+        name.textContent = node.name;   // textContent, never innerHTML
+        li.title = about.title;
+        li.appendChild(twisty);
+        li.appendChild(name);
+        li.addEventListener("click", function (event) {
+          event.preventDefault();
+          selectPanelRow(panel, index);
+          onClick(node, event, event.target === twisty);
+        });
+        list.appendChild(li);
+      })(panel.rows[i], i);
+    }
+    var at = -1;
+    for (var r = 0; r < panel.rows.length; r++) {
+      if (panel.rows[r].node.key === panel.selected) at = r;
+    }
+    // The selected row went away -- filtered out, folded into, or deleted:
+    // stay about where it was rather than jumping back to the top.
+    if (at < 0) at = Math.min(panel.index, panel.rows.length - 1);
+    selectPanelRow(panel, at);
+  }
+
+  function selectPanelRow(panel, index) {
+    if (!panel.rows.length) return;
+    index = Math.max(0, Math.min(panel.rows.length - 1, index));
+    panel.index = index;
+    panel.selected = panel.rows[index].node.key;
+    var list = panelList();
+    if (!list || sidebarTab !== panel.tab) return;
+    var items = list.children;
+    for (var i = 0; i < items.length; i++) {
+      var on = i === index;
+      items[i].classList.toggle("is-current", on);
+      items[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (items[index] && sidebar) revealOutlineRow(items[index], sidebar);
+  }
+
+  // Up and down, and to the ends. The outline also takes the document with
+  // it, which is the whole of the difference.
+  function movePanel(panel, index) {
+    selectPanelRow(panel, index);
+    if (panel === outlinePanel) scrollToOutlineNode(selectedPanelNode(panel));
+  }
+
+  function movePanelTo(edge) {
+    var panel = panelFor(panelFocus);
+    if (panel) movePanel(panel, edge < 0 ? 0 : panel.rows.length - 1);
+  }
+
+  function setPanelFocus(tab) {
+    var was = panelFocus;
+    panelFocus = tab || null;
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (sidebar) sidebar.classList.toggle("is-focused", !!panelFocus);
+    if (!panelFocus) closePanelFilterInput();
+    // The outline stopped following the keys, so it follows the reader again.
+    if (was === "outline" && panelFocus !== "outline") {
+      outlineOrigin = null;
+      syncOutline();
+    }
+  }
+
+  // g e, g o and g b: open the panel and hand it the keys; a second press
+  // while it has them closes it. A panel already showing but not focused is
+  // focused rather than shut, since the point of pressing it was to use it.
+  function togglePanelKey(tab) {
+    var sidebar = document.getElementById("mdview-sidebar");
+    if (!sidebar) return;
+    if (panelFocus === tab && !sidebar.hidden && sidebarTab === tab) {
+      setSidebar(false, tab);
+      return;
+    }
+    exitVisual();
+    closeLinkPreview();
+    if (tab === "files") {
+      var source = explorerSource();
+      // A fresh look at the folder each time: nothing watches it.
+      if (source && source.mode === "folder" && explorerFolder) askExplorerFolder();
+      explorerRevealPending = true;
+    } else if (tab === "outline") {
+      outlineOrigin = { y: window.scrollY, id: currentHeadingId() };
+      outlineRevealPending = true;
+    } else {
+      bookmarkRevealPending = true;
+    }
+    if (sidebar.hidden || sidebarTab !== tab) setSidebar(true, tab);
+    else renderSidebarBody();
+    setPanelFocus(tab);
+  }
+
+  // The keys while a panel has them. Returns false for anything it does not
+  // claim, which then goes on to the document's own table: ? and : still work,
+  // and so does every g chord but g g, which the chord code sends here.
+  function onPanelKey(event, key) {
+    // The table reads ⇧enter as N, for find; in a panel it is enter in a new tab.
+    if (event.key === "Enter") key = "Enter";
+    if (panelFocus === "files") return onExplorerKey(event, key);
+    if (panelFocus === "outline") return onOutlineKey(event, key);
+    if (panelFocus === "bookmarks") return onBookmarkKey(event, key);
+    return false;
+  }
+
+  // Where the reader is, in the form openLink sends it: the host keeps it in
+  // this tab's history, so g [ comes back to it.
+  function readingPlace() {
+    return Math.max(0, Math.round(window.scrollY)) + ":" +
+      encodeURIComponent(currentHeadingId() || "") + ":";
+  }
+
+  function copyText(text) {
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    var copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch (err) {
+      copied = false;
+    }
+    document.body.removeChild(area);
+    showNote(copied ? "Copied " + text + "." : "Nothing copied.");
+  }
+
+  // The filter. Its input lives at the top of the panel while it is open; the
+  // list underneath narrows on every keystroke.
+  function buildPanelFilter(panel, redrawRows) {
+    var input = document.createElement("input");
+    input.id = "mdview-" + panel.tab + "-filter";
+    input.className = "mdview-panel-filter";
+    input.type = "search";
+    input.placeholder = panel.placeholder;
+    input.setAttribute("aria-label", panel.placeholder);
+    input.value = panel.filter;
+    input.addEventListener("input", function () {
+      panel.filter = input.value;
+      var list = panelList();
+      if (list) redrawRows(list);
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        panel.filter = "";
+        panel.filterOpen = false;
+        rerenderPanel(panel);
+      } else if (event.key === "Enter" || event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        panel.filterOpen = false;
+        input.blur();
+        // Onto the first row that matched, which is what the filter was for.
+        for (var i = 0; i < panel.rows.length; i++) {
+          if (panel.pick(panel.rows[i].node)) {
+            movePanel(panel, i);
+            break;
+          }
+        }
+      } else {
+        return;
+      }
+      setPanelFocus(panel.tab);
+    });
+    return input;
+  }
+
+  function openPanelFilter(panel) {
+    panel.filterOpen = true;
+    rerenderPanel(panel);
+    var input = document.getElementById("mdview-" + panel.tab + "-filter");
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+
+  function closePanelFilterInput() {
+    var active = document.activeElement;
+    if (active && active.classList && active.classList.contains("mdview-panel-filter")) active.blur();
+    explorerPanel.filterOpen = false;
+    outlinePanel.filterOpen = false;
+    bookmarkPanel.filterOpen = false;
+  }
+
+  function clearFilterOrLeave(panel) {
+    if (panel.filter) {
+      panel.filter = "";
+      rerenderPanel(panel);
+      return false;
+    }
+    setPanelFocus(null);
+    return true;
+  }
+
+  // ---- Explorer --------------------------------------------------------------
+  //
+  // The Files panel as a tree. Its files are the workspace's when this
+  // document is inside the open workspace, and otherwise those under the
+  // document's own folder, which the host scans on request (`exploreFolder`).
+
+  var explorerPanel = newPanel("files", "Filter files", function (node) { return !node.dir; });
   var documentPath = null;
   var explorerFolder = null;     // {root, files, partial, error} for folder mode
   var explorerFolderAsked = false;
-  var explorerFocused = false;
   var explorerRoot = null;       // the root the open set below belongs to
   var explorerOpen = {};         // folder key -> true
-  var explorerSelected = null;   // row key
-  var explorerIndex = 0;         // last selected row, for when its key vanishes
-  var explorerFilter = "";
   var explorerRevealPending = false;
-  var explorerRows = [];
   var explorerTreeCache = null;
 
   window.mdviewSetDocumentPath = function (path) {
     documentPath = path || null;
-    if (sidebarTab === "files") renderSidebarBody();
+    if (sidebarTab === "files" || sidebarTab === "outline" || sidebarTab === "bookmarks") renderSidebarBody();
   };
 
   window.mdviewSetExplorerFolder = function (root, files, partial, error) {
@@ -1654,6 +1914,7 @@
         name: parts[parts.length - 1],
         dir: false,
         path: files[i].path,
+        children: [],
         parent: parent,
       });
     }
@@ -1703,37 +1964,6 @@
     }
   }
 
-  // Every term in the filter has to appear in the path, in any order.
-  function explorerMatches(node) {
-    var terms = explorerFilter.toLowerCase().split(/\s+/);
-    var key = node.key.toLowerCase();
-    for (var i = 0; i < terms.length; i++) {
-      if (terms[i] && key.indexOf(terms[i]) < 0) return false;
-    }
-    return true;
-  }
-
-  // The rows on screen, in order. A filter shows the matching files with the
-  // folders above them, open whatever their saved state says.
-  function explorerVisibleRows(tree) {
-    var rows = [];
-    (function walk(node, depth) {
-      for (var i = 0; i < node.children.length; i++) {
-        var child = node.children[i];
-        if (child.dir) {
-          var mark = rows.length;
-          rows.push({ node: child, depth: depth });
-          var open = explorerFilter ? true : !!explorerOpen[child.key];
-          if (open) walk(child, depth + 1);
-          if (explorerFilter && rows.length === mark + 1) rows.pop();
-        } else if (!explorerFilter || explorerMatches(child)) {
-          rows.push({ node: child, depth: depth });
-        }
-      }
-    })(tree, 0);
-    return rows;
-  }
-
   function explorerDocumentNode(tree) {
     if (!documentPath) return null;
     var found = null;
@@ -1759,12 +1989,13 @@
     if (!node) return false;
     for (var up = node.parent; up && up.key; up = up.parent) explorerOpen[up.key] = true;
     saveExplorerOpen();
-    explorerSelected = node.key;
+    explorerPanel.selected = node.key;
     return true;
   }
 
   function renderExplorer(body) {
     var source = explorerSource();
+    explorerPanel.rows = [];
     if (!source) {
       body.innerHTML = "<p class=\"mdview-sidebar-empty\">Open a folder to browse its Markdown files.</p>";
       return;
@@ -1781,7 +2012,7 @@
     if (source.root !== explorerRoot) {
       explorerRoot = source.root;
       loadExplorerOpen(explorerRoot);
-      explorerSelected = null;
+      explorerPanel.selected = null;
       explorerRevealPending = true;
     }
     if (!source.files.length) {
@@ -1791,9 +2022,11 @@
     if (explorerRevealPending) revealExplorerDocument();
 
     body.innerHTML = "";
-    if (explorerFilter || explorerFilterIsOpen()) body.appendChild(buildExplorerFilter());
+    if (explorerPanel.filter || explorerPanel.filterOpen) {
+      body.appendChild(buildPanelFilter(explorerPanel, function (list) { renderExplorerRows(list, source); }));
+    }
     var list = document.createElement("ul");
-    list.className = "mdview-explorer";
+    list.className = "mdview-tree mdview-explorer";
     list.setAttribute("role", "tree");
     body.appendChild(list);
     renderExplorerRows(list, source);
@@ -1806,79 +2039,24 @@
   }
 
   function renderExplorerRows(list, source) {
-    var tree = explorerTree(source);
-    explorerRows = explorerVisibleRows(tree);
-    list.innerHTML = "";
-    if (!explorerRows.length) {
-      var none = document.createElement("li");
-      none.className = "mdview-sidebar-empty";
-      none.textContent = "Nothing matches.";
-      list.appendChild(none);
-      return;
-    }
-    for (var i = 0; i < explorerRows.length; i++) {
-      (function (row, index) {
-        var node = row.node;
-        var li = document.createElement("li");
-        li.setAttribute("role", "treeitem");
-        li.setAttribute("aria-level", String(row.depth + 1));
-        li.setAttribute("data-key", node.key);
-        li.style.setProperty("--depth", String(row.depth));
-        li.className = node.dir ? "is-folder" : "is-file";
-        if (node.dir) li.setAttribute("aria-expanded", explorerFilter || explorerOpen[node.key] ? "true" : "false");
-        if (!node.dir && node.path === documentPath) li.className += " is-document";
-        var twisty = document.createElement("span");
-        twisty.className = "mdview-explorer-twisty";
-        twisty.textContent = node.dir ? (li.getAttribute("aria-expanded") === "true" ? "▾" : "▸") : "";
-        var name = document.createElement("span");
-        name.className = "mdview-explorer-name";
-        name.textContent = node.name;
-        li.title = node.dir ? node.key + "/" : node.path;
-        li.appendChild(twisty);
-        li.appendChild(name);
-        li.addEventListener("click", function (event) {
-          event.preventDefault();
-          setExplorerFocus(true);
-          selectExplorerRow(index);
-          if (node.dir) toggleExplorerFolder(node);
-          else openExplorerFile(node);
-        });
-        list.appendChild(li);
-      })(explorerRows[i], i);
-    }
-    var at = -1;
-    for (var r = 0; r < explorerRows.length; r++) {
-      if (explorerRows[r].node.key === explorerSelected) at = r;
-    }
-    // The selected row went away -- filtered out, collapsed into, or deleted:
-    // stay about where it was rather than jumping back to the top.
-    if (at < 0) at = Math.min(explorerIndex, explorerRows.length - 1);
-    selectExplorerRow(at);
-  }
-
-  function explorerList() {
-    return document.querySelector("#mdview-sidebar-body .mdview-explorer");
-  }
-
-  function selectExplorerRow(index) {
-    if (!explorerRows.length) return;
-    index = Math.max(0, Math.min(explorerRows.length - 1, index));
-    explorerIndex = index;
-    explorerSelected = explorerRows[index].node.key;
-    var list = explorerList();
-    if (!list) return;
-    var items = list.children;
-    for (var i = 0; i < items.length; i++) {
-      var on = i === index;
-      items[i].classList.toggle("is-current", on);
-      items[i].setAttribute("aria-selected", on ? "true" : "false");
-    }
-    var sidebar = document.getElementById("mdview-sidebar");
-    if (items[index] && sidebar) revealOutlineRow(items[index], sidebar);
-  }
-
-  function rerenderExplorer() {
-    if (sidebarTab === "files") renderSidebarBody();
+    var filter = explorerPanel.filter;
+    explorerPanel.rows = visibleTreeRows(
+      explorerTree(source),
+      function (node) { return !!explorerOpen[node.key]; },
+      filter,
+      function (node) { return !node.dir && matchesTerms(filter, node.key); }
+    );
+    drawPanelRows(explorerPanel, list, function (node) {
+      return {
+        className: (node.dir ? "is-folder" : "is-file") + (!node.dir && node.path === documentPath ? " is-document" : ""),
+        expanded: node.dir ? !!(filter || explorerOpen[node.key]) : null,
+        title: node.dir ? node.key + "/" : node.path,
+      };
+    }, function (node, event) {
+      setPanelFocus("files");
+      if (node.dir) toggleExplorerFolder(node);
+      else openExplorerFile(node, event.metaKey || event.shiftKey);
+    });
   }
 
   function toggleExplorerFolder(node, open) {
@@ -1886,177 +2064,63 @@
     if (next) explorerOpen[node.key] = true;
     else delete explorerOpen[node.key];
     saveExplorerOpen();
-    rerenderExplorer();
+    rerenderPanel(explorerPanel);
   }
 
-  function openExplorerFile(node) {
-    if (!postToHost("openWorkspacePath:" + encodeURIComponent(node.path))) {
+  // Enter opens the file in this tab, where g [ comes back from it; ⇧enter
+  // or ⌘-click keeps this one and opens another, the way a local link does.
+  function openExplorerFile(node, newTab) {
+    if (!newTab && node.path === documentPath) {
+      setPanelFocus(null);
+      return;
+    }
+    var sent = newTab
+      ? postToHost("openWorkspacePath:" + encodeURIComponent(node.path))
+      : postToHost("navigateWorkspacePath:" + readingPlace() + encodeURIComponent(node.path));
+    if (!sent) {
       showNote("Opening a file needs the app.");
       return;
     }
-    setExplorerFocus(false);
+    setPanelFocus(null);
   }
 
-  function setExplorerFocus(on) {
-    explorerFocused = !!on;
-    var sidebar = document.getElementById("mdview-sidebar");
-    if (sidebar) sidebar.classList.toggle("is-focused", explorerFocused);
-    if (!explorerFocused) closeExplorerFilterInput();
-  }
-
-  // g e: open the explorer and hand it the keys; a second press while it has
-  // them closes it. An explorer already showing but not focused is focused
-  // rather than shut, since the point of pressing it was to use the tree.
-  function toggleExplorerKey() {
-    var sidebar = document.getElementById("mdview-sidebar");
-    if (!sidebar) return;
-    if (explorerFocused && !sidebar.hidden && sidebarTab === "files") {
-      setSidebar(false, "files");
-      return;
-    }
-    exitVisual();
-    closeLinkPreview();
-    var source = explorerSource();
-    // A fresh look at the folder each time: nothing watches it.
-    if (source && source.mode === "folder" && explorerFolder) askExplorerFolder();
-    explorerRevealPending = true;
-    if (sidebar.hidden || sidebarTab !== "files") setSidebar(true, "files");
-    else renderSidebarBody();
-    setExplorerFocus(true);
-  }
-
-  function explorerSelectedRow() {
-    return explorerRows[explorerIndex] || null;
-  }
-
-  function copyExplorerPath() {
-    var row = explorerSelectedRow();
-    if (!row) return;
-    var area = document.createElement("textarea");
-    area.value = row.node.key;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.select();
-    var copied = false;
-    try {
-      copied = document.execCommand("copy");
-    } catch (err) {
-      copied = false;
-    }
-    document.body.removeChild(area);
-    showNote(copied ? "Copied " + row.node.key + "." : "Nothing copied.");
-  }
-
-  // The filter. Its input lives at the top of the panel while it is open; the
-  // tree underneath narrows on every keystroke.
-  var explorerFilterOpen = false;
-
-  function explorerFilterIsOpen() {
-    return explorerFilterOpen;
-  }
-
-  function buildExplorerFilter() {
-    var input = document.createElement("input");
-    input.id = "mdview-explorer-filter";
-    input.type = "search";
-    input.placeholder = "Filter files";
-    input.setAttribute("aria-label", "Filter files");
-    input.value = explorerFilter;
-    input.addEventListener("input", function () {
-      explorerFilter = input.value;
-      var source = explorerSource();
-      var list = explorerList();
-      if (source && list) renderExplorerRows(list, source);
-    });
-    input.addEventListener("keydown", function (event) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        explorerFilter = "";
-        explorerFilterOpen = false;
-        rerenderExplorer();
-      } else if (event.key === "Enter" || event.key === "ArrowDown") {
-        event.preventDefault();
-        event.stopPropagation();
-        explorerFilterOpen = false;
-        input.blur();
-        // Onto the first file that matched, which is what the filter was for.
-        for (var i = 0; i < explorerRows.length; i++) {
-          if (!explorerRows[i].node.dir) {
-            selectExplorerRow(i);
-            break;
-          }
-        }
-      } else {
-        return;
-      }
-      setExplorerFocus(true);
-    });
-    return input;
-  }
-
-  function openExplorerFilter() {
-    explorerFilterOpen = true;
-    rerenderExplorer();
-    var input = document.getElementById("mdview-explorer-filter");
-    if (input) {
-      input.focus();
-      input.select();
-    }
-  }
-
-  function closeExplorerFilterInput() {
-    var input = document.getElementById("mdview-explorer-filter");
-    if (input && document.activeElement === input) input.blur();
-    explorerFilterOpen = false;
-  }
-
-  function moveExplorerTo(edge) {
-    selectExplorerRow(edge < 0 ? 0 : explorerRows.length - 1);
-  }
-
-  // The keys while the tree has them. Returns false for anything it does not
-  // claim, which then goes on to the document's own table: ? and : still work,
-  // and so does every g chord but g g, which the chord code sends here.
   function onExplorerKey(event, key) {
-    var row = explorerSelectedRow();
-    var node = row && row.node;
+    var node = selectedPanelNode(explorerPanel);
+    var filter = explorerPanel.filter;
     switch (key) {
       case "j":
       case "ArrowDown":
-        selectExplorerRow(explorerIndex + 1);
+        movePanel(explorerPanel, explorerPanel.index + 1);
         break;
       case "k":
       case "ArrowUp":
-        selectExplorerRow(explorerIndex - 1);
+        movePanel(explorerPanel, explorerPanel.index - 1);
         break;
       case "l":
       case "ArrowRight":
         if (!node) break;
-        if (!node.dir) openExplorerFile(node);
-        else if (explorerFilter || explorerOpen[node.key]) selectExplorerRow(explorerIndex + 1);
+        if (!node.dir) openExplorerFile(node, false);
+        else if (filter || explorerOpen[node.key]) movePanel(explorerPanel, explorerPanel.index + 1);
         else toggleExplorerFolder(node, true);
         break;
       case "h":
       case "ArrowLeft":
         if (!node) break;
-        if (node.dir && explorerOpen[node.key] && !explorerFilter) {
+        if (node.dir && explorerOpen[node.key] && !filter) {
           toggleExplorerFolder(node, false);
         } else if (node.parent && node.parent.key) {
-          explorerSelected = node.parent.key;
-          rerenderExplorer();
+          explorerPanel.selected = node.parent.key;
+          rerenderPanel(explorerPanel);
         }
         break;
       case "Enter":
       case "o":
         if (!node) break;
         if (node.dir) toggleExplorerFolder(node);
-        else openExplorerFile(node);
+        else openExplorerFile(node, key === "Enter" && event.shiftKey);
         break;
       case "G":
-        moveExplorerTo(1);
+        movePanelTo(1);
         break;
       case "H":
         explorerOpen = {};
@@ -2064,9 +2128,9 @@
         if (node) {
           var top = node;
           while (top.parent && top.parent.key) top = top.parent;
-          explorerSelected = top.key;
+          explorerPanel.selected = top.key;
         }
-        rerenderExplorer();
+        rerenderPanel(explorerPanel);
         break;
       case "L":
         if (!node || !node.dir) break;
@@ -2077,17 +2141,17 @@
           }
         })(node);
         saveExplorerOpen();
-        rerenderExplorer();
+        rerenderPanel(explorerPanel);
         break;
       case ".":
-        if (revealExplorerDocument()) rerenderExplorer();
+        if (revealExplorerDocument()) rerenderPanel(explorerPanel);
         else showNote("This document is not in the list.");
         break;
       case "/":
-        openExplorerFilter();
+        openPanelFilter(explorerPanel);
         break;
       case "y":
-        copyExplorerPath();
+        if (node) copyText(node.key);
         break;
       case "R":
         var source = explorerSource();
@@ -2099,12 +2163,364 @@
         }
         break;
       case "Escape":
-        if (explorerFilter) {
-          explorerFilter = "";
-          rerenderExplorer();
-        } else {
-          setExplorerFocus(false);
+        clearFilterOrLeave(explorerPanel);
+        break;
+      default:
+        return false;
+    }
+    event.preventDefault();
+    return true;
+  }
+
+  // ---- Outline ---------------------------------------------------------------
+  //
+  // The document's headings as a tree: a heading holds the ones below it until
+  // the next of its own level or higher. With the keys, moving the selection
+  // takes the document with it; enter stays there and esc goes back to where
+  // the reader was. Shut sections are remembered for each document -- the
+  // default is everything open, so it is the shut ones that are stored.
+
+  var outlinePanel = newPanel("outline", "Filter headings", function () { return true; });
+  var outlineTree = null;
+  var outlineNodes = {};         // heading id -> node
+  var outlineFolded = {};        // heading id -> true, for a shut section
+  var outlineFoldPath = null;    // the document the set above belongs to
+  var outlineOrigin = null;      // {y, id} when the outline took the keys
+  var outlineRevealPending = false;
+
+  // Rebuilt wholesale on every render rather than patched: incremental
+  // updates over already-processed nodes are the defect class that has
+  // bitten this project twice. It is also what gives headings their ids.
+  function buildOutlineTree(content) {
+    var root = { key: "", name: "", level: 0, children: [], parent: null };
+    outlineNodes = {};
+    var headings = documentHeadings(content);
+    var seen = {};
+    var stack = [root];
+    for (var i = 0; i < headings.length; i++) {
+      var h = headings[i];
+      if (!h.id) h.id = slugify(h.textContent, seen);
+      var level = parseInt(h.tagName.substring(1), 10);
+      while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop();
+      var parent = stack[stack.length - 1];
+      var node = { key: h.id, name: h.textContent, level: level, children: [], parent: parent };
+      parent.children.push(node);
+      stack.push(node);
+      if (!outlineNodes[h.id]) outlineNodes[h.id] = node;
+    }
+    return root;
+  }
+
+  function outlineFoldKey() {
+    return "mdview.outline.fold:" + (documentPath || "");
+  }
+
+  function loadOutlineFolds() {
+    var path = documentPath || "";
+    if (path === outlineFoldPath) return;
+    outlineFoldPath = path;
+    outlineFolded = {};
+    try {
+      var stored = JSON.parse(localStorage.getItem(outlineFoldKey()) || "[]");
+      for (var i = 0; i < stored.length; i++) outlineFolded[stored[i]] = true;
+    } catch (err) {
+      outlineFolded = {};
+    }
+  }
+
+  function saveOutlineFolds() {
+    try {
+      localStorage.setItem(outlineFoldKey(), JSON.stringify(Object.keys(outlineFolded)));
+    } catch (err) {
+      // Private browsing or storage off: folds just are not remembered.
+    }
+  }
+
+  function outlineIsOpen(node) {
+    return !!node.children.length && (!!outlinePanel.filter || !outlineFolded[node.key]);
+  }
+
+  // Open the sections down to this heading and select it.
+  function revealOutlineHeading(id) {
+    var node = id && outlineNodes[id];
+    if (!node) return false;
+    for (var up = node.parent; up && up.key; up = up.parent) delete outlineFolded[up.key];
+    saveOutlineFolds();
+    outlinePanel.selected = node.key;
+    return true;
+  }
+
+  function renderOutline(body) {
+    var content = document.getElementById("mdview-content");
+    outlinePanel.rows = [];
+    if (!content) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">No document.</p>";
+      return;
+    }
+    loadOutlineFolds();
+    outlineTree = buildOutlineTree(content);
+    if (!outlineTree.children.length) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">No headings.</p>";
+      return;
+    }
+    if (outlineRevealPending) {
+      outlineRevealPending = false;
+      revealOutlineHeading(currentHeadingId());
+    }
+    body.innerHTML = "";
+    if (outlinePanel.filter || outlinePanel.filterOpen) body.appendChild(buildPanelFilter(outlinePanel, renderOutlineRows));
+    var list = document.createElement("ul");
+    list.className = "mdview-tree mdview-outline";
+    list.setAttribute("role", "tree");
+    body.appendChild(list);
+    renderOutlineRows(list);
+  }
+
+  function renderOutlineRows(list) {
+    var filter = outlinePanel.filter;
+    outlinePanel.rows = visibleTreeRows(
+      outlineTree,
+      function (node) { return !outlineFolded[node.key]; },
+      filter,
+      function (node) { return matchesTerms(filter, node.name); }
+    );
+    drawPanelRows(outlinePanel, list, function (node) {
+      return {
+        className: "is-heading",
+        expanded: node.children.length ? outlineIsOpen(node) : null,
+        title: node.name,
+      };
+    }, function (node, event, onTwisty) {
+      if (onTwisty && node.children.length) {
+        toggleOutlineFold(node);
+        return;
+      }
+      scrollToOutlineNode(node, true);
+      // A click is a jump, like enter: the keys go back to the document.
+      if (panelFocus === "outline") setPanelFocus(null);
+    });
+    // The list is rebuilt wholesale, so the mark saying where the reader is
+    // standing has to be put back on the new rows every time.
+    outlineCurrentId = null;
+    syncOutline();
+  }
+
+  function scrollToOutlineNode(node, smooth) {
+    var heading = node && document.getElementById(node.key);
+    if (heading) heading.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+  }
+
+  function toggleOutlineFold(node, shut) {
+    var next = shut == null ? !outlineFolded[node.key] : shut;
+    if (next) outlineFolded[node.key] = true;
+    else delete outlineFolded[node.key];
+    saveOutlineFolds();
+    rerenderPanel(outlinePanel);
+  }
+
+  // Select a heading that may not be on screen yet, and go to it.
+  function selectOutlineKey(key) {
+    outlinePanel.selected = key;
+    rerenderPanel(outlinePanel);
+    scrollToOutlineNode(selectedPanelNode(outlinePanel));
+  }
+
+  function onOutlineKey(event, key) {
+    var node = selectedPanelNode(outlinePanel);
+    switch (key) {
+      case "j":
+      case "ArrowDown":
+        movePanel(outlinePanel, outlinePanel.index + 1);
+        break;
+      case "k":
+      case "ArrowUp":
+        movePanel(outlinePanel, outlinePanel.index - 1);
+        break;
+      case "l":
+      case "ArrowRight":
+        if (!node) break;
+        if (!node.children.length) setPanelFocus(null);
+        else if (outlineIsOpen(node)) movePanel(outlinePanel, outlinePanel.index + 1);
+        else toggleOutlineFold(node, false);
+        break;
+      case "h":
+      case "ArrowLeft":
+        if (!node) break;
+        if (outlineIsOpen(node) && !outlinePanel.filter) toggleOutlineFold(node, true);
+        else if (node.parent && node.parent.key) selectOutlineKey(node.parent.key);
+        break;
+      case "Enter":
+      case "o":
+        // The document is already there: all that is left is to read it.
+        setPanelFocus(null);
+        break;
+      case "G":
+        movePanelTo(1);
+        break;
+      case "H":
+        for (var id in outlineNodes) {
+          if (outlineNodes[id].children.length) outlineFolded[id] = true;
         }
+        saveOutlineFolds();
+        if (node) {
+          var top = node;
+          while (top.parent && top.parent.key) top = top.parent;
+          selectOutlineKey(top.key);
+        } else {
+          rerenderPanel(outlinePanel);
+        }
+        break;
+      case "L":
+        if (!node || !node.children.length) break;
+        (function openAll(section) {
+          delete outlineFolded[section.key];
+          for (var i = 0; i < section.children.length; i++) openAll(section.children[i]);
+        })(node);
+        saveOutlineFolds();
+        rerenderPanel(outlinePanel);
+        break;
+      case ".":
+        if (!outlineOrigin) break;
+        if (revealOutlineHeading(outlineOrigin.id)) rerenderPanel(outlinePanel);
+        window.scrollTo(0, outlineOrigin.y);
+        break;
+      case "/":
+        openPanelFilter(outlinePanel);
+        break;
+      case "y":
+        if (node) copyText("#" + node.key);
+        break;
+      case "Escape":
+        if (outlinePanel.filter) {
+          clearFilterOrLeave(outlinePanel);
+          break;
+        }
+        // Back to where the reader was before the outline moved them.
+        if (outlineOrigin) window.scrollTo(0, outlineOrigin.y);
+        setPanelFocus(null);
+        break;
+      default:
+        return false;
+    }
+    event.preventDefault();
+    return true;
+  }
+
+  // ---- Bookmarks -------------------------------------------------------------
+  //
+  // A flat list: enter opens a bookmark in this tab, ⇧enter in another, and
+  // x takes it off the list.
+
+  var bookmarkPanel = newPanel("bookmarks", "Filter bookmarks", function () { return true; });
+  var bookmarkRevealPending = false;
+
+  function renderBookmarks(body) {
+    bookmarkPanel.rows = [];
+    if (!bookmarks.length) {
+      body.innerHTML = "<p class=\"mdview-sidebar-empty\">No bookmarks yet.</p>";
+      return;
+    }
+    if (bookmarkRevealPending) {
+      bookmarkRevealPending = false;
+      // This document when it is on the list, and otherwise the top of it.
+      bookmarkPanel.selected = documentPath;
+      bookmarkPanel.index = 0;
+    }
+    body.innerHTML = "";
+    if (bookmarkPanel.filter || bookmarkPanel.filterOpen) body.appendChild(buildPanelFilter(bookmarkPanel, renderBookmarkRows));
+    var list = document.createElement("ul");
+    list.className = "mdview-tree mdview-bookmarks";
+    list.setAttribute("role", "tree");
+    body.appendChild(list);
+    renderBookmarkRows(list);
+  }
+
+  function renderBookmarkRows(list) {
+    var filter = bookmarkPanel.filter;
+    var nodes = [];
+    for (var i = 0; i < bookmarks.length; i++) {
+      nodes.push({ key: bookmarks[i].path, name: bookmarks[i].name, path: bookmarks[i].path, children: [] });
+    }
+    bookmarkPanel.rows = visibleTreeRows(
+      { children: nodes },
+      function () { return false; },
+      filter,
+      function (node) { return matchesTerms(filter, node.path); }
+    );
+    drawPanelRows(bookmarkPanel, list, function (node) {
+      return {
+        className: "is-file" + (node.path === documentPath ? " is-document" : ""),
+        expanded: null,
+        title: node.path,
+      };
+    }, function (node, event) {
+      openBookmark(node, event.metaKey || event.shiftKey);
+    });
+  }
+
+  function openBookmark(node, newTab) {
+    if (!newTab && node.path === documentPath) {
+      setPanelFocus(null);
+      return;
+    }
+    var sent = newTab
+      ? postToHost("openPath:" + node.path)
+      : postToHost("navigateBookmark:" + readingPlace() + encodeURIComponent(node.path));
+    if (!sent) {
+      showNote("Opening a file needs the app.");
+      return;
+    }
+    setPanelFocus(null);
+  }
+
+  function removeBookmark(node) {
+    if (!postToHost("removeBookmark:" + encodeURIComponent(node.path))) {
+      showNote("Removing a bookmark needs the app.");
+      return;
+    }
+    // This document's own bookmark is reported by mdviewSetBookmarks.
+    if (node.path !== documentPath) showNote("Removed " + node.name + ".");
+  }
+
+  function onBookmarkKey(event, key) {
+    var node = selectedPanelNode(bookmarkPanel);
+    switch (key) {
+      case "j":
+      case "ArrowDown":
+        movePanel(bookmarkPanel, bookmarkPanel.index + 1);
+        break;
+      case "k":
+      case "ArrowUp":
+        movePanel(bookmarkPanel, bookmarkPanel.index - 1);
+        break;
+      case "Enter":
+      case "o":
+      case "l":
+      case "ArrowRight":
+        if (node) openBookmark(node, key === "Enter" && event.shiftKey);
+        break;
+      case "G":
+        movePanelTo(1);
+        break;
+      case "x":
+        if (node) removeBookmark(node);
+        break;
+      case "y":
+        if (node) copyText(node.path);
+        break;
+      case "/":
+        openPanelFilter(bookmarkPanel);
+        break;
+      case ".":
+        var here = -1;
+        for (var i = 0; i < bookmarkPanel.rows.length; i++) {
+          if (bookmarkPanel.rows[i].node.path === documentPath) here = i;
+        }
+        if (here >= 0) movePanel(bookmarkPanel, here);
+        else showNote("This document is not bookmarked.");
+        break;
+      case "Escape":
+        clearFilterOrLeave(bookmarkPanel);
         break;
       default:
         return false;
@@ -2222,20 +2638,7 @@
     } else if (sidebarTab === "inbox") {
       renderReviewInbox(body);
     } else if (sidebarTab === "outline") {
-      body.innerHTML = buildOutline();
-      var links = body.querySelectorAll("a[data-outline-id]");
-      for (var i = 0; i < links.length; i++) {
-        links[i].addEventListener("click", function (event) {
-          event.preventDefault();
-          var target = document.getElementById(
-            event.currentTarget.getAttribute("data-outline-id")
-          );
-          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-      }
-      // The list is rebuilt wholesale, so the mark saying where the reader is
-      // standing has to be put back on the new rows every time.
-      syncOutline();
+      renderOutline(body);
     } else if (sidebarTab === "comments") {
       if (!comments.length) {
         body.innerHTML = "<p class=\"mdview-sidebar-empty\">No comments yet.</p>";
@@ -2269,27 +2672,7 @@
         })(comments[n]);
       }
     } else {
-      if (!bookmarks.length) {
-        body.innerHTML = "<p class=\"mdview-sidebar-empty\">No bookmarks yet.</p>";
-        return;
-      }
-      body.innerHTML = "<ul></ul>";
-      var list = body.firstChild;
-      for (var k = 0; k < bookmarks.length; k++) {
-        (function (entry) {
-          var li = document.createElement("li");
-          var a = document.createElement("a");
-          a.href = "#";
-          a.textContent = entry.name;   // textContent, never innerHTML
-          a.title = entry.path;
-          a.addEventListener("click", function (event) {
-            event.preventDefault();
-            postToHost("openPath:" + entry.path);
-          });
-          li.appendChild(a);
-          list.appendChild(li);
-        })(bookmarks[k]);
-      }
+      renderBookmarks(body);
     }
   }
 
@@ -2345,6 +2728,17 @@
     else if (row.bottom > box.bottom - pad) sidebar.scrollTop += row.bottom - box.bottom + pad;
   }
 
+  function outlineRowFor(id) {
+    var node = id && outlineNodes[id];
+    if (!node) return id;
+    if (outlinePanel.filter) return node.key;
+    var shown = node;
+    for (var up = node.parent; up && up.key; up = up.parent) {
+      if (outlineFolded[up.key]) shown = up;
+    }
+    return shown.key;
+  }
+
   function syncOutline() {
     var sidebar = document.getElementById("mdview-sidebar");
     var body = document.getElementById("mdview-sidebar-body");
@@ -2354,13 +2748,18 @@
       outlineCurrentId = null;
       return;
     }
+    // With the keys, the outline leads and the document follows: the
+    // selection is the mark, and this would only fight it.
+    if (panelFocus === "outline") return;
     var id = currentHeadingId();
-    var links = body.querySelectorAll("a[data-outline-id]");
+    // A heading inside a shut section is marked on the row that stands for it.
+    var shown = outlineRowFor(id);
+    var rows = body.querySelectorAll(".mdview-outline li[data-key]");
     var current = null;
-    for (var i = 0; i < links.length; i++) {
-      var match = id !== null && links[i].getAttribute("data-outline-id") === id;
-      links[i].classList.toggle("is-current", match);
-      if (match) current = links[i];
+    for (var i = 0; i < rows.length; i++) {
+      var match = shown !== null && rows[i].getAttribute("data-key") === shown;
+      rows[i].classList.toggle("is-here", match);
+      if (match) current = rows[i];
     }
     // Only when it moves. A document long enough to need this has an outline
     // long enough to scroll, and nudging that list on every frame would fight
@@ -3884,7 +4283,7 @@
   // ---- Comments -------------------------------------------------------------
   //
   // A comment is anchored by (heading ordinal, quote, nth occurrence), never by
-  // a heading id: buildOutline is the only code that assigns those, and it runs
+  // a heading id: buildOutlineTree is the only code that assigns those, and it runs
   // only while the outline panel is showing, so an id is a field that is
   // frequently absent.
   //
@@ -6032,9 +6431,9 @@
     if (sidebar) setSidebar(sidebar.hidden, sidebarTab);
   }
 
-  // g o and g b name a tab rather than toggling blindly: pressing g o while the
-  // panel is showing bookmarks switches to the outline, and only a second
-  // press -- when the outline is already what you are looking at -- closes it.
+  // g i and g v name a tab rather than toggling blindly: pressing g i while the
+  // panel is showing bookmarks switches to the links, and only a second press
+  // -- when the links are already what you are looking at -- closes it.
   function showSidebarTab(tab) {
     var sidebar = document.getElementById("mdview-sidebar");
     if (!sidebar) return;
@@ -6193,13 +6592,13 @@
       title: "Sidebar",
       items: [
         { keys: ["g s"], hint: "g  s", label: "Toggle the sidebar", run: toggleSidebarKey },
-        { keys: ["g o"], hint: "g  o", label: "Outline", run: function () { showSidebarTab("outline"); } },
-        { keys: ["g b"], hint: "g  b", label: "Bookmarks", run: function () { showSidebarTab("bookmarks"); } },
+        { keys: ["g o"], hint: "g  o", label: "Outline", run: function () { togglePanelKey("outline"); } },
+        { keys: ["g b"], hint: "g  b", label: "Bookmarks", run: function () { togglePanelKey("bookmarks"); } },
         { keys: ["g m"], hint: "g  m", label: "Toggle the minimap", run: toggleMinimapKey },
         { keys: ["m"], hint: "m", label: "Bookmark this document", run: function () { postToHost("toggleBookmark"); } },
         { keys: ["g t"], hint: "g  t", label: "Themes", run: toggleThemePalette },
         { keys: ["g r"], hint: "g  r", label: "Recent files", run: toggleRecentPalette },
-        { keys: ["g e"], hint: "g  e", label: "File explorer", run: toggleExplorerKey },
+        { keys: ["g e"], hint: "g  e", label: "File explorer", run: function () { togglePanelKey("files"); } },
         { keys: ["g f"], hint: "g  f", label: "Workspace files", run: function () { window.mdviewOpenWorkspaceFiles(); } },
         { keys: ["g i"], hint: "g  i", label: "Links and backlinks", run: function () { showSidebarTab("links"); } },
       ],
@@ -6234,12 +6633,13 @@
       ],
     },
     {
-      title: "File explorer",
+      title: "Files, outline and bookmarks",
       items: [
-        { keys: [], hint: ".", label: "Back to this document", run: null },
-        { keys: [], hint: "/", label: "Filter by path", run: null },
-        { keys: [], hint: "H  L", label: "Fold everything, unfold the folder", run: null },
+        { keys: [], hint: ".", label: "Back to this document, or the section you were reading", run: null },
+        { keys: [], hint: "/", label: "Filter", run: null },
+        { keys: [], hint: "H  L", label: "Fold everything, unfold everything under the cursor", run: null },
         { keys: [], hint: "y", label: "Copy the path", run: null },
+        { keys: [], hint: "x", label: "Remove the bookmark", run: null },
         { keys: [], hint: "R", label: "Look at the folder again", run: null },
       ],
     },
@@ -6533,16 +6933,16 @@
       if (key === "Escape") return;
       event.preventDefault();
       // g g is the top of whatever has the keys.
-      if (explorerFocused && chord && chord.keys[0] === "g g") moveExplorerTo(-1);
+      if (panelFocus && chord && chord.keys[0] === "g g") movePanelTo(-1);
       else if (chord) chord.run();
       return;
     }
     pendingPrefix = null;
 
-    // The tree, while it has the keys. Below the prefix so g chords keep
-    // working from inside it, and above the table so j and k move the tree
+    // A panel, while it has the keys. Below the prefix so g chords keep
+    // working from inside it, and above the table so j and k move the panel
     // rather than the caret behind it.
-    if (explorerFocused && onExplorerKey(event, key)) return;
+    if (panelFocus && onPanelKey(event, key)) return;
 
     // Below the modal blocks above, so a sheet or a palette still owns esc
     // first; above nothing else, because find and the comment bar guard their
@@ -6567,11 +6967,11 @@
 
   function attachKeyListeners() {
     document.addEventListener("keydown", onDocumentKeyDown);
-    // A click anywhere outside the panel takes the keys back from the tree.
+    // A click anywhere outside the panel takes the keys back from it.
     document.addEventListener("mousedown", function (event) {
-      if (!explorerFocused) return;
+      if (!panelFocus) return;
       var sidebar = document.getElementById("mdview-sidebar");
-      if (sidebar && !sidebar.contains(event.target)) setExplorerFocus(false);
+      if (sidebar && !sidebar.contains(event.target)) setPanelFocus(null);
     }, true);
   }
 

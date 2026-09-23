@@ -30,14 +30,21 @@ file that never closes it.
 - **Outline** built from the document's headings, in a sidebar you can toggle
   and drag to resize; the width is remembered across launches. The heading you
   are reading is lit as you scroll, and the list keeps it in view, so the
-  outline says where you are and not just what there is.
+  outline says where you are and not just what there is. `g o` gives it the
+  keys, and it works like the file explorer: the headings nest as a tree
+  that `h` / `l` and `H` / `L` fold, and the document follows as `j` / `k`
+  move. Enter stays on that heading, and esc goes back to where you were
+  reading. `/` filters the headings. The sections you fold are remembered
+  for each document.
 - **Minimap.** `g m` puts the shape of the whole document down the right edge:
   headings as bars, prose as lines, code and tables as blocks, pictures as
   frames, with your comments and find matches marked on it. The band shows the
   part you are reading; click it to jump, drag it to scrub. It floats over the
   margin rather than taking width from the text, so turning it on does not
   re-wrap what you are reading.
-- **Bookmarks** for documents you come back to, kept across launches.
+- **Bookmarks** for documents you come back to, kept across launches. `g b`
+  gives the list the keys: enter opens a bookmark in this tab, ⇧enter in a
+  new one, `x` takes it off the list, `y` copies its path, and `/` filters.
 - **Comments.** Select a phrase — with the mouse, or with `v` and a motion —
   press `c`, and type a note. The note becomes a
   card in the document's right margin, level with the passage it is about;
@@ -72,7 +79,9 @@ file that never closes it.
 - **A file explorer.** `g e` opens the Files sidebar as a tree and gives it
   the keys. It starts on the document you are reading, with its folders open.
   `j` / `k` move, `l` opens a folder or a file, `h` closes a folder or goes up
-  to its parent, and enter opens either one. `g g` / `G` go to the ends, `H` /
+  to its parent, and enter opens either one: a file replaces this one, where
+  `g [` comes back from it, and ⇧enter opens it in a tab of its own. `g g` /
+  `G` go to the ends, `H` /
   `L` fold everything or unfold everything under the cursor, and `.` comes
   back to this document. `/` filters by path, `y` copies the relative path, and
   esc hands the keys back to the document. The tree lists the workspace's
@@ -238,7 +247,7 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | g / | Search across the workspace |
 | g s | Toggle the sidebar |
 | g m | Toggle the minimap |
-| g o / g b | Outline / bookmarks in the sidebar |
+| g o / g b | Outline / bookmarks: open one and give it the keys, or close it |
 | g i | Links, backlinks, and broken references in the sidebar |
 | g v | Review Inbox across the workspace |
 | m | Bookmark this document |
