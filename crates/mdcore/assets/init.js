@@ -6635,6 +6635,7 @@
     {
       title: "Files, outline and bookmarks",
       items: [
+        { keys: ["R"], hint: "R", label: "Receive a file with croc", run: function () { postToHost("receiveCroc"); } },
         { keys: [], hint: ".", label: "Back to this document, or the section you were reading", run: null },
         { keys: [], hint: "/", label: "Filter", run: null },
         { keys: [], hint: "H  L", label: "Fold everything, unfold everything under the cursor", run: null },

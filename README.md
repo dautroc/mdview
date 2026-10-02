@@ -113,6 +113,15 @@ file that never closes it.
   list. The document you are reading is not in it, so `g r` and enter is
   "back to the one before this". File > Open Recent carries the same list for a
   mouse.
+- **Receive a file with croc.** `R` takes a
+  [croc](https://github.com/schollz/croc) code — the phrase `croc ./docs/PLAN.md`
+  prints on the other machine, an SSH session or a colleague's laptop — and
+  receives the file into MDView's own inbox, opening it in a new tab. The
+  transfer runs without blocking the window, a code that fails says what croc
+  said, and MDView points you at `brew install croc` if it is missing. The same
+  receive is `mdview --croc <code>` at the command line. Received files live
+  under `~/Library/Application Support/MDView/croc`, so they stay in recent
+  files and reload like any other document.
 - **Commands by name.** `:` opens a palette of what this app does, with the
   key for each one printed beside it — type a few letters of what you want,
   enter runs it, and you leave knowing the key. The vim alphabet is not in it:
@@ -205,6 +214,7 @@ make install-cli   # /usr/local/bin/mdview
 ```sh
 mdview notes.md               # open a file
 mdview notes.md:42            # open it at a line
+mdview --croc generous-cabin-crazy-satellite   # receive a file with croc
 mdview --print-html notes.md                       # render to stdout
 mdview --print-html --diff --diff-base HEAD~2 notes.md  # compare a revision
 ```
@@ -257,6 +267,7 @@ already cover — and run what you find. Tabs also use the macOS standards:
 | C | Copy the document prompt, or the active Review Inbox filter |
 | g t | Themes |
 | g r | Recent files |
+| R | Receive a file with croc |
 | g h | Document history (needs a tracked file) |
 | g d | Diff against HEAD, and back to Markdown |
 | g l | Diff layout: source or rendered, one column or two |

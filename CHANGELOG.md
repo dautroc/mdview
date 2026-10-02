@@ -18,6 +18,15 @@ Release notes for MDView, organized around user-visible features, fixes, and
   a new one, `x` takes it off the list and `y` copies its path. `/` filters
   either panel.
 
+- **Receive a file with croc.** On the machine that has the file, `croc
+  ./docs/PLAN.md` prints a code; in MDView, `R` asks for it and receives the
+  file into an inbox of its own, opening it in a new tab. The transfer waits on
+  the network without freezing the window, and a failure shows what croc said
+  rather than a generic error. Current croc refuses a receive code on the
+  command line, so MDView passes it in `CROC_SECRET` and it never appears in
+  the process list. `mdview --croc <code>` does the same from a terminal.
+  If croc is not installed, the app says so and how to get it.
+
 ### Notes
 
 - Enter in the file explorer now opens the file in this tab, where `g [`

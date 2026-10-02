@@ -14,8 +14,8 @@ use objc2_app_kit::{
     NSMenuItemValidation, NSWindowOrderingMode,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer,
-    NSURL,
+    MainThreadMarker, NSArray, NSNotification, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes,
+    NSSize, NSString, NSTimer, NSURL,
 };
 
 use crate::window::DocumentWindow;
@@ -24,6 +24,12 @@ pub(crate) struct HistoryResponse {
     tab_id: u64,
     generation: u64,
     result: Result<Vec<mdcore::HistoryEntry>, String>,
+}
+
+/// One finished croc receive, handed back to the main thread. The transfer
+/// waits on the network, so it cannot run where the window lives.
+pub(crate) struct CrocResponse {
+    result: Result<PathBuf, crate::croc::CrocError>,
 }
 
 pub(crate) struct WorkspaceAnalysis {
@@ -148,6 +154,11 @@ pub struct AppState {
     pub pending_workspace_restore: RefCell<Option<WorkspaceRestore>>,
     pub workspace_positions: RefCell<HashMap<PathBuf, u32>>,
     pub last_workspace_session: RefCell<Vec<String>>,
+    pub croc_sender: Sender<CrocResponse>,
+    pub croc_receiver: RefCell<Receiver<CrocResponse>>,
+    /// A receive is in flight. One at a time: the prompt and the banner are
+    /// both singular, and croc would otherwise run two behind one window.
+    pub croc_pending: Cell<bool>,
 }
 
 define_class!(
@@ -356,6 +367,7 @@ define_class!(
             }
             self.drain_history_results();
             self.drain_workspace_results();
+            self.drain_croc_results();
             let workspace_changes = state
                 .workspace_watcher
                 .borrow_mut()
@@ -861,6 +873,7 @@ impl AppDelegate {
     ) -> Retained<Self> {
         let (history_sender, history_receiver) = mpsc::channel();
         let (workspace_sender, workspace_receiver) = mpsc::channel();
+        let (croc_sender, croc_receiver) = mpsc::channel();
         let this = Self::alloc(mtm).set_ivars(AppState {
             windows: RefCell::new(Vec::new()),
             active_tab: Rc::new(Cell::new(None)),
@@ -891,6 +904,9 @@ impl AppDelegate {
             pending_workspace_restore: RefCell::new(None),
             workspace_positions: RefCell::new(HashMap::new()),
             last_workspace_session: RefCell::new(Vec::new()),
+            croc_sender,
+            croc_receiver: RefCell::new(croc_receiver),
+            croc_pending: Cell::new(false),
         });
         unsafe { objc2::msg_send![super(this), init] }
     }
@@ -979,6 +995,107 @@ impl AppDelegate {
         match entry {
             Some(entry) => window.show_history(entry, &self.ivars().highlighter),
             None => window.show_note("That history entry is no longer available."),
+        }
+    }
+
+    /// `R`: receive a file from a `croc` sender.
+    ///
+    /// The code is collected in a native prompt rather than the page -- the
+    /// page never sees it -- and the transfer runs on a thread of its own,
+    /// because croc waits on the network and a slow or absent sender must not
+    /// freeze the window.
+    fn begin_croc_receive(&self, source_id: Option<u64>) {
+        let Some(window) = self.message_window(source_id) else {
+            return;
+        };
+        if self.ivars().croc_pending.get() {
+            window.show_banner("mdview-croc", "Already receiving a file with croc.");
+            return;
+        }
+        let Some(binary) = crate::croc::find_croc() else {
+            window.show_banner("mdview-croc", crate::croc::INSTALL_HINT);
+            return;
+        };
+        let Some(inbox) = crate::store::croc_inbox_dir() else {
+            window.show_banner(
+                "mdview-croc",
+                &crate::croc::message_for(&crate::croc::CrocError::NoHome),
+            );
+            return;
+        };
+        let Some(code) = self.prompt_for_croc_code() else {
+            return;
+        };
+
+        self.ivars().croc_pending.set(true);
+        window.show_banner("mdview-croc", "Receiving a file with croc…");
+        let sender = self.ivars().croc_sender.clone();
+        std::thread::spawn(move || {
+            let result = crate::croc::run_receive(&binary, &code, &inbox);
+            let _ = sender.send(CrocResponse { result });
+        });
+    }
+
+    /// The croc code, from a native prompt. Cancel, or an empty field, is no
+    /// receive at all rather than a receive with an empty code.
+    fn prompt_for_croc_code(&self) -> Option<String> {
+        use objc2_app_kit::{NSAlert, NSTextField};
+        let mtm = MainThreadMarker::from(self);
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str("Receive a file with croc"));
+        alert.setInformativeText(&NSString::from_str(
+            "Run `croc <file>` on the other machine, then paste the code it printed here.",
+        ));
+        let field = NSTextField::initWithFrame(
+            NSTextField::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(320.0, 24.0)),
+        );
+        field.setPlaceholderString(Some(&NSString::from_str("e.g. generous-cabin-crazy-satellite")));
+        alert.setAccessoryView(Some(&field));
+        alert.addButtonWithTitle(&NSString::from_str("Receive"));
+        alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+        // Typing is the whole point of the prompt, so the field starts focused.
+        alert.window().makeFirstResponder(Some(&field));
+        if alert.runModal() != 1000 {
+            return None;
+        }
+        let code = field.stringValue().to_string();
+        let code = code.trim();
+        if code.is_empty() {
+            None
+        } else {
+            Some(code.to_string())
+        }
+    }
+
+    /// A finished receive, seen by the timer on the main thread. The document
+    /// opens through the same path as any other open, so it becomes a tab, is
+    /// recorded in recents, and gets its own live-reload watcher.
+    fn drain_croc_results(&self) {
+        loop {
+            let response = match self.ivars().croc_receiver.borrow().try_recv() {
+                Ok(response) => response,
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
+            };
+            self.ivars().croc_pending.set(false);
+            let target = self.frontmost_window();
+            match response.result {
+                Ok(path) => {
+                    if let Some(window) = &target {
+                        window.clear_banner("mdview-croc");
+                    }
+                    self.open_document(&path);
+                }
+                Err(error) => {
+                    let message = crate::croc::message_for(&error);
+                    match &target {
+                        Some(window) => window.show_banner("mdview-croc", &message),
+                        // Every window closed while croc ran; a terminal may
+                        // still be watching, and silence would be worse.
+                        None => eprintln!("mdview: {message}"),
+                    }
+                }
+            }
         }
     }
 
@@ -2450,6 +2567,7 @@ impl AppDelegate {
                 }
             }
             Message::OpenHistory => self.request_history(source_id),
+            Message::ReceiveCroc => self.begin_croc_receive(source_id),
             Message::SelectHistory(revision) => self.select_history(source_id, &revision),
             Message::SearchWorkspace(query) => self.search_workspace(source_id, &query),
             Message::OpenWorkspacePath(path) => self.open_workspace_path(source_id, &path),

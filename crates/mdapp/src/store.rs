@@ -23,6 +23,20 @@ pub fn reviews_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join("Library/Application Support/MDView/reviews"))
 }
 
+/// `~/Library/Application Support/MDView/croc`, created on demand.
+///
+/// Where a file received with croc is put. It is a sibling of `reviews` for the
+/// same reason: MDView writes only where MDView owns, and a received document
+/// needs a home that outlives the moment -- live reload, `g r`, and reopening
+/// after a relaunch all read the path back. A temporary directory is purged,
+/// and a file beside whatever happened to be open has no parent at all.
+pub fn croc_inbox_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let dir = PathBuf::from(home).join("Library/Application Support/MDView/croc");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
 /// Where this document's review lives. `None` only when there is no `HOME`.
 pub fn review_path(canonical_doc: &str) -> Option<PathBuf> {
     Some(reviews_dir()?.join(crate::state::review_file_name(canonical_doc)))
@@ -270,6 +284,17 @@ mod tests {
         assert!(text.ends_with(&crate::state::review_file_name(
             "/Users/someone/project/notes.md"
         )));
+    }
+
+    /// A received file is MDView's to keep, the way a review is: under
+    /// Application Support, created on demand, and never in a temporary
+    /// directory the system can purge while a tab still points at it.
+    #[test]
+    fn received_files_live_under_application_support() {
+        let dir = croc_inbox_dir().expect("HOME is set in tests");
+        let text = dir.to_string_lossy();
+        assert!(text.contains("Library/Application Support/MDView/croc"));
+        assert!(dir.is_dir(), "the inbox is created on demand");
     }
 
     /// The watch has to be startable before anyone has commented, which is

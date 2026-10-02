@@ -818,7 +818,7 @@ mod tests {
             "\"w\"", "\"W\"", "\"e\"", "\"E\"", "\"b\"", "\"B\"",
             "\"Ctrl+e\"", "\"Ctrl+y\"",
             "\"m\"", "\"z\"", "\"r\"", "\"+\"", "\"=\"", "\"-\"", "\"0\"", "\"?\"", "\":\"",
-            "\"c\"", "\"x\"", "\"C\"", "\"(\"", "\")\"",
+            "\"c\"", "\"x\"", "\"C\"", "\"(\"", "\")\"", "\"R\"",
         ] {
             let needle = format!("keys: [{}", key);
             let alt = format!(", {}]", key);
@@ -1152,6 +1152,27 @@ mod tests {
         let paint = body.find("paintVisual()").expect("the selection is repainted");
         assert!(blur < hide, "the field is hidden before it is blurred");
         assert!(hide < paint, "the selection is painted back before the overlay is gone");
+    }
+
+    /// `R` receives a file with croc. It is one row in the same table the
+    /// dispatcher and the palette both walk, so the key works, `?` documents
+    /// it, and `:croc` finds it -- with no second list to drift out of step.
+    #[test]
+    fn the_croc_command_is_bound_and_posts_its_message() {
+        let js = assets::INIT_JS;
+        assert!(
+            js.contains(
+                "{ keys: [\"R\"], hint: \"R\", label: \"Receive a file with croc\", \
+                 run: function () { postToHost(\"receiveCroc\"); } }"
+            ),
+            "R no longer receives a file with croc"
+        );
+        // The code is asked for natively, on the host: nothing about a code
+        // crosses the wire, so a page cannot claim one the reader never typed.
+        assert!(
+            !js.contains("receiveCroc:"),
+            "the croc code must not cross the bridge"
+        );
     }
 
     /// Chords are table-driven now, not hand-dispatched: `gg` lost its
