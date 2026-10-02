@@ -1,5 +1,6 @@
 mod app;
 mod bridge;
+mod croc;
 mod defaults;
 mod export;
 mod menu;
@@ -23,6 +24,8 @@ fn main() {
     let mut want_diff_layout = false;
     let mut diff_base: Option<String> = None;
     let mut want_diff_base = false;
+    let mut croc_code: Option<String> = None;
+    let mut want_croc = false;
     let mut targets: Vec<state::OpenTarget> = Vec::new();
 
     for arg in std::env::args_os().skip(1) {
@@ -46,6 +49,17 @@ fn main() {
             want_diff_base = false;
             if !arg.starts_with("--") {
                 diff_base = Some(arg);
+                continue;
+            }
+        }
+
+        // The same rule as --theme's and --diff-base's: the code is the next
+        // argument unless it is another flag, in which case the missing value
+        // is reported rather than a flag being swallowed as a code.
+        if want_croc {
+            want_croc = false;
+            if !arg.starts_with("--") {
+                croc_code = Some(arg);
                 continue;
             }
         }
@@ -81,6 +95,7 @@ fn main() {
             "--diff" => diff = true,
             "--diff-layout" => want_diff_layout = true,
             "--diff-base" => want_diff_base = true,
+            "--croc" => want_croc = true,
             "--version" => {
                 println!("mdview {}", mdcore::version());
                 return;
@@ -89,7 +104,7 @@ fn main() {
                 println!(
                     "usage: mdview [--print-html [--interactive] [--diff \
                      [--diff-layout LAYOUT] [--diff-base REV]]] \
-                     [--theme THEME] [--open] [FILE[:LINE]...]"
+                     [--theme THEME] [--open] [--croc CODE] [FILE[:LINE]...]"
                 );
                 return;
             }
@@ -97,6 +112,26 @@ fn main() {
             // everything that prints a location spells one.
             other => targets.push(state::parse_open_target(other)),
         }
+    }
+
+    // A code only ever means one thing: receive it now. The modes that print
+    // or forward have no console to wait at and no inbox to fill, so mixing
+    // them is refused rather than silently ignored.
+    if want_croc {
+        eprintln!("mdview: --croc requires a code");
+        std::process::exit(2);
+    }
+    if croc_code.is_some()
+        && (print_html || open_only || diff || interactive || diff_base.is_some())
+    {
+        eprintln!("mdview: --croc cannot be combined with other modes");
+        std::process::exit(2);
+    }
+    // The receive decides which file opens -- the one the code names -- so a
+    // path on the same line would be quietly ignored. Refuse it instead.
+    if croc_code.is_some() && !targets.is_empty() {
+        eprintln!("mdview: --croc opens the file the code names; it takes no path");
+        std::process::exit(2);
     }
 
     if print_html {
@@ -191,6 +226,39 @@ fn main() {
             Ok(status) => std::process::exit(status.code().unwrap_or(1)),
             Err(err) => {
                 eprintln!("mdview: could not run open: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Receive first, then hand the file to the app the same way every other
+    // command-line open does: through the app's own URL, which is the Apple
+    // event Finder sends. An MDView that is already open gains a tab instead
+    // of a second copy of itself.
+    if let Some(code) = croc_code {
+        let Some(binary) = croc::find_croc() else {
+            eprintln!("mdview: {}", croc::INSTALL_HINT);
+            std::process::exit(1);
+        };
+        let Some(inbox) = store::croc_inbox_dir() else {
+            eprintln!("mdview: {}", croc::message_for(&croc::CrocError::NoHome));
+            std::process::exit(1);
+        };
+        let received = match croc::run_receive(&binary, &code, &inbox) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("mdview: {}", croc::message_for(&error));
+                std::process::exit(1);
+            }
+        };
+        let url = state::open_url(&state::OpenTarget {
+            path: watcher::watch_target(&received),
+            line: None,
+        });
+        match std::process::Command::new("/usr/bin/open").args([url]).status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(error) => {
+                eprintln!("mdview: could not run open: {error}");
                 std::process::exit(1);
             }
         }
@@ -316,6 +384,27 @@ mod bundle_version_tests {
             "the handler drops every URL that is not a file, lines and all"
         );
         assert!(body.contains("self.reveal_target_lines(&targets);"));
+    }
+
+    /// `mdview --croc CODE` receives now, then opens what arrived the way every
+    /// other command-line open does. Two halves have to agree: the flag reaches
+    /// croc with its code, and the received file goes back through the app's
+    /// own URL rather than a second launch of the app.
+    #[test]
+    fn the_command_line_can_receive_a_file_with_croc() {
+        let main = include_str!("main.rs");
+        assert!(main.contains(r#""--croc" => want_croc = true,"#));
+        assert!(
+            main.contains("croc::run_receive(&binary, &code, &inbox)"),
+            "--croc must actually run a receive"
+        );
+        assert!(
+            main.contains("state::open_url(&state::OpenTarget"),
+            "the received file must open as a tab of the app already running"
+        );
+        // And the page binds the same command, so the key and the flag are one
+        // feature rather than two.
+        assert!(mdcore::assets::INIT_JS.contains(r#"postToHost("receiveCroc")"#));
     }
 
     /// The README documents the shortcut policy, so it has to move with it.

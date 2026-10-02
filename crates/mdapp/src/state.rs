@@ -323,6 +323,10 @@ pub enum Message {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    /// `R`: collect a croc code in a native prompt and receive the file it
+    /// names. The code itself never reaches the page -- the prompt is the
+    /// host's -- so the message carries nothing.
+    ReceiveCroc,
     /// A new comment on the current document. `heading` and `nth` are its
     /// anchor; see `crate::review::Comment`.
     AddComment {
@@ -388,6 +392,9 @@ pub fn parse_message(raw: &str) -> Option<Message> {
     }
     if raw == "zoomReset" {
         return Some(Message::ZoomReset);
+    }
+    if raw == "receiveCroc" {
+        return Some(Message::ReceiveCroc);
     }
     if raw == "copyReview" {
         return Some(Message::CopyReview);
@@ -1734,6 +1741,11 @@ mod tests {
         );
         assert_eq!(parse_message("toggleDiff"), Some(Message::ToggleDiff));
         assert_eq!(parse_message("openHistory"), Some(Message::OpenHistory));
+        // The croc code is asked for natively, so the message is bare: a page
+        // that tried to send one would be inventing a code the reader never
+        // typed, and the parse refuses it.
+        assert_eq!(parse_message("receiveCroc"), Some(Message::ReceiveCroc));
+        assert_eq!(parse_message("receiveCroc:alpha-bravo"), None);
         assert_eq!(parse_message("navigateBack"), Some(Message::NavigateBack));
         assert_eq!(
             parse_message("navigateForward"),
